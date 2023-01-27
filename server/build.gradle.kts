@@ -7,7 +7,7 @@ plugins {
 
 group = "com.terrencecurran"
 version = "0.0.1-SNAPSHOT"
-java.sourceCompatibility = JavaVersion.VERSION_HIGHER
+java.sourceCompatibility = JavaVersion.VERSION_19
 
 repositories {
 	mavenCentral()
