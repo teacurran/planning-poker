@@ -37,6 +37,19 @@ services:
     ports:
       - "5442:5432"
 
+  client:
+    image: node:19-alpine
+    working_dir: /home/node/app
+    command: npm start
+    volumes:
+      - ./client:/home/node/app
+    environment:
+      - NODE_ENV=development
+    expose:
+      - "3000"
+    ports:
+      - "3000:3000"
+
 volumes:
   postgres_db:
   gradle_build:
