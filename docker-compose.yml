@@ -1,0 +1,43 @@
+version: "3.9"
+
+x-server-base: &server-base
+  image: server
+  build:
+    context: ./server
+    dockerfile: dev-jvm.dockerfile
+  depends_on:
+    - postgresql
+  volumes:
+    - ./server:/app
+    - gradle_cache:/app/.gradle
+    - gradle_build:/app/build
+  environment:
+    SERVICE: local
+    SPRING_DATASOURCE_URL: jdbc:postgresql://postgresql:5432/planningpoker
+    SPRING_DATASOURCE_USERNAME: dockercompose
+    SPRING_DATASOURCE_PASSWORD: dockercompose
+    SPRING_JPA_HIBERNATE_DDL_AUTO: update
+  command: ./gradlew bootRun --console=plain
+
+services:
+  server:
+    <<: *server-base
+    ports:
+      - "8080:8080"
+
+  postgresql:
+    image: postgres:15
+    restart: always
+    environment:
+      POSTGRES_USER: dockercompose
+      POSTGRES_PASSWORD: dockercompose
+      POSTGRES_DB: planningpoker
+    volumes:
+      - postgres_db:/var/lib/postgresql/data
+    ports:
+      - "5442:5432"
+
+volumes:
+  postgres_db:
+  gradle_build:
+  gradle_cache:
