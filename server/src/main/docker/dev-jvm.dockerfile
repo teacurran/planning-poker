@@ -8,6 +8,4 @@ ENV LANG='en_US.UTF-8' LANGUAGE='en_US:en'
 # USER appuser
 WORKDIR /app
 
-RUN ./gradlew
-
 EXPOSE 8080
