@@ -9,8 +9,6 @@ x-server-base: &server-base
     - postgresql
   volumes:
     - ./server:/app
-    - gradle_cache:/app/.gradle
-    - gradle_build:/app/build
   environment:
     SERVICE: local
     SPRING_DATASOURCE_URL: jdbc:postgresql://postgresql:5432/planningpoker
@@ -49,11 +47,15 @@ services:
       - "5442:5432"
 
   client:
-    image: node:19-alpine
-    working_dir: /home/node/app
+    image: client
+    build:
+      context: ./client   
+    working_dir: /app
     command: npm start
     volumes:
-      - ./client:/home/node/app
+      - ./client:/app
+      - node_cache:/app/node_modules
+
     environment:
       - NODE_ENV=development
     expose:
@@ -63,5 +65,4 @@ services:
 
 volumes:
   postgres_db:
-  gradle_build:
-  gradle_cache:
+  node_cache:
