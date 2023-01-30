@@ -17,7 +17,7 @@ jobs:
         run: docker-compose up -d jaeger postgresql
 
       - name: Test
-        run: docker-compose run server test
+        run: docker-compose run server mvn test
 
       - name: docker-compose dock
         run: docker-compose down
