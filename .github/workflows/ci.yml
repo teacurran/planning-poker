@@ -21,7 +21,6 @@ jobs:
 
       - name: Sonarqube
         run: docker-compose run server mvn verify sonar:sonar -Dsonar.login=${{ secrets.SONAR_TOKEN }} -Dsonar.host.url="https://sonarcloud.io"
-        working-directory: api
 
       - name: docker-compose down
         run: docker-compose down
