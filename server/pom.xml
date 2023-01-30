@@ -17,6 +17,9 @@
 	<properties>
 		<java.version>19</java.version>
 		<spring-cloud.version>2022.0.1</spring-cloud.version>
+
+		<sonar.organization>appi</sonar.organization>
+        <sonar.projectKey>teacurran_planning-poker</sonar.projectKey>
 	</properties>
 	<dependencies>
 		<dependency>
@@ -161,6 +164,11 @@
 					</execution>
 				</executions>
 			</plugin>
+			<plugin>
+                <groupId>org.sonarsource.scanner.maven</groupId>
+                <artifactId>sonar-maven-plugin</artifactId>
+                <version>3.9.1.2184</version>				
+            </plugin>
 		</plugins>
 	</build>
 
