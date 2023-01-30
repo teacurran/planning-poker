@@ -1,0 +1,23 @@
+name: ci
+
+on:
+  push:
+    branches:
+      - "*"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - uses: actions/checkout@v3
+
+      - name: docker-compose up
+        run: docker-compose up -d jaeger postgersql
+
+      - name: Test
+        run: docker-compose run server 
+
+      - name: docker-compose dock
+        run: docker-compose down
