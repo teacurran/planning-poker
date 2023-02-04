@@ -7,6 +7,7 @@ x-server-base: &server-base
     dockerfile: src/main/docker/dev-jvm.dockerfile
   depends_on:
     - postgresql
+    - flyway
   volumes:
     - ./server:/app
   environment:
@@ -14,7 +15,7 @@ x-server-base: &server-base
     SPRING_DATASOURCE_URL: jdbc:postgresql://postgresql:5432/planningpoker
     SPRING_DATASOURCE_USERNAME: dockercompose
     SPRING_DATASOURCE_PASSWORD: dockercompose
-    SPRING_JPA_HIBERNATE_DDL_AUTO: update
+    SPRING_JPA_HIBERNATE_DDL_AUTO: validate
   command: mvn spring-boot:run
 
 services:
@@ -62,6 +63,23 @@ services:
       - "3000"
     ports:
       - "3000:3000"
+
+  flyway:
+    container_name: flyway
+    environment:
+       - FLYWAY_USER=${POSTGRES_USER}
+       - FLYWAY_PASSWORD=${POSTGRES_PASSWORD}
+       - FLYWAY_URL=jdbc:postgresql://postgres:${POSTGRES_PORT}/${POSTGRES_DB}
+       - FLYWAY_SCHEMAS=flyway,${POSTGRES_SCHEMA}
+       - FLYWAY_GROUP=true
+       - FLYWAY_LICENSE_KEY=${FLYWAY_LICENSE_KEY}
+       - FLYWAY_EDITION=${FLYWAY_EDITION}
+    image: flyway/flyway:latest
+    command: -locations=filesystem:/flyway/sql -connectRetries=60 migrate
+    volumes:
+       - $PWD/sql_versions:/flyway/sql
+    depends_on:
+        - postgres
 
 volumes:
   postgres_db:
