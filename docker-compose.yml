@@ -9,12 +9,13 @@ x-server-base: &server-base
     - migrations
   volumes:
     - ./server:/app
+    - ~/.m2:/root/.m2
   environment:
     SERVICE: local
     SPRING_DATASOURCE_URL: jdbc:postgresql://postgresql:5432/planningpoker
     SPRING_DATASOURCE_USERNAME: dockercompose
     SPRING_DATASOURCE_PASSWORD: dockercompose
-    SPRING_JPA_HIBERNATE_DDL_AUTO: validate
+    SPRING_JPA_HIBERNATE_DDL_AUTO: update
   command: mvn spring-boot:run
 
 
@@ -73,6 +74,7 @@ services:
       - postgresql
     volumes:
       - ./server-db:/app
+      - ~/.m2:/root/.m2
     command: mvn migration:up -Dmigration.env=docker-compose
 
 volumes:
