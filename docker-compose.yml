@@ -6,8 +6,7 @@ x-server-base: &server-base
     context: ./server
     dockerfile: src/main/docker/dev-jvm.dockerfile
   depends_on:
-    - postgresql
-    - flyway
+    - migrations
   volumes:
     - ./server:/app
   environment:
@@ -17,6 +16,7 @@ x-server-base: &server-base
     SPRING_DATASOURCE_PASSWORD: dockercompose
     SPRING_JPA_HIBERNATE_DDL_AUTO: validate
   command: mvn spring-boot:run
+
 
 services:
   jaeger:
@@ -64,22 +64,16 @@ services:
     ports:
       - "3000:3000"
 
-  flyway:
-    container_name: flyway
-    environment:
-       - FLYWAY_USER=${POSTGRES_USER}
-       - FLYWAY_PASSWORD=${POSTGRES_PASSWORD}
-       - FLYWAY_URL=jdbc:postgresql://postgres:${POSTGRES_PORT}/${POSTGRES_DB}
-       - FLYWAY_SCHEMAS=flyway,${POSTGRES_SCHEMA}
-       - FLYWAY_GROUP=true
-       - FLYWAY_LICENSE_KEY=${FLYWAY_LICENSE_KEY}
-       - FLYWAY_EDITION=${FLYWAY_EDITION}
-    image: flyway/flyway:latest
-    command: -locations=filesystem:/flyway/sql -connectRetries=60 migrate
-    volumes:
-       - $PWD/sql_versions:/flyway/sql
+  migrations:
+    image: server
+    build:
+      context: ./server
+      dockerfile: src/main/docker/dev-jvm.dockerfile
     depends_on:
-        - postgres
+      - postgresql
+    volumes:
+      - ./server-db:/app
+    command: mvn migration:up -Dmigration.env=docker-compose
 
 volumes:
   postgres_db:

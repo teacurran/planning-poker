@@ -5,17 +5,20 @@
 
   <modelVersion>4.0.0</modelVersion>
 
-  <parent>
-    <groupId>com.terrencecurran</groupId>
-    <artifactId>planningpoker</artifactId>
-    <version>0.0.1-SNAPSHOT</version>
-  </parent>
+  <groupId>com.terrencecurran</groupId>
+	<name>planningpoker-db</name>
+	<artifactId>planningpoker-db</artifactId>
+  <version>0.0.1-SNAPSHOT</version>
 
-  <artifactId>planningpoker-db</artifactId>
   <packaging>jar</packaging>
 
   <properties>
     <build.number>SNAPSHOT</build.number>
+    <java.version>19</java.version>
+    <spring-cloud.version>2022.0.1</spring-cloud.version>
+
+    <sonar.organization>appi</sonar.organization>
+    <sonar.projectKey>teacurran_planning-poker</sonar.projectKey>
   </properties>
 
   <build>

@@ -5,17 +5,20 @@
 	<modelVersion>4.0.0</modelVersion>
 
 
-	<parent>
-    <groupId>com.terrencecurran</groupId>
-    <artifactId>planningpoker</artifactId>
-    <version>0.0.1-SNAPSHOT</version>
+  <parent>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-parent</artifactId>
+    <version>3.0.2</version>
+    <relativePath /> <!-- lookup parent from repository -->
   </parent>
 
-  <artifactId>planningpoker-server</artifactId>
+  <groupId>com.terrencecurran</groupId>
+	<name>planningpoker-server</name>
+	<artifactId>planningpoker-server</artifactId>
+  <version>0.0.1-SNAPSHOT</version>
+
   <packaging>jar</packaging>
 
-	<groupId>com.terrencecurran</groupId>
-	<name>planningpoker</name>
 	<description>Planning Poker Application</description>
 
 	<properties>
