@@ -1,43 +1,9 @@
-version: "3.9"
-
-x-server-base: &server-base
-  image: server
-  build:
-    context: ./server
-    dockerfile: src/main/docker/dev-jvm.dockerfile
-  depends_on:
-    - migrations
-  volumes:
-    - ./server:/app
-    - ~/.m2:/root/.m2
-  environment:
-    SERVICE: local
-    SPRING_DATASOURCE_URL: jdbc:postgresql://postgresql:5432/planningpoker
-    SPRING_DATASOURCE_USERNAME: dockercompose
-    SPRING_DATASOURCE_PASSWORD: dockercompose
-    SPRING_JPA_HIBERNATE_DDL_AUTO: update
-  command: mvn spring-boot:run
-
+version: '3.8'
 
 services:
-  jaeger:
-    image: jaegertracing/all-in-one:latest
-    ports:
-      - "16685:16685"
-      - "16686:16686"
-      - "14268:14268"
-      - "14250:14250"
-      - "4317:4317"
-    environment:
-      COLLECTOR_OTLP_ENABLED: "true"
-
-  server:
-    <<: *server-base
-    ports:
-      - "8080:8080"
-
-  postgresql:
-    image: postgres:15
+  postgres:
+    image: postgres:15-alpine
+    container_name: planning-poker-db
     restart: always
     environment:
       POSTGRES_USER: dockercompose
@@ -46,41 +12,12 @@ services:
     volumes:
       - postgres_db:/var/lib/postgresql/data
     ports:
-      - "5442:5432"
-
-  client:
-    image: client
-    build:
-      context: ./client   
-    working_dir: /app
-    command: npm start
-    volumes:
-      - ./client:/app
-      - node_cache:/app/node_modules
-
-    environment:
-      - NODE_ENV=development
-    expose:
-      - "3000"
-    ports:
-      - "3000:3000"
-
-  migrations:
-    image: server
-    build:
-      context: ./server
-      dockerfile: src/main/docker/dev-jvm.dockerfile
-    depends_on:
-      - postgresql
-    volumes:
-      - ./server-db:/app
-      - ~/.m2:/root/.m2
-    command: mvn migration:up -Dmigration.env=docker-compose
+      - "5445:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dockercompose -d planningpoker"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 volumes:
   postgres_db:
-  node_cache:
-
-networks:
-  default:
-    driver: bridge
