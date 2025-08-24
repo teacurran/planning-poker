@@ -161,20 +161,23 @@ public class RoomService {
     }
     
     public Uni<RoomState> getRoomState(String roomId) {
-        return Room.<Room>findById(roomId)
-            .onItem().transformToUni(room -> {
-                if (room == null) {
-                    return Uni.createFrom().nullItem();
-                }
-                
-                // Get all players who have ever joined this room
-                return Player.<Player>list("room.id = ?1 ORDER BY joinedAt", roomId)
-                    .onItem().transformToUni(players -> 
-                        Vote.<Vote>list("room = ?1 and votingRound = ?2", 
-                                room, getCurrentRound(room))
-                            .onItem().transform(votes -> buildRoomState(room, players, votes))
-                    );
-            });
+        // Wrap in session for read operations
+        return Panache.withSession(() ->
+            Room.<Room>findById(roomId)
+                .onItem().transformToUni(room -> {
+                    if (room == null) {
+                        return Uni.createFrom().nullItem();
+                    }
+                    
+                    // Get all players who have ever joined this room
+                    return Player.<Player>list("room.id = ?1 ORDER BY joinedAt", roomId)
+                        .onItem().transformToUni(players -> 
+                            Vote.<Vote>list("room = ?1 and votingRound = ?2", 
+                                    room, getCurrentRound(room))
+                                .onItem().transform(votes -> buildRoomState(room, players, votes))
+                        );
+                })
+        );
     }
     
     private RoomState buildRoomState(Room room, List<Player> players, List<Vote> votes) {
