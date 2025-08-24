@@ -177,20 +177,17 @@ public class RoomWebSocket {
             return sendError(connection, "You must join the room first");
         }
         
-        // castVote already uses Panache.withTransaction
+        // Cast vote and broadcast after transaction completes
         return roomService.castVote(roomId, playerId, message.value)
-            .flatMap(vote -> {
-                if (vote != null) {
-                    LOGGER.info("Vote cast successfully for player: " + playerId);
-                    // Transaction has completed, broadcast in a new session context
-                    return Uni.createFrom().voidItem();
-                } else {
-                    LOGGER.warning("Vote returned null for player: " + playerId);
-                    return sendError(connection, "Failed to cast vote: invalid vote");
-                }
+            .onItem().ifNotNull().transformToUni(vote -> {
+                LOGGER.info("Vote cast successfully for player: " + playerId);
+                // Broadcast after the transaction is complete
+                return broadcastRoomState(roomId);
             })
-            // Broadcast after the transaction completes
-            .flatMap(v -> broadcastRoomState(roomId))
+            .onItem().ifNull().switchTo(() -> {
+                LOGGER.warning("Vote returned null for player: " + playerId);
+                return sendError(connection, "Failed to cast vote: invalid vote");
+            })
             .onFailure().recoverWithUni(error -> {
                 LOGGER.severe("Failed to cast vote: " + error.getMessage());
                 error.printStackTrace();

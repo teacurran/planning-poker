@@ -63,30 +63,29 @@ public class RoomService {
     
     public Uni<Vote> castVote(String roomId, String playerId, String value) {
         return Panache.withTransaction(() ->
-            Uni.combine().all()
-                .unis(
-                    Room.<Room>findById(roomId),
-                    Player.<Player>findById(playerId)
-                )
-                .asTuple()
-                .onItem().transformToUni(tuple -> {
-                    Room room = tuple.getItem1();
-                    Player player = tuple.getItem2();
-                    
-                    if (room == null || player == null || player.isObserver) {
+            Room.<Room>findById(roomId)
+                .onItem().transformToUni(room -> {
+                    if (room == null) {
                         return Uni.createFrom().nullItem();
                     }
-                    
-                    return Vote.<Vote>find("room = ?1 and player = ?2 and votingRound = ?3", 
-                            room, player, getCurrentRound(room))
-                        .firstResult()
-                        .onItem().transformToUni(existingVote -> {
-                            Vote vote = existingVote != null ? existingVote : new Vote();
-                            vote.room = room;
-                            vote.player = player;
-                            vote.value = value;
-                            vote.votingRound = getCurrentRound(room);
-                            return vote.persist();
+                    return Player.<Player>findById(playerId)
+                        .onItem().transformToUni(player -> {
+                            if (player == null || player.isObserver) {
+                                return Uni.createFrom().nullItem();
+                            }
+                            
+                            // Find existing vote
+                            return Vote.<Vote>find("room = ?1 and player = ?2 and votingRound = ?3", 
+                                    room, player, getCurrentRound(room))
+                                .firstResult()
+                                .onItem().transformToUni(existingVote -> {
+                                    Vote vote = existingVote != null ? existingVote : new Vote();
+                                    vote.room = room;
+                                    vote.player = player;
+                                    vote.value = value;
+                                    vote.votingRound = getCurrentRound(room);
+                                    return vote.persist();
+                                });
                         });
                 })
         );
