@@ -47,28 +47,14 @@ public class RoomService {
                                 return existingPlayer.<Player>persist();
                             } else {
                                 // Create new player
-                                return Player.<Player>list("room.id = ?1", roomId)
-                                    .onItem().transformToUni(existingPlayers -> {
-                                        // Check if we need a new moderator
-                                        boolean needsModerator = existingPlayers.stream()
-                                            .noneMatch(p -> p.isModerator && p.isConnected);
-                                        
-                                        Player player = new Player();
-                                        player.username = username;
-                                        player.sessionId = sessionId;
-                                        player.room = room;
-                                        player.isObserver = false;
-                                        player.isModerator = needsModerator; // Assign moderator if none exists
-                                        player.isConnected = true;
-                                        
-                                        // Log the decision
-                                        System.out.println("Creating player: " + username + 
-                                            ", existingPlayers: " + existingPlayers.size() + 
-                                            ", needsModerator: " + needsModerator + 
-                                            ", isModerator: " + player.isModerator);
-                                        
-                                        return player.<Player>persistAndFlush();
-                                    });
+                                Player player = new Player();
+                                player.username = username;
+                                player.sessionId = sessionId;
+                                player.room = room;
+                                player.isObserver = false;
+                                player.isConnected = true;
+                                
+                                return player.<Player>persistAndFlush();
                             }
                         });
                 })
@@ -196,7 +182,6 @@ public class RoomService {
             ps.id = player.id;
             ps.username = player.username;
             ps.isObserver = player.isObserver;
-            ps.isModerator = player.isModerator;
             ps.isConnected = player.isConnected;
             
             Vote vote = playerVotes.get(player.id);

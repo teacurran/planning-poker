@@ -142,7 +142,6 @@ public class RoomWebSocket {
                 if (player != null && player.id != null) {
                     LOGGER.info("Player joined successfully: " + player.id + " for connection: " + connectionId);
                     LOGGER.info("  Username: " + player.username);
-                    LOGGER.info("  Is Moderator: " + player.isModerator);
                     LOGGER.info("  Is Observer: " + player.isObserver);
                     LOGGER.info("  Is Connected: " + player.isConnected);
                     
@@ -255,7 +254,6 @@ public class RoomWebSocket {
                         roomState.players.forEach(p -> 
                             LOGGER.info("  Player: " + p.username + 
                                 " (id: " + p.id + 
-                                ", moderator: " + p.isModerator + 
                                 ", connected: " + p.isConnected + ")"));
                     }
                     

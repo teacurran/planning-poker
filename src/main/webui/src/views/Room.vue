@@ -68,7 +68,6 @@
             <div class="player-info">
               <span class="player-name">{{ player.username }}</span>
               <div class="player-badges">
-                <Tag v-if="player.isModerator" value="Moderator" severity="warning" size="small" />
                 <Tag v-if="player.isObserver" value="Observer" severity="info" size="small" />
               </div>
             </div>
@@ -82,7 +81,6 @@
           <div>Username: {{ username }}</div>
           <div>My Player ID: {{ myPlayerId }}</div>
           <div>Current Player: {{ currentPlayer?.username }}</div>
-          <div>Is Moderator: {{ isModerator }}</div>
           <div>Is Observer: {{ isObserver }}</div>
           <div>Room has {{ roomState?.players?.length || 0 }} players</div>
         </div>
@@ -101,8 +99,8 @@
           </div>
         </div>
         
-        <div class="moderator-controls" v-if="isModerator">
-          <h3>Moderator Controls</h3>
+        <div class="room-controls" v-if="!isObserver">
+          <h3>Room Controls</h3>
           <div class="control-buttons">
             <Button 
               :label="roomState?.areCardsRevealed ? 'Hide Cards' : 'Reveal Cards'"
@@ -175,11 +173,6 @@ export default {
       return currentPlayer.value?.isObserver || false
     })
     
-    const isModerator = computed(() => {
-      const isMod = currentPlayer.value?.isModerator || false
-      console.log('Computing isModerator:', isMod, 'currentPlayer:', currentPlayer.value)
-      return isMod
-    })
     
     const votingStatusText = computed(() => {
       if (!roomState.value) return 'Waiting...'
@@ -237,7 +230,6 @@ export default {
           if (myPlayer) {
             myPlayerId.value = myPlayer.id
             console.log('Found my player:', myPlayer)
-            console.log('Is moderator?', myPlayer.isModerator)
             if (myPlayer.vote && roomState.value.areCardsRevealed) {
               selectedCard.value = myPlayer.vote
             }
@@ -299,7 +291,6 @@ export default {
       selectedCard,
       cardValues,
       isObserver,
-      isModerator,
       votingStatusText,
       myPlayerId,
       joinRoom,
@@ -538,7 +529,7 @@ export default {
 }
 
 .card-selection,
-.moderator-controls,
+.room-controls,
 .player-controls {
   background: white;
   padding: 20px;
@@ -547,7 +538,7 @@ export default {
 }
 
 .card-selection h3,
-.moderator-controls h3 {
+.room-controls h3 {
   margin: 0 0 15px;
   color: #2c3e50;
 }

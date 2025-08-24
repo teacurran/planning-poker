@@ -26,9 +26,6 @@ public class Player extends PanacheEntityBase {
     @Column(name = "is_observer")
     public boolean isObserver;
     
-    @Column(name = "is_moderator")
-    public boolean isModerator;
-    
     @Column(name = "joined_at")
     public LocalDateTime joinedAt;
     

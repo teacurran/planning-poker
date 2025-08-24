@@ -15,7 +15,6 @@ public class RoomState {
         public String id;
         public String username;
         public boolean isObserver;
-        public boolean isModerator;
         public boolean hasVoted;
         public String vote;
         public boolean isConnected;
