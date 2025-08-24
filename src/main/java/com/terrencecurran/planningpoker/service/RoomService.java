@@ -147,26 +147,23 @@ public class RoomService {
     }
     
     public Uni<RoomState> getRoomState(String roomId) {
-        // Wrap in session for read operations when called from outside a transaction
-        return Panache.withSession(() -> getRoomStateInternal(roomId));
-    }
-    
-    // Internal version that doesn't wrap in session - for use within existing transactions
-    private Uni<RoomState> getRoomStateInternal(String roomId) {
-        return Room.<Room>findById(roomId)
-            .onItem().transformToUni(room -> {
-                if (room == null) {
-                    return Uni.createFrom().nullItem();
-                }
-                
-                // Get all players who have ever joined this room
-                return Player.<Player>list("room.id = ?1 ORDER BY joinedAt", roomId)
-                    .onItem().transformToUni(players -> 
-                        Vote.<Vote>list("room = ?1 and votingRound = ?2", 
-                                room, getCurrentRound(room))
-                            .onItem().transform(votes -> buildRoomState(room, players, votes))
-                    );
-            });
+        // Wrap in session for read operations
+        return Panache.withSession(() -> 
+            Room.<Room>findById(roomId)
+                .onItem().transformToUni(room -> {
+                    if (room == null) {
+                        return Uni.createFrom().nullItem();
+                    }
+                    
+                    // Get all players who have ever joined this room
+                    return Player.<Player>list("room.id = ?1 ORDER BY joinedAt", roomId)
+                        .onItem().transformToUni(players -> 
+                            Vote.<Vote>list("room = ?1 and votingRound = ?2", 
+                                    room, getCurrentRound(room))
+                                .onItem().transform(votes -> buildRoomState(room, players, votes))
+                        );
+                })
+        );
     }
     
     private RoomState buildRoomState(Room room, List<Player> players, List<Vote> votes) {
@@ -249,11 +246,6 @@ public class RoomService {
         }
         
         return stats;
-    }
-    
-    // For use when broadcasting from within a transaction context
-    public Uni<RoomState> getRoomStateForBroadcast(String roomId) {
-        return getRoomStateInternal(roomId);
     }
     
     private Integer getCurrentRound(Room room) {

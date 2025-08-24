@@ -116,7 +116,8 @@ public class RoomWebSocket {
         if (playerId != null && roomId != null) {
             // disconnectPlayer already uses Panache.withTransaction
             return roomService.disconnectPlayer(playerId)
-                .flatMap(result -> broadcastRoomState(roomId, true))
+                // Broadcast after the transaction completes
+                .flatMap(result -> broadcastRoomState(roomId))
                 .onFailure().invoke(error -> 
                     LOGGER.severe("Error disconnecting player: " + error.getMessage())
                 )
@@ -149,13 +150,15 @@ public class RoomWebSocket {
                     connectionToPlayer.put(connectionId, player.id);
                     LOGGER.info("Added mapping - connection: " + connectionId + " -> player: " + player.id);
                     
-                    // We're within joinRoom's transaction context
-                    return broadcastRoomState(roomId, true);
+                    // Return success, broadcast will happen after transaction
+                    return Uni.createFrom().voidItem();
                 } else {
                     LOGGER.severe("Player or player.id is null after join");
                     return sendError(connection, "Failed to join room: player creation failed");
                 }
             })
+            // Broadcast after the transaction completes
+            .flatMap(v -> broadcastRoomState(roomId))
             .onFailure().recoverWithUni(error -> {
                 LOGGER.severe("Exception in join room: " + error.getMessage());
                 error.printStackTrace();
@@ -179,13 +182,15 @@ public class RoomWebSocket {
             .flatMap(vote -> {
                 if (vote != null) {
                     LOGGER.info("Vote cast successfully for player: " + playerId);
-                    // We're within castVote's transaction context
-                    return broadcastRoomState(roomId, true);
+                    // Transaction has completed, broadcast in a new session context
+                    return Uni.createFrom().voidItem();
                 } else {
                     LOGGER.warning("Vote returned null for player: " + playerId);
                     return sendError(connection, "Failed to cast vote: invalid vote");
                 }
             })
+            // Broadcast after the transaction completes
+            .flatMap(v -> broadcastRoomState(roomId))
             .onFailure().recoverWithUni(error -> {
                 LOGGER.severe("Failed to cast vote: " + error.getMessage());
                 error.printStackTrace();
@@ -197,7 +202,8 @@ public class RoomWebSocket {
         LOGGER.info("Handling reveal cards for room: " + roomId);
         // revealCards already uses Panache.withTransaction
         return roomService.revealCards(roomId)
-            .flatMap(room -> broadcastRoomState(roomId, true))
+            // Broadcast after the transaction completes
+            .flatMap(room -> broadcastRoomState(roomId))
             .onFailure().invoke(error -> 
                 LOGGER.severe("Failed to reveal cards: " + error.getMessage())
             )
@@ -208,7 +214,8 @@ public class RoomWebSocket {
         LOGGER.info("Handling hide cards for room: " + roomId);
         // hideCards already uses Panache.withTransaction
         return roomService.hideCards(roomId)
-            .flatMap(room -> broadcastRoomState(roomId, true))
+            // Broadcast after the transaction completes  
+            .flatMap(room -> broadcastRoomState(roomId))
             .onFailure().invoke(error -> 
                 LOGGER.severe("Failed to hide cards: " + error.getMessage())
             )
@@ -219,7 +226,8 @@ public class RoomWebSocket {
         LOGGER.info("Handling reset votes for room: " + roomId);
         // resetVotes already uses Panache.withTransaction
         return roomService.resetVotes(roomId)
-            .flatMap(room -> broadcastRoomState(roomId, true))
+            // Broadcast after the transaction completes
+            .flatMap(room -> broadcastRoomState(roomId))
             .onFailure().invoke(error -> 
                 LOGGER.severe("Failed to reset votes: " + error.getMessage())
             )
@@ -236,25 +244,18 @@ public class RoomWebSocket {
         
         // toggleObserver already uses Panache.withTransaction
         return roomService.toggleObserver(playerId)
-            .flatMap(player -> broadcastRoomState(roomId, true))
+            // Broadcast after the transaction completes
+            .flatMap(player -> broadcastRoomState(roomId))
             .onFailure().recoverWithUni(error -> 
                 sendError(connection, "Failed to toggle observer: " + error.getMessage())
             );
     }
     
     private Uni<Void> broadcastRoomState(String roomId) {
-        return broadcastRoomState(roomId, false);
-    }
-    
-    private Uni<Void> broadcastRoomState(String roomId, boolean withinTransaction) {
         LOGGER.info("Broadcasting room state for room: " + roomId);
         
-        // Use the appropriate method based on whether we're already in a transaction
-        Uni<RoomState> roomStateUni = withinTransaction 
-            ? roomService.getRoomStateForBroadcast(roomId)
-            : roomService.getRoomState(roomId);
-        
-        return roomStateUni
+        // Always use the version with session wrapper since we're calling after transactions
+        return roomService.getRoomState(roomId)
             .flatMap(roomState -> {
                 if (roomState != null) {
                     LOGGER.info("Room state retrieved - players count: " + 
