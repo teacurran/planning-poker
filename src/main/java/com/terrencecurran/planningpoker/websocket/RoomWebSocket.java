@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.terrencecurran.planningpoker.service.RoomService;
 import com.terrencecurran.planningpoker.websocket.message.*;
+import io.quarkus.hibernate.reactive.panache.Panache;
 import io.quarkus.websockets.next.OnClose;
 import io.quarkus.websockets.next.OnError;
 import io.quarkus.websockets.next.OnOpen;
@@ -49,22 +50,23 @@ public class RoomWebSocket {
         connections.put(connectionId, connection);
         connectionToRoom.put(connectionId, roomId);
         
-        // Send initial room state
-        return roomService.getRoomState(roomId)
-            .flatMap(roomState -> {
-                if (roomState != null) {
-                    try {
-                        String stateJson = objectMapper.writeValueAsString(new RoomStateMessage(roomState));
-                        LOGGER.info("Sending initial room state to connection: " + connectionId);
-                        return connection.sendText(stateJson);
-                    } catch (JsonProcessingException e) {
-                        LOGGER.severe("Failed to serialize room state: " + e.getMessage());
-                        return Uni.createFrom().voidItem();
+        // Send initial room state - wrap in session
+        return Panache.withSession(() -> 
+            roomService.getRoomState(roomId)
+                .flatMap(roomState -> {
+                    if (roomState != null) {
+                        try {
+                            String stateJson = objectMapper.writeValueAsString(new RoomStateMessage(roomState));
+                            LOGGER.info("Sending initial room state to connection: " + connectionId);
+                            return connection.sendText(stateJson);
+                        } catch (JsonProcessingException e) {
+                            LOGGER.severe("Failed to serialize room state: " + e.getMessage());
+                            return Uni.createFrom().voidItem();
+                        }
                     }
-                }
-                return Uni.createFrom().voidItem();
-            })
-            .onFailure().recoverWithItem((Void) null);
+                    return Uni.createFrom().voidItem();
+                })
+        ).onFailure().recoverWithItem((Void) null);
     }
     
     @OnTextMessage
@@ -113,12 +115,12 @@ public class RoomWebSocket {
         LOGGER.info("WebSocket closed for connection: " + connectionId);
         
         if (playerId != null && roomId != null) {
-            return roomService.disconnectPlayer(playerId)
-                .flatMap(result -> broadcastRoomState(roomId))
-                .onFailure().invoke(error -> 
-                    LOGGER.severe("Error disconnecting player: " + error.getMessage())
-                )
-                .replaceWithVoid();
+            return Panache.withSession(() ->
+                roomService.disconnectPlayer(playerId)
+                    .flatMap(result -> broadcastRoomState(roomId))
+            ).onFailure().invoke(error -> 
+                LOGGER.severe("Error disconnecting player: " + error.getMessage())
+            ).replaceWithVoid();
         }
         
         return Uni.createFrom().voidItem();
@@ -135,29 +137,30 @@ public class RoomWebSocket {
         String connectionId = connection.id();
         LOGGER.info("Handling join room for connection: " + connectionId + ", username: " + message.username);
         
-        return roomService.joinRoom(roomId, message.username, connectionId)
-            .flatMap(player -> {
-                if (player != null && player.id != null) {
-                    LOGGER.info("Player joined successfully: " + player.id + " for connection: " + connectionId);
-                    LOGGER.info("  Username: " + player.username);
-                    LOGGER.info("  Is Moderator: " + player.isModerator);
-                    LOGGER.info("  Is Observer: " + player.isObserver);
-                    LOGGER.info("  Is Connected: " + player.isConnected);
-                    
-                    connectionToPlayer.put(connectionId, player.id);
-                    LOGGER.info("Added mapping - connection: " + connectionId + " -> player: " + player.id);
-                    
-                    return broadcastRoomState(roomId);
-                } else {
-                    LOGGER.severe("Player or player.id is null after join");
-                    return sendError(connection, "Failed to join room: player creation failed");
-                }
-            })
-            .onFailure().recoverWithUni(error -> {
-                LOGGER.severe("Exception in join room: " + error.getMessage());
-                error.printStackTrace();
-                return sendError(connection, "Failed to join room: " + error.getMessage());
-            });
+        return Panache.withSession(() ->
+            roomService.joinRoom(roomId, message.username, connectionId)
+                .flatMap(player -> {
+                    if (player != null && player.id != null) {
+                        LOGGER.info("Player joined successfully: " + player.id + " for connection: " + connectionId);
+                        LOGGER.info("  Username: " + player.username);
+                        LOGGER.info("  Is Moderator: " + player.isModerator);
+                        LOGGER.info("  Is Observer: " + player.isObserver);
+                        LOGGER.info("  Is Connected: " + player.isConnected);
+                        
+                        connectionToPlayer.put(connectionId, player.id);
+                        LOGGER.info("Added mapping - connection: " + connectionId + " -> player: " + player.id);
+                        
+                        return broadcastRoomState(roomId);
+                    } else {
+                        LOGGER.severe("Player or player.id is null after join");
+                        return sendError(connection, "Failed to join room: player creation failed");
+                    }
+                })
+        ).onFailure().recoverWithUni(error -> {
+            LOGGER.severe("Exception in join room: " + error.getMessage());
+            error.printStackTrace();
+            return sendError(connection, "Failed to join room: " + error.getMessage());
+        });
     }
     
     private Uni<Void> handleVote(WebSocketConnection connection, String roomId, VoteMessage message) {
@@ -171,51 +174,52 @@ public class RoomWebSocket {
             return sendError(connection, "You must join the room first");
         }
         
-        return roomService.castVote(roomId, playerId, message.value)
-            .flatMap(vote -> {
-                if (vote != null) {
-                    LOGGER.info("Vote cast successfully for player: " + playerId);
-                    return broadcastRoomState(roomId);
-                } else {
-                    LOGGER.warning("Vote returned null for player: " + playerId);
-                    return sendError(connection, "Failed to cast vote: invalid vote");
-                }
-            })
-            .onFailure().recoverWithUni(error -> {
-                LOGGER.severe("Failed to cast vote: " + error.getMessage());
-                error.printStackTrace();
-                return sendError(connection, "Failed to cast vote: " + error.getMessage());
-            });
+        return Panache.withSession(() ->
+            roomService.castVote(roomId, playerId, message.value)
+                .flatMap(vote -> {
+                    if (vote != null) {
+                        LOGGER.info("Vote cast successfully for player: " + playerId);
+                        return broadcastRoomState(roomId);
+                    } else {
+                        LOGGER.warning("Vote returned null for player: " + playerId);
+                        return sendError(connection, "Failed to cast vote: invalid vote");
+                    }
+                })
+        ).onFailure().recoverWithUni(error -> {
+            LOGGER.severe("Failed to cast vote: " + error.getMessage());
+            error.printStackTrace();
+            return sendError(connection, "Failed to cast vote: " + error.getMessage());
+        });
     }
     
     private Uni<Void> handleRevealCards(String roomId) {
         LOGGER.info("Handling reveal cards for room: " + roomId);
-        return roomService.revealCards(roomId)
-            .flatMap(room -> broadcastRoomState(roomId))
-            .onFailure().invoke(error -> 
-                LOGGER.severe("Failed to reveal cards: " + error.getMessage())
-            )
-            .replaceWithVoid();
+        return Panache.withSession(() ->
+            roomService.revealCards(roomId)
+                .flatMap(room -> broadcastRoomState(roomId))
+        ).onFailure().invoke(error -> 
+            LOGGER.severe("Failed to reveal cards: " + error.getMessage())
+        ).replaceWithVoid();
     }
     
     private Uni<Void> handleHideCards(String roomId) {
         LOGGER.info("Handling hide cards for room: " + roomId);
-        return roomService.hideCards(roomId)
-            .flatMap(room -> broadcastRoomState(roomId))
-            .onFailure().invoke(error -> 
-                LOGGER.severe("Failed to hide cards: " + error.getMessage())
-            )
-            .replaceWithVoid();
+        return Panache.withSession(() ->
+            roomService.hideCards(roomId)
+                .flatMap(room -> broadcastRoomState(roomId))
+        ).onFailure().invoke(error -> 
+            LOGGER.severe("Failed to hide cards: " + error.getMessage())
+        ).replaceWithVoid();
     }
     
     private Uni<Void> handleResetVotes(String roomId) {
         LOGGER.info("Handling reset votes for room: " + roomId);
-        return roomService.resetVotes(roomId)
-            .flatMap(room -> broadcastRoomState(roomId))
-            .onFailure().invoke(error -> 
-                LOGGER.severe("Failed to reset votes: " + error.getMessage())
-            )
-            .replaceWithVoid();
+        return Panache.withSession(() ->
+            roomService.resetVotes(roomId)
+                .flatMap(room -> broadcastRoomState(roomId))
+        ).onFailure().invoke(error -> 
+            LOGGER.severe("Failed to reset votes: " + error.getMessage())
+        ).replaceWithVoid();
     }
     
     private Uni<Void> handleToggleObserver(WebSocketConnection connection, String roomId) {
@@ -226,16 +230,19 @@ public class RoomWebSocket {
             return sendError(connection, "You must join the room first");
         }
         
-        return roomService.toggleObserver(playerId)
-            .flatMap(player -> broadcastRoomState(roomId))
-            .onFailure().recoverWithUni(error -> 
-                sendError(connection, "Failed to toggle observer: " + error.getMessage())
-            );
+        return Panache.withSession(() ->
+            roomService.toggleObserver(playerId)
+                .flatMap(player -> broadcastRoomState(roomId))
+        ).onFailure().recoverWithUni(error -> 
+            sendError(connection, "Failed to toggle observer: " + error.getMessage())
+        );
     }
     
     private Uni<Void> broadcastRoomState(String roomId) {
         LOGGER.info("Broadcasting room state for room: " + roomId);
         
+        // Note: broadcastRoomState is already called within a session context from the handlers
+        // so we don't need to wrap it again here
         return roomService.getRoomState(roomId)
             .flatMap(roomState -> {
                 if (roomState != null) {
