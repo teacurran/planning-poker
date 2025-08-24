@@ -24,106 +24,112 @@
       <div class="room-id">Room ID: {{ roomId }}</div>
     </div>
     
-    <div class="main-content">
-      <div class="players-section">
-        <Card>
-          <template #title>Players</template>
-          <template #content>
-            <div class="players-list">
-              <div v-for="player in roomState?.players" :key="player.id" class="player-item">
-                <div class="player-info">
-                  <i :class="getPlayerIcon(player)" class="player-icon"></i>
-                  <span class="player-name">{{ player.username }}</span>
-                  <Tag v-if="player.isObserver" value="Observer" severity="info" />
-                </div>
-                <div class="player-vote">
-                  <PokerCard 
-                    :revealed="roomState?.areCardsRevealed" 
-                    :value="player.vote"
-                    :hasVoted="player.hasVoted"
-                    :small="true"
-                  />
-                </div>
+    <div class="poker-table-container">
+      <div class="poker-table">
+        <div class="table-center">
+          <div v-if="roomState?.areCardsRevealed" class="results-display">
+            <h3>Results</h3>
+            <div class="consensus-display" v-if="roomState?.votingStats">
+              <div v-if="roomState.votingStats.consensus">
+                <div class="consensus-label">Consensus</div>
+                <div class="consensus-value">{{ roomState.votingStats.consensus }}</div>
+              </div>
+              <div v-else>
+                <div class="consensus-label">Average</div>
+                <div class="consensus-value">{{ roomState.votingStats.average || '-' }}</div>
               </div>
             </div>
-          </template>
-        </Card>
+          </div>
+          <div v-else class="voting-status">
+            <h3>{{ votingStatusText }}</h3>
+          </div>
+        </div>
         
-        <Card class="mt-3">
-          <template #title>Actions</template>
-          <template #content>
-            <div class="actions">
-              <Button 
-                label="Toggle Observer" 
-                @click="toggleObserver"
-                severity="secondary"
-                class="w-full mb-2"
-              />
-              <Button 
-                label="Reveal Cards" 
-                @click="revealCards"
-                :disabled="!roomState?.isVotingActive || roomState?.areCardsRevealed"
-                class="w-full mb-2"
-              />
-              <Button 
-                label="New Round" 
-                @click="resetVotes"
-                severity="success"
-                class="w-full"
-              />
+        <div class="players-around-table">
+          <div 
+            v-for="(player, index) in roomState?.players" 
+            :key="player.id"
+            :class="getPlayerPositionClass(index, roomState?.players.length)"
+            class="player-seat"
+          >
+            <div class="player-card-slot">
+              <div v-if="player.hasVoted || player.vote" class="card-in-slot">
+                <div v-if="roomState?.areCardsRevealed" class="card-face-up">
+                  {{ player.vote }}
+                </div>
+                <div v-else class="card-face-down">
+                  <div class="card-back"></div>
+                </div>
+              </div>
+              <div v-else class="empty-slot">
+                <div class="slot-placeholder"></div>
+              </div>
             </div>
-          </template>
-        </Card>
+            <div class="player-info">
+              <span class="player-name">{{ player.username }}</span>
+              <div class="player-badges">
+                <Tag v-if="player.isModerator" value="Moderator" severity="warning" size="small" />
+                <Tag v-if="player.isObserver" value="Observer" severity="info" size="small" />
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
       
-      <div class="voting-section">
-        <Card>
-          <template #title>
-            <span v-if="!roomState?.areCardsRevealed">Select Your Card</span>
-            <span v-else>Results</span>
-          </template>
-          <template #content>
-            <div v-if="roomState?.areCardsRevealed && roomState?.votingStats" class="results">
-              <div class="stats-grid">
-                <div class="stat-item">
-                  <div class="stat-label">Average</div>
-                  <div class="stat-value">{{ roomState.votingStats.average || '-' }}</div>
-                </div>
-                <div class="stat-item">
-                  <div class="stat-label">Consensus</div>
-                  <div class="stat-value">{{ roomState.votingStats.consensus || 'None' }}</div>
-                </div>
-                <div class="stat-item">
-                  <div class="stat-label">Voted</div>
-                  <div class="stat-value">{{ roomState.votingStats.votedPlayers }}/{{ roomState.votingStats.totalPlayers }}</div>
-                </div>
-              </div>
-              
-              <div class="vote-distribution">
-                <h4>Vote Distribution</h4>
-                <div class="vote-counts">
-                  <div v-for="vc in roomState.votingStats.voteCounts" :key="vc.value" class="vote-count">
-                    <span class="vote-value">{{ vc.value }}</span>
-                    <span class="vote-count-number">{{ vc.count }}</span>
-                  </div>
-                </div>
-              </div>
+      <div class="controls-section">
+        <!-- Debug info -->
+        <div v-if="true" style="background: #f0f0f0; padding: 10px; margin-bottom: 10px; font-size: 12px;">
+          <div>Username: {{ username }}</div>
+          <div>My Player ID: {{ myPlayerId }}</div>
+          <div>Current Player: {{ currentPlayer?.username }}</div>
+          <div>Is Moderator: {{ isModerator }}</div>
+          <div>Is Observer: {{ isObserver }}</div>
+          <div>Room has {{ roomState?.players?.length || 0 }} players</div>
+        </div>
+        
+        <div class="card-selection" v-if="!isObserver">
+          <h3>Select Your Card</h3>
+          <div class="card-options">
+            <div 
+              v-for="value in cardValues" 
+              :key="value"
+              :class="['selectable-card', { 'selected': selectedCard === value }]"
+              @click="selectCard(value)"
+            >
+              {{ value }}
             </div>
-            
-            <div v-else class="card-selection">
-              <div class="fibonacci-cards">
-                <div v-for="value in fibonacciValues" :key="value" class="card-wrapper">
-                  <PokerCard 
-                    :value="value"
-                    :selected="selectedCard === value"
-                    :clickable="!isObserver"
-                    @click="selectCard(value)"
-                  />
-                </div>
-              </div>
-            </div>
-          </template>
-        </Card>
+          </div>
+        </div>
+        
+        <div class="moderator-controls" v-if="isModerator">
+          <h3>Moderator Controls</h3>
+          <div class="control-buttons">
+            <Button 
+              :label="roomState?.areCardsRevealed ? 'Hide Cards' : 'Reveal Cards'"
+              :icon="roomState?.areCardsRevealed ? 'pi pi-eye-slash' : 'pi pi-eye'"
+              @click="toggleRevealCards"
+              class="w-full mb-2"
+              :severity="roomState?.areCardsRevealed ? 'secondary' : 'primary'"
+            />
+            <Button 
+              label="New Round" 
+              icon="pi pi-refresh"
+              @click="resetVotes"
+              severity="success"
+              class="w-full"
+            />
+          </div>
+        </div>
+        
+        <div class="player-controls">
+          <Button 
+            :label="isObserver ? 'Join as Player' : 'Become Observer'"
+            :icon="isObserver ? 'pi pi-user' : 'pi pi-eye'"
+            @click="toggleObserver"
+            severity="secondary"
+            class="w-full"
+          />
+        </div>
       </div>
     </div>
   </div>
@@ -137,7 +143,6 @@ import Button from 'primevue/button'
 import Dialog from 'primevue/dialog'
 import InputText from 'primevue/inputtext'
 import Tag from 'primevue/tag'
-import PokerCard from '../components/PokerCard.vue'
 import { WebSocketService } from '../services/websocket'
 
 export default {
@@ -147,8 +152,7 @@ export default {
     Button,
     Dialog,
     InputText,
-    Tag,
-    PokerCard
+    Tag
   },
   setup() {
     const route = useRoute()
@@ -158,17 +162,62 @@ export default {
     const roomState = ref(null)
     const selectedCard = ref(null)
     const wsService = ref(null)
+    const myPlayerId = ref(null)
     
-    const fibonacciValues = ['0', '1', '2', '3', '5', '8', '13', '21', '34', '55', '89', '?', '☕']
+    const cardValues = ['1', '3', '5', '8']
     
     const currentPlayer = computed(() => {
-      if (!roomState.value || !wsService.value) return null
-      return roomState.value.players.find(p => p.sessionId === wsService.value.sessionId)
+      if (!roomState.value || !myPlayerId.value) return null
+      return roomState.value.players.find(p => p.id === myPlayerId.value)
     })
     
     const isObserver = computed(() => {
       return currentPlayer.value?.isObserver || false
     })
+    
+    const isModerator = computed(() => {
+      const isMod = currentPlayer.value?.isModerator || false
+      console.log('Computing isModerator:', isMod, 'currentPlayer:', currentPlayer.value)
+      return isMod
+    })
+    
+    const votingStatusText = computed(() => {
+      if (!roomState.value) return 'Waiting...'
+      const voted = roomState.value.players.filter(p => !p.isObserver && p.hasVoted).length
+      const total = roomState.value.players.filter(p => !p.isObserver).length
+      if (voted === 0) return 'Waiting for votes...'
+      if (voted === total) return 'All players have voted!'
+      return `${voted} of ${total} players voted`
+    })
+    
+    const getPlayerPositionClass = (index, total) => {
+      const positions = [
+        'position-top',
+        'position-top-right',
+        'position-right',
+        'position-bottom-right',
+        'position-bottom',
+        'position-bottom-left',
+        'position-left',
+        'position-top-left'
+      ]
+      
+      if (total <= 8) {
+        const step = Math.floor(8 / total)
+        return positions[index * step]
+      }
+      
+      const angle = (index / total) * 2 * Math.PI - Math.PI / 2
+      const x = 50 + 40 * Math.cos(angle)
+      const y = 50 + 40 * Math.sin(angle)
+      
+      return {
+        left: `${x}%`,
+        top: `${y}%`,
+        position: 'absolute',
+        transform: 'translate(-50%, -50%)'
+      }
+    }
     
     const joinRoom = () => {
       if (!username.value) return
@@ -177,12 +226,23 @@ export default {
       wsService.value = new WebSocketService(roomId)
       
       wsService.value.onMessage((message) => {
+        console.log('Received message:', message)
         if (message.type === 'ROOM_STATE') {
           roomState.value = message.roomState
+          console.log('Room state updated:', roomState.value)
+          console.log('Players:', roomState.value.players)
+          console.log('Looking for username:', username.value)
           
-          const myVote = roomState.value.players.find(p => p.username === username.value)?.vote
-          if (myVote) {
-            selectedCard.value = myVote
+          const myPlayer = roomState.value.players.find(p => p.username === username.value)
+          if (myPlayer) {
+            myPlayerId.value = myPlayer.id
+            console.log('Found my player:', myPlayer)
+            console.log('Is moderator?', myPlayer.isModerator)
+            if (myPlayer.vote && roomState.value.areCardsRevealed) {
+              selectedCard.value = myPlayer.vote
+            }
+          } else {
+            console.warn('Could not find player with username:', username.value)
           }
         } else if (message.type === 'ERROR') {
           console.error('WebSocket error:', message.message)
@@ -207,8 +267,12 @@ export default {
       })
     }
     
-    const revealCards = () => {
-      wsService.value.send({ type: 'REVEAL_CARDS' })
+    const toggleRevealCards = () => {
+      if (roomState.value?.areCardsRevealed) {
+        wsService.value.send({ type: 'HIDE_CARDS' })
+      } else {
+        wsService.value.send({ type: 'REVEAL_CARDS' })
+      }
     }
     
     const resetVotes = () => {
@@ -218,12 +282,7 @@ export default {
     
     const toggleObserver = () => {
       wsService.value.send({ type: 'TOGGLE_OBSERVER' })
-    }
-    
-    const getPlayerIcon = (player) => {
-      if (!player.isConnected) return 'pi pi-user-minus'
-      if (player.isObserver) return 'pi pi-eye'
-      return 'pi pi-user'
+      selectedCard.value = null
     }
     
     onUnmounted(() => {
@@ -238,14 +297,17 @@ export default {
       showUsernameDialog,
       roomState,
       selectedCard,
-      fibonacciValues,
+      cardValues,
       isObserver,
+      isModerator,
+      votingStatusText,
+      myPlayerId,
       joinRoom,
       selectCard,
-      revealCards,
+      toggleRevealCards,
       resetVotes,
       toggleObserver,
-      getPlayerIcon
+      getPlayerPositionClass
     }
   }
 }
@@ -255,7 +317,7 @@ export default {
 .room-container {
   min-height: 100vh;
   padding: 20px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: #2c3e50;
 }
 
 .room-header {
@@ -266,113 +328,266 @@ export default {
 
 .room-header h2 {
   margin: 0 0 10px;
-  font-size: 2.5rem;
+  font-size: 2rem;
 }
 
 .room-id {
-  font-size: 1rem;
-  opacity: 0.9;
+  font-size: 0.9rem;
+  opacity: 0.8;
 }
 
-.main-content {
-  display: grid;
-  grid-template-columns: 350px 1fr;
-  gap: 20px;
-  max-width: 1400px;
+.poker-table-container {
+  max-width: 1200px;
   margin: 0 auto;
 }
 
-.players-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+.poker-table {
+  position: relative;
+  width: 100%;
+  height: 500px;
+  background: radial-gradient(ellipse at center, #27ae60, #229954);
+  border-radius: 250px / 150px;
+  border: 15px solid #8b6914;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+  margin-bottom: 40px;
 }
 
-.player-item {
+.table-center {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  color: white;
+}
+
+.results-display h3,
+.voting-status h3 {
+  margin: 0 0 15px;
+  font-size: 1.5rem;
+  text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+.consensus-display {
+  background: rgba(255, 255, 255, 0.9);
+  padding: 20px 40px;
+  border-radius: 15px;
+  color: #2c3e50;
+}
+
+.consensus-label {
+  font-size: 0.9rem;
+  color: #7f8c8d;
+  margin-bottom: 5px;
+}
+
+.consensus-value {
+  font-size: 3rem;
+  font-weight: bold;
+  color: #27ae60;
+}
+
+.players-around-table {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.player-seat {
+  position: absolute;
   display: flex;
-  justify-content: space-between;
+  flex-direction: column;
   align-items: center;
-  padding: 10px;
-  background: #f8f9fa;
+  gap: 8px;
+}
+
+.position-top {
+  top: -60px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.position-top-right {
+  top: 10%;
+  right: 15%;
+}
+
+.position-right {
+  top: 50%;
+  right: -60px;
+  transform: translateY(-50%);
+}
+
+.position-bottom-right {
+  bottom: 10%;
+  right: 15%;
+}
+
+.position-bottom {
+  bottom: -60px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.position-bottom-left {
+  bottom: 10%;
+  left: 15%;
+}
+
+.position-left {
+  top: 50%;
+  left: -60px;
+  transform: translateY(-50%);
+}
+
+.position-top-left {
+  top: 10%;
+  left: 15%;
+}
+
+.player-card-slot {
+  width: 70px;
+  height: 100px;
+}
+
+.card-in-slot {
+  width: 100%;
+  height: 100%;
+}
+
+.card-face-up {
+  width: 100%;
+  height: 100%;
+  background: white;
+  border: 2px solid #34495e;
   border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 2rem;
+  font-weight: bold;
+  color: #2c3e50;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+}
+
+.card-face-down {
+  width: 100%;
+  height: 100%;
+}
+
+.card-back {
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(45deg, #3498db, #2980b9);
+  border: 2px solid #34495e;
+  border-radius: 8px;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+  position: relative;
+  overflow: hidden;
+}
+
+.card-back::after {
+  content: '';
+  position: absolute;
+  top: 10%;
+  left: 10%;
+  width: 80%;
+  height: 80%;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-radius: 4px;
+}
+
+.empty-slot {
+  width: 100%;
+  height: 100%;
+}
+
+.slot-placeholder {
+  width: 100%;
+  height: 100%;
+  border: 2px dashed rgba(255, 255, 255, 0.3);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.1);
 }
 
 .player-info {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.player-icon {
-  font-size: 1.2rem;
-  color: #6c757d;
+  text-align: center;
+  background: rgba(255, 255, 255, 0.95);
+  padding: 5px 10px;
+  border-radius: 5px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
 }
 
 .player-name {
   font-weight: 500;
-}
-
-.fibonacci-cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
-  gap: 15px;
-  padding: 20px;
-}
-
-.stats-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 20px;
-  margin-bottom: 30px;
-}
-
-.stat-item {
-  text-align: center;
-  padding: 15px;
-  background: #f8f9fa;
-  border-radius: 8px;
-}
-
-.stat-label {
+  color: #2c3e50;
   font-size: 0.9rem;
-  color: #6c757d;
-  margin-bottom: 5px;
 }
 
-.stat-value {
-  font-size: 1.8rem;
-  font-weight: bold;
-  color: #495057;
-}
-
-.vote-distribution h4 {
-  margin-bottom: 15px;
-  color: #495057;
-}
-
-.vote-counts {
+.player-badges {
   display: flex;
-  gap: 15px;
-  flex-wrap: wrap;
+  gap: 5px;
+  justify-content: center;
+  margin-top: 3px;
 }
 
-.vote-count {
+.controls-section {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 20px;
+}
+
+.card-selection,
+.moderator-controls,
+.player-controls {
+  background: white;
+  padding: 20px;
+  border-radius: 10px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.card-selection h3,
+.moderator-controls h3 {
+  margin: 0 0 15px;
+  color: #2c3e50;
+}
+
+.card-options {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+
+.selectable-card {
+  aspect-ratio: 2/3;
+  background: white;
+  border: 3px solid #3498db;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.5rem;
+  font-weight: bold;
+  color: #2c3e50;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.selectable-card:hover {
+  transform: translateY(-5px);
+  box-shadow: 0 5px 15px rgba(52, 152, 219, 0.3);
+}
+
+.selectable-card.selected {
+  background: #3498db;
+  color: white;
+  transform: translateY(-5px);
+  box-shadow: 0 5px 15px rgba(52, 152, 219, 0.5);
+}
+
+.control-buttons {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  padding: 10px 15px;
-  background: #e9ecef;
-  border-radius: 8px;
-}
-
-.vote-value {
-  font-weight: bold;
-  font-size: 1.2rem;
-  margin-bottom: 5px;
-}
-
-.vote-count-number {
-  color: #6c757d;
 }
 
 .w-full {
@@ -383,17 +598,14 @@ export default {
   margin-bottom: 0.5rem;
 }
 
-.mt-3 {
-  margin-top: 1rem;
-}
-
 @media (max-width: 768px) {
-  .main-content {
-    grid-template-columns: 1fr;
+  .poker-table {
+    height: 400px;
+    border-radius: 200px / 120px;
   }
   
-  .fibonacci-cards {
-    grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+  .controls-section {
+    grid-template-columns: 1fr;
   }
 }
 </style>

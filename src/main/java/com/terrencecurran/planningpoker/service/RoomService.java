@@ -36,12 +36,41 @@ public class RoomService {
         return Panache.withTransaction(() -> 
             Room.<Room>findById(roomId)
                 .onItem().ifNotNull().transformToUni(room -> {
-                    Player player = new Player();
-                    player.username = username;
-                    player.sessionId = sessionId;
-                    player.room = room;
-                    player.isObserver = false;
-                    return player.<Player>persist();
+                    // First check if player already exists for this session AND room
+                    return Player.<Player>find("sessionId = ?1 and room.id = ?2", sessionId, roomId)
+                        .firstResult()
+                        .onItem().transformToUni(existingPlayer -> {
+                            if (existingPlayer != null) {
+                                // Reconnect existing player
+                                existingPlayer.isConnected = true;
+                                existingPlayer.username = username; // Update username in case it changed
+                                return existingPlayer.<Player>persist();
+                            } else {
+                                // Create new player
+                                return Player.<Player>list("room.id = ?1", roomId)
+                                    .onItem().transformToUni(existingPlayers -> {
+                                        // Check if we need a new moderator
+                                        boolean needsModerator = existingPlayers.stream()
+                                            .noneMatch(p -> p.isModerator && p.isConnected);
+                                        
+                                        Player player = new Player();
+                                        player.username = username;
+                                        player.sessionId = sessionId;
+                                        player.room = room;
+                                        player.isObserver = false;
+                                        player.isModerator = needsModerator; // Assign moderator if none exists
+                                        player.isConnected = true;
+                                        
+                                        // Log the decision
+                                        System.out.println("Creating player: " + username + 
+                                            ", existingPlayers: " + existingPlayers.size() + 
+                                            ", needsModerator: " + needsModerator + 
+                                            ", isModerator: " + player.isModerator);
+                                        
+                                        return player.<Player>persistAndFlush();
+                                    });
+                            }
+                        });
                 })
         );
     }
@@ -82,6 +111,16 @@ public class RoomService {
             Room.<Room>findById(roomId)
                 .onItem().ifNotNull().transformToUni(room -> {
                     room.areCardsRevealed = true;
+                    return room.persist();
+                })
+        );
+    }
+    
+    public Uni<Room> hideCards(String roomId) {
+        return Panache.withTransaction(() ->
+            Room.<Room>findById(roomId)
+                .onItem().ifNotNull().transformToUni(room -> {
+                    room.areCardsRevealed = false;
                     return room.persist();
                 })
         );
@@ -128,7 +167,8 @@ public class RoomService {
                     return Uni.createFrom().nullItem();
                 }
                 
-                return Player.<Player>list("room", room)
+                // Get all players who have ever joined this room
+                return Player.<Player>list("room.id = ?1 ORDER BY joinedAt", roomId)
                     .onItem().transformToUni(players -> 
                         Vote.<Vote>list("room = ?1 and votingRound = ?2", 
                                 room, getCurrentRound(room))
@@ -153,6 +193,7 @@ public class RoomService {
             ps.id = player.id;
             ps.username = player.username;
             ps.isObserver = player.isObserver;
+            ps.isModerator = player.isModerator;
             ps.isConnected = player.isConnected;
             
             Vote vote = playerVotes.get(player.id);
