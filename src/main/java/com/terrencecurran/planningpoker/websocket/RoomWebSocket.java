@@ -2,6 +2,7 @@ package com.terrencecurran.planningpoker.websocket;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.terrencecurran.planningpoker.dto.RoomState;
 import com.terrencecurran.planningpoker.service.RoomService;
 import com.terrencecurran.planningpoker.websocket.message.*;
 import io.quarkus.websockets.next.OnClose;
@@ -115,7 +116,7 @@ public class RoomWebSocket {
         if (playerId != null && roomId != null) {
             // disconnectPlayer already uses Panache.withTransaction
             return roomService.disconnectPlayer(playerId)
-                .flatMap(result -> broadcastRoomState(roomId))
+                .flatMap(result -> broadcastRoomState(roomId, true))
                 .onFailure().invoke(error -> 
                     LOGGER.severe("Error disconnecting player: " + error.getMessage())
                 )
@@ -148,7 +149,8 @@ public class RoomWebSocket {
                     connectionToPlayer.put(connectionId, player.id);
                     LOGGER.info("Added mapping - connection: " + connectionId + " -> player: " + player.id);
                     
-                    return broadcastRoomState(roomId);
+                    // We're within joinRoom's transaction context
+                    return broadcastRoomState(roomId, true);
                 } else {
                     LOGGER.severe("Player or player.id is null after join");
                     return sendError(connection, "Failed to join room: player creation failed");
@@ -177,7 +179,8 @@ public class RoomWebSocket {
             .flatMap(vote -> {
                 if (vote != null) {
                     LOGGER.info("Vote cast successfully for player: " + playerId);
-                    return broadcastRoomState(roomId);
+                    // We're within castVote's transaction context
+                    return broadcastRoomState(roomId, true);
                 } else {
                     LOGGER.warning("Vote returned null for player: " + playerId);
                     return sendError(connection, "Failed to cast vote: invalid vote");
@@ -194,7 +197,7 @@ public class RoomWebSocket {
         LOGGER.info("Handling reveal cards for room: " + roomId);
         // revealCards already uses Panache.withTransaction
         return roomService.revealCards(roomId)
-            .flatMap(room -> broadcastRoomState(roomId))
+            .flatMap(room -> broadcastRoomState(roomId, true))
             .onFailure().invoke(error -> 
                 LOGGER.severe("Failed to reveal cards: " + error.getMessage())
             )
@@ -205,7 +208,7 @@ public class RoomWebSocket {
         LOGGER.info("Handling hide cards for room: " + roomId);
         // hideCards already uses Panache.withTransaction
         return roomService.hideCards(roomId)
-            .flatMap(room -> broadcastRoomState(roomId))
+            .flatMap(room -> broadcastRoomState(roomId, true))
             .onFailure().invoke(error -> 
                 LOGGER.severe("Failed to hide cards: " + error.getMessage())
             )
@@ -216,7 +219,7 @@ public class RoomWebSocket {
         LOGGER.info("Handling reset votes for room: " + roomId);
         // resetVotes already uses Panache.withTransaction
         return roomService.resetVotes(roomId)
-            .flatMap(room -> broadcastRoomState(roomId))
+            .flatMap(room -> broadcastRoomState(roomId, true))
             .onFailure().invoke(error -> 
                 LOGGER.severe("Failed to reset votes: " + error.getMessage())
             )
@@ -233,18 +236,25 @@ public class RoomWebSocket {
         
         // toggleObserver already uses Panache.withTransaction
         return roomService.toggleObserver(playerId)
-            .flatMap(player -> broadcastRoomState(roomId))
+            .flatMap(player -> broadcastRoomState(roomId, true))
             .onFailure().recoverWithUni(error -> 
                 sendError(connection, "Failed to toggle observer: " + error.getMessage())
             );
     }
     
     private Uni<Void> broadcastRoomState(String roomId) {
+        return broadcastRoomState(roomId, false);
+    }
+    
+    private Uni<Void> broadcastRoomState(String roomId, boolean withinTransaction) {
         LOGGER.info("Broadcasting room state for room: " + roomId);
         
-        // getRoomState doesn't use withTransaction, it just queries data
-        // We need to ensure it has a session context
-        return roomService.getRoomState(roomId)
+        // Use the appropriate method based on whether we're already in a transaction
+        Uni<RoomState> roomStateUni = withinTransaction 
+            ? roomService.getRoomStateForBroadcast(roomId)
+            : roomService.getRoomState(roomId);
+        
+        return roomStateUni
             .flatMap(roomState -> {
                 if (roomState != null) {
                     LOGGER.info("Room state retrieved - players count: " + 
