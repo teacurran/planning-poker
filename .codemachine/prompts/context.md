@@ -10,24 +10,26 @@ This is the full specification of the task you must complete.
 
 ```json
 {
-  "task_id": "I4.T2",
+  "task_id": "I4.T3",
   "iteration_id": "I4",
   "iteration_goal": "Implement WebSocket-based real-time voting functionality including connection management, vote casting, round lifecycle (start, reveal, reset), Redis Pub/Sub for event broadcasting across stateless nodes, and frontend voting UI.",
-  "description": "Create `RoomEventPublisher` service publishing WebSocket events to Redis Pub/Sub channel `room:{roomId}`. Implement `RoomEventSubscriber` subscribing to channels and forwarding messages to locally connected WebSocket clients. Use Quarkus reactive Redis client. Publisher method: `publishEvent(roomId, messageType, payload)` serializes message to JSON and publishes. Subscriber: on message received, look up connections in ConnectionRegistry for that room, send message to each WebSocket session. Handle subscription lifecycle (subscribe when first client joins room, unsubscribe when last client leaves).",
+  "description": "Create `VotingService` domain service implementing voting logic. Methods: `castVote(roomId, roundId, participantId, cardValue)` (persist vote to database, publish `vote.recorded` event), `startRound(roomId, storyTitle)` (create Round entity, publish `round.started` event), `revealRound(roomId, roundId)` (query all votes, calculate average/median/consensus, update Round entity with stats, publish `round.revealed` event with all votes), `resetRound(roomId, roundId)` (delete votes, reset Round entity). Use `RoundRepository`, `VoteRepository`, `RoomEventPublisher`. Implement consensus algorithm (variance threshold < 2 points for Fibonacci deck). Handle duplicate vote prevention (upsert vote if participant votes twice).",
   "agent_type_hint": "BackendAgent",
-  "inputs": "Redis Pub/Sub pattern from architecture blueprint, WebSocket message broadcasting requirements",
+  "inputs": "Voting requirements from product spec, Vote sequence diagram from architecture blueprint, Round and Vote entities from I1",
   "input_files": [
     ".codemachine/artifacts/architecture/04_Behavior_and_Communication.md",
-    "backend/src/main/java/com/scrumpoker/api/websocket/ConnectionRegistry.java"
+    "backend/src/main/java/com/scrumpoker/domain/room/Round.java",
+    "backend/src/main/java/com/scrumpoker/domain/room/Vote.java",
+    "backend/src/main/java/com/scrumpoker/repository/RoundRepository.java",
+    "backend/src/main/java/com/scrumpoker/repository/VoteRepository.java"
   ],
   "target_files": [
-    "backend/src/main/java/com/scrumpoker/event/RoomEventPublisher.java",
-    "backend/src/main/java/com/scrumpoker/event/RoomEventSubscriber.java",
-    "backend/src/main/java/com/scrumpoker/event/RoomEvent.java"
+    "backend/src/main/java/com/scrumpoker/domain/room/VotingService.java",
+    "backend/src/main/java/com/scrumpoker/domain/room/ConsensusCalculator.java"
   ],
-  "deliverables": "RoomEventPublisher with `publishEvent(roomId, type, payload)` method, Redis Pub/Sub channel naming: `room:{roomId}`, RoomEventSubscriber listening to subscribed channels, Event routing to WebSocket clients via ConnectionRegistry, JSON serialization/deserialization for event payloads, Subscription management (subscribe/unsubscribe based on room activity)",
-  "acceptance_criteria": "Publishing event to Redis channel succeeds, Subscriber receives event from Redis, Event forwarded to all connected WebSocket clients in target room, Events not sent to clients in other rooms, Multiple application nodes can publish/subscribe (test with 2 backend instances), Subscription cleaned up when no clients in room",
-  "dependencies": ["I4.T1"],
+  "deliverables": "VotingService with methods: castVote, startRound, revealRound, resetRound, Vote persistence with duplicate handling (upsert by participant + round), Round creation with story title, started timestamp, Reveal logic: query votes, calculate stats (avg, median, consensus), persist, ConsensusCalculator determining consensus based on variance threshold, Event publishing after each operation (vote recorded, round started, revealed, reset)",
+  "acceptance_criteria": "Cast vote persists to database and publishes event, Starting round creates Round entity with correct timestamp, Reveal round calculates correct average and median (test with known vote values), Consensus detection works (e.g., all votes 5 → consensus true, votes 3,5,8 → false), Duplicate vote from same participant updates existing vote (not create new), Reset round deletes votes and resets Round entity",
+  "dependencies": ["I2.T3", "I4.T2"],
   "parallelizable": false,
   "done": false
 }
@@ -39,7 +41,51 @@ This is the full specification of the task you must complete.
 
 The following are the relevant sections from the architecture and plan documents, which I found by analyzing the task description.
 
-### Context: asynchronous-websocket-pattern (from 04_Behavior_and_Communication.md)
+### Context: Vote Casting and Round Reveal Sequence Diagram (from 04_Behavior_and_Communication.md)
+
+```markdown
+#### Key Interaction Flow: Vote Casting and Round Reveal
+
+##### Description
+
+This sequence diagram illustrates the critical real-time workflow for a Scrum Poker estimation round, from initial vote casting through final reveal and consensus calculation. The flow demonstrates WebSocket message handling, Redis Pub/Sub event distribution across stateless application nodes, and optimistic UI updates with server reconciliation.
+
+**Scenario:**
+1. Two participants (Alice and Bob) connected to different application nodes due to load balancer sticky session routing
+2. Alice casts vote "5", Bob casts vote "8"
+3. Host triggers reveal after all votes submitted
+4. System calculates statistics (average: 6.5, median: 6.5, no consensus due to variance)
+5. All participants receive synchronized reveal event with results
+
+**Key Operations from Sequence:**
+
+**Vote Casting:**
+```
+WS_A -> VS_A : castVote(roomId="abc123", participantId="alice", cardValue="5")
+VS_A -> DB : INSERT INTO vote (round_id, participant_id, card_value, voted_at) VALUES (...)
+DB --> VS_A : Success
+VS_A -> Redis : PUBLISH room:abc123 {"type":"vote.recorded.v1", "payload":{"participantId":"alice", "votedAt":"..."}}
+```
+
+**Round Reveal:**
+```
+WS_C -> VS_C : revealRound(roomId="abc123", roundId="...")
+VS_C -> DB : SELECT card_value FROM vote WHERE round_id = ... AND participant_id IN (...)
+DB --> VS_C : [{"participantId":"alice","cardValue":"5"},{"participantId":"bob","cardValue":"8"}]
+
+VS_C -> VS_C : Calculate:
+  - Average: (5+8)/2 = 6.5
+  - Median: 6.5
+  - Consensus: false (variance > threshold)
+
+VS_C -> DB : UPDATE round SET revealed_at = NOW(), average = 6.5, median = 6.5, consensus_reached = false WHERE round_id = ...
+DB --> VS_C : Success
+
+VS_C -> Redis : PUBLISH room:abc123 {"type":"round.revealed.v1", "payload":{"votes":[...], "stats":{"avg":6.5,"median":6.5,"consensus":false}}}
+```
+```
+
+### Context: Communication Patterns - WebSocket (from 04_Behavior_and_Communication.md)
 
 ```markdown
 ##### Asynchronous WebSocket (Event-Driven)
@@ -67,62 +113,12 @@ The following are the relevant sections from the architecture and plan documents
 6. Clients receive: `{"type": "vote.recorded.v1", "requestId": "uuid", "payload": {"participantId": "...", "votedAt": "..."}}`
 
 **WebSocket Message Types:**
-- `room.join.v1` - Participant joins room
-- `room.leave.v1` - Participant exits room
 - `vote.cast.v1` - Participant submits vote
 - `vote.recorded.v1` - Server confirms vote persisted (broadcast to room)
 - `round.reveal.v1` - Host triggers card reveal
 - `round.revealed.v1` - Server broadcasts reveal with statistics
 - `round.reset.v1` - Host resets round for re-voting
-- `chat.message.v1` - Participant sends chat message
-- `presence.update.v1` - Participant status change (ready, away)
-- `error.v1` - Server-side validation or authorization error
-```
-
-### Context: key-interaction-flow-vote-round (from 04_Behavior_and_Communication.md)
-
-```markdown
-#### Key Interaction Flow: Vote Casting and Round Reveal
-
-##### Description
-
-This sequence diagram illustrates the critical real-time workflow for a Scrum Poker estimation round, from initial vote casting through final reveal and consensus calculation. The flow demonstrates WebSocket message handling, Redis Pub/Sub event distribution across stateless application nodes, and optimistic UI updates with server reconciliation.
-
-**Scenario:**
-1. Two participants (Alice and Bob) connected to different application nodes due to load balancer sticky session routing
-2. Alice casts vote "5", Bob casts vote "8"
-3. Host triggers reveal after all votes submitted
-4. System calculates statistics (average: 6.5, median: 6.5, no consensus due to variance)
-5. All participants receive synchronized reveal event with results
-
-[Key portions from PlantUML diagram showing Redis Pub/Sub flow:]
-
-VS_A -> Redis : PUBLISH room:abc123 {"type":"vote.recorded.v1", "payload":{"participantId":"alice", "votedAt":"..."}}
-
-Redis -> WS_A : Subscriber receives: vote.recorded.v1 (alice)
-Redis -> WS_B : Subscriber receives: vote.recorded.v1 (alice)
-Redis -> WS_C : Subscriber receives: vote.recorded.v1 (alice)
-
-[Each WebSocket handler then broadcasts to locally connected clients]
-WS_A -> SPA_C : Broadcast to Charlie
-WS_B -> SPA_A : Broadcast to Alice (confirmation)
-WS_B -> SPA_B : Broadcast to Bob
-```
-
-### Context: scalability-and-performance / horizontal-scaling (from 05_Operational_Architecture.md)
-
-```markdown
-##### Horizontal Scaling
-
-**Stateless Application Design:**
-- **Session State:** Stored in Redis, not in JVM memory, enabling any node to serve any request
-- **WebSocket Affinity:** Load balancer sticky sessions based on `room_id` hash for optimal Redis Pub/Sub efficiency, but not required for correctness
-- **Database Connection Pooling:** HikariCP with max pool size = (core_count * 2) + effective_spindle_count, distributed across replicas
-
-**Redis Scaling:**
-- **Cluster Mode:** 3-node Redis cluster for horizontal scalability and high availability
-- **Pub/Sub Sharding:** Channels sharded by `room_id` hash for distributed subscription load
-- **Eviction Policy:** `allkeys-lru` for session cache, `noeviction` for critical room state (manual TTL management)
+- `round.started.v1` - Host starts new round (implied from other messages)
 ```
 
 ---
@@ -133,97 +129,154 @@ The following analysis is based on my direct review of the current codebase. Use
 
 ### Relevant Existing Code
 
-*   **File:** `backend/src/main/java/com/scrumpoker/api/websocket/ConnectionRegistry.java`
-    *   **Summary:** Thread-safe registry managing active WebSocket sessions per room. Uses ConcurrentHashMap to store roomId -> Set<Session> mappings. Provides critical methods: `broadcastToRoom(roomId, message)` and `getConnectionsForRoom(roomId)`.
-    *   **Recommendation:** You MUST inject `ConnectionRegistry` into your `RoomEventSubscriber` to access locally connected WebSocket sessions. Use `connectionRegistry.broadcastToRoom(roomId, message)` to forward Redis Pub/Sub events to local clients.
-    *   **Note:** The ConnectionRegistry already handles JSON serialization (via ObjectMapper) and async sending via `session.getAsyncRemote().sendText()`. Your subscriber should pass deserialized `WebSocketMessage` objects directly to `broadcastToRoom()`.
+*   **File:** `backend/src/main/java/com/scrumpoker/domain/room/RoomService.java`
+    *   **Summary:** This file contains the domain service for room management with reactive patterns using Quarkus Mutiny. It demonstrates the established pattern for domain services in this project: using `@ApplicationScoped`, `@WithTransaction` for transactional methods, `@WithSession` for read-only methods, and returning `Uni<>` for single results or `Multi<>` for lists.
+    *   **Recommendation:** You MUST follow the exact same architectural pattern in `VotingService`. Use `@WithTransaction` for write operations (castVote, startRound, revealRound, resetRound) and return reactive `Uni<>` types. Inject repositories using `@Inject`.
+    *   **Pattern Example:** The service uses `@Inject ObjectMapper` for JSON serialization/deserialization, which you may also need for building event payloads.
 
-*   **File:** `backend/src/main/java/com/scrumpoker/api/websocket/RoomWebSocketHandler.java`
-    *   **Summary:** WebSocket endpoint handler implementing connection lifecycle (onOpen, onClose, onMessage, onError). Validates JWT tokens, manages heartbeat protocol, and delegates to ConnectionRegistry for session management.
-    *   **Recommendation:** This class is already complete from I4.T1. You will NOT modify this file. However, you SHOULD understand that `onOpen` calls `connectionRegistry.addConnection(roomId, session)` and `onClose` calls `connectionRegistry.removeConnection(session)`. Your subscription lifecycle logic MUST hook into these events.
-    *   **Integration Point:** The RoomWebSocketHandler will eventually call your `RoomEventPublisher.publishEvent()` from message handlers (in I4.T4), but for I4.T2 you are only implementing the infrastructure.
+*   **File:** `backend/src/main/java/com/scrumpoker/event/RoomEventPublisher.java`
+    *   **Summary:** This file implements the Redis Pub/Sub event publisher that broadcasts WebSocket events to all application nodes. It provides the `publishEvent(roomId, type, requestId, payload)` method that serializes events to JSON and publishes them to Redis channels named `room:{roomId}`.
+    *   **Recommendation:** You MUST inject and use `RoomEventPublisher` in your `VotingService` to broadcast events after each operation. For example, after casting a vote, call `roomEventPublisher.publishEvent(roomId, "vote.recorded.v1", requestId, payload)` where payload is a `Map<String, Object>` containing participantId and votedAt fields.
+    *   **Critical:** Event publishing should happen AFTER successful database persistence to ensure consistency. Use reactive chaining: `persist().onItem().call(entity -> publishEvent(...))` to ensure events only fire for successfully committed changes.
 
-*   **File:** `backend/src/main/java/com/scrumpoker/api/websocket/WebSocketMessage.java`
-    *   **Summary:** Message envelope class with fields: `type`, `requestId`, `payload` (Map<String, Object>). Includes static factory methods like `createParticipantJoined()`, `createError()`.
-    *   **Recommendation:** Your `RoomEvent` class SHOULD follow a similar structure. The event payload published to Redis should be serializable as JSON and contain enough information to reconstruct a `WebSocketMessage` on the receiving end.
+*   **File:** `backend/src/main/java/com/scrumpoker/domain/room/Round.java`
+    *   **Summary:** This JPA entity defines the Round table structure with fields: `roundId` (UUID), `room` (ManyToOne relationship), `roundNumber` (Integer), `storyTitle` (String, max 500 chars), `startedAt` (Instant), `revealedAt` (Instant, nullable), `average` (BigDecimal for numeric average), `median` (String to support non-numeric cards like ?, ∞, ☕), and `consensusReached` (Boolean).
+    *   **Recommendation:** When creating a Round in `startRound()`, you MUST set `startedAt = Instant.now()` and ensure `revealedAt` is null initially. In `revealRound()`, you MUST update `revealedAt`, `average`, `median`, and `consensusReached` fields. The median field is VARCHAR(10) to support special card values.
+    *   **Note:** The Round has a unique constraint on `(room_id, round_number)`. You must fetch the Room entity and set `round.room = roomEntity` when creating a new round.
 
-*   **File:** `backend/src/main/resources/application.properties`
-    *   **Summary:** Application configuration including Redis connection settings. Redis configured at line 41: `quarkus.redis.hosts=${REDIS_URL:redis://localhost:6379}` with standalone client type (line 42).
-    *   **Recommendation:** You MUST use the Quarkus reactive Redis client (`io.quarkus.redis.datasource.ReactiveRedisDataSource`) which is already configured. Use reactive patterns with Mutiny (Uni/Multi) for non-blocking pub/sub operations.
-    *   **Configuration Note:** The Redis client type is `standalone` (not cluster) for development. Your implementation should work with both, but the architecture specifies cluster mode for production (3 nodes).
+*   **File:** `backend/src/main/java/com/scrumpoker/domain/room/Vote.java`
+    *   **Summary:** This JPA entity defines the Vote table with fields: `voteId` (UUID), `round` (ManyToOne to Round), `participant` (ManyToOne to RoomParticipant), `cardValue` (String, max 10 chars), and `votedAt` (Instant). There's a unique constraint on `(round_id, participant_id)` preventing duplicate votes per participant per round.
+    *   **Recommendation:** For duplicate vote handling in `castVote()`, you MUST use the repository's `findByRoundIdAndParticipantId()` method first. If a vote exists, UPDATE the existing vote's cardValue and votedAt timestamp. If not, create a new Vote entity. This is an UPSERT pattern. DO NOT try to insert twice - the unique constraint will fail.
+    *   **Critical:** When creating a new Vote, you must fetch the Round entity and RoomParticipant entity to set the relationships: `vote.round = roundEntity` and `vote.participant = participantEntity`.
 
-*   **File:** `backend/pom.xml`
-    *   **Summary:** Maven dependencies including `quarkus-redis-client` (line 76-78) which provides reactive Redis support.
-    *   **Recommendation:** All required dependencies are already present. You do NOT need to modify pom.xml.
+*   **File:** `backend/src/main/java/com/scrumpoker/repository/RoundRepository.java`
+    *   **Summary:** This Panache repository provides reactive query methods for Round entities, including `findByRoomId()`, `findByRoomIdAndRoundNumber()`, `findLatestByRoomId()`, and `countByRoomId()`. All methods return `Uni<>` or `Uni<List<>>` for reactive execution.
+    *   **Recommendation:** You SHOULD use `findLatestByRoomId(roomId)` in `startRound()` to determine the next round number (latest.roundNumber + 1, or 1 if no rounds exist). You will also need to inject `RoomRepository` to fetch the Room entity when creating rounds.
+
+*   **File:** `backend/src/main/java/com/scrumpoker/repository/VoteRepository.java`
+    *   **Summary:** This Panache repository provides vote query methods including `findByRoundId()` (critical for reveal), `findByRoundIdAndParticipantId()` (for duplicate detection), and `countByRoundId()`. All methods are reactive.
+    *   **Recommendation:** You MUST use `findByRoundId(roundId)` in `revealRound()` to retrieve all votes for statistics calculation. Use `findByRoundIdAndParticipantId(roundId, participantId)` in `castVote()` for upsert logic. For `resetRound()`, you SHOULD use `delete("round.roundId", roundId)` to bulk delete all votes for the round.
+
+*   **File:** `backend/src/main/java/com/scrumpoker/domain/room/RoomParticipant.java`
+    *   **Summary:** This entity represents participants in a room with fields: `participantId` (UUID), `room`, `user` (nullable for anonymous), `anonymousId` (nullable, for anonymous users), `displayName`, `role` (enum: HOST, VOTER, OBSERVER), `connectedAt`, `disconnectedAt`. The Vote entity has a foreign key to this participant_id.
+    *   **Recommendation:** Your `castVote()` method signature should accept a `participantId` (UUID) parameter, which will be the `RoomParticipant.participantId`, not the user ID directly. You will need to inject `RoomParticipantRepository` to fetch the RoomParticipant entity when creating votes.
 
 ### Implementation Tips & Notes
 
-*   **Tip:** The Quarkus reactive Redis client provides `pubsub()` methods for publishing and subscribing. Use `redisDataSource.pubsub(String.class).subscribe(channelPattern)` to get a Multi<String> stream of messages. Use `redisDataSource.pubsub(String.class).publish(channel, message)` to send events.
+*   **Tip - Consensus Algorithm:** The specification says "variance threshold < 2 points for Fibonacci deck". Here's the algorithm:
+    1. Filter votes to only numeric values (1, 2, 3, 5, 8, 13)
+    2. If any votes are non-numeric (?, ∞, ☕), consensus is automatically FALSE
+    3. If all votes are the same value, consensus is TRUE (variance = 0)
+    4. Calculate variance: σ² = Σ(xi - μ)² / n where μ is mean
+    5. If variance < 2.0, consensus is TRUE; otherwise FALSE
 
-*   **Note:** Redis Pub/Sub channels are formatted as `room:{roomId}` where `{roomId}` is the 6-character nanoid. Your subscriber MUST use pattern matching if you want to subscribe to all rooms dynamically, OR manage subscriptions per-room (recommended approach based on the task description).
+    Create a separate `ConsensusCalculator` utility class with a static method like `public static boolean calculateConsensus(List<Vote> votes)` that returns a boolean. Include a constant `VARIANCE_THRESHOLD = 2.0`.
 
-*   **Critical Design Decision:** The task specifies "subscribe when first client joins room, unsubscribe when last client leaves". This means:
-    1. You MUST track active room subscriptions (e.g., `ConcurrentHashMap<String, Subscription>`)
-    2. When `ConnectionRegistry.addConnection()` is the FIRST connection for a room, call `subscribe(room:roomId)`
-    3. When `ConnectionRegistry.removeConnection()` empties a room, call subscription.cancel() and clean up
-    4. You will need to integrate with ConnectionRegistry's lifecycle, possibly by making your subscriber `@ApplicationScoped` and having ConnectionRegistry notify it of room join/leave events.
+*   **Tip - Median Calculation:** For median:
+    - If all votes are numeric: sort values, take middle value (or average of two middle values if even count)
+    - If any votes are non-numeric: set median to the most common vote value, or "mixed" if no clear majority
+    - The median field in Round is VARCHAR(10) to support both numeric ("5") and non-numeric ("?") values
 
-*   **Alternative Design Pattern:** Since ConnectionRegistry is already managing room lifecycle, consider having your `RoomEventSubscriber` provide a `subscribeToRoom(roomId)` and `unsubscribeFromRoom(roomId)` method that ConnectionRegistry calls. This is cleaner than trying to observe ConnectionRegistry state changes.
+*   **Tip - Average Calculation:** For average:
+    - Only include numeric votes in calculation
+    - Filter out non-numeric card values (?, ∞, ☕)
+    - Use `BigDecimal.valueOf(sum / count)` and set scale to 2 with `RoundingMode.HALF_UP`
+    - If no numeric votes exist, set average to NULL
 
-*   **JSON Serialization:** Use the injected `ObjectMapper` instance (same as ConnectionRegistry uses) to serialize/deserialize your `RoomEvent` objects. Ensure consistency with WebSocketMessage JSON format.
+*   **Note - Event Payload Structure:** The event payloads MUST match the WebSocket protocol specification:
+    - `vote.recorded.v1` payload: `{"participantId": "uuid-string", "votedAt": "2025-10-17T12:34:56Z"}`
+    - `round.started.v1` payload: `{"roundId": "uuid-string", "roundNumber": 1, "storyTitle": "User story", "startedAt": "..."}`
+    - `round.revealed.v1` payload: `{"votes": [{"participantId": "...", "cardValue": "5"}, ...], "stats": {"avg": 6.5, "median": "6.5", "consensus": false}, "revealedAt": "..."}`
+    - `round.reset.v1` payload: `{"roundId": "uuid-string"}`
 
-*   **Testing Strategy:** The acceptance criteria requires testing with 2 backend instances. In your integration test, you can simulate this by:
-    1. Publishing an event using RoomEventPublisher
-    2. Verifying your RoomEventSubscriber receives it
-    3. Verifying ConnectionRegistry.broadcastToRoom() was called with correct roomId and message
-    4. You do NOT need to test actual multiple JVM instances in I4.T2 - that will be covered in I4.T7's integration tests
+*   **Note - Reactive Programming Pattern:** All service methods should return `Uni<>` types. Chain operations using `.onItem().transformToUni()` or `.flatMap()` for sequential async operations. Example pattern for castVote:
+    ```java
+    return voteRepository.findByRoundIdAndParticipantId(roundId, participantId)
+        .onItem().transformToUni(existingVote -> {
+            if (existingVote != null) {
+                // Update existing
+                existingVote.cardValue = cardValue;
+                existingVote.votedAt = Instant.now();
+                return voteRepository.persist(existingVote);
+            } else {
+                // Create new - need to fetch Round and RoomParticipant first
+                return fetchEntitiesAndCreateVote(roundId, participantId, cardValue);
+            }
+        })
+        .onItem().call(vote -> publishVoteRecordedEvent(roomId, vote));
+    ```
 
-*   **Error Handling:** If Redis Pub/Sub fails (e.g., Redis connection lost), your subscriber should log the error but NOT crash the application. WebSocket clients may miss some events, but the system should continue to function. Consider implementing reconnection logic for the Redis subscription.
+*   **Warning - Transaction Boundaries:** Each method that modifies data (castVote, startRound, revealRound, resetRound) MUST be annotated with `@WithTransaction` to ensure atomicity. Event publishing should happen INSIDE the transaction scope but AFTER the database operation succeeds using `.onItem().call()` to ensure we only publish events for successfully persisted changes.
 
-*   **Thread Safety:** Quarkus reactive Redis operations are non-blocking and thread-safe. Use Mutiny operators like `.onItem().transform()` and `.subscribe().with()` for reactive composition. Avoid blocking calls in subscriber handlers.
+*   **Warning - Entity Relationships:** When creating a Round or Vote, you MUST fetch and set the entity relationships correctly:
+    - For Round: fetch Room entity via `RoomRepository.findById(roomId)` and set `round.room = roomEntity`
+    - For Vote: fetch Round entity via `RoundRepository.findById(roundId)` and RoomParticipant via `RoomParticipantRepository.findById(participantId)`, then set `vote.round = roundEntity` and `vote.participant = participantEntity`
+    - Do NOT try to set relationships using just IDs - Hibernate requires actual entity references
 
-### Integration with ConnectionRegistry
+*   **Critical - Reset Round Logic:** For `resetRound()`, you should NOT delete the Round entity itself - only delete the votes and reset the Round's statistics fields (set `revealedAt = null`, `average = null`, `median = null`, `consensusReached = false`). This maintains the audit trail of rounds while allowing re-voting. The pattern:
+    ```java
+    @WithTransaction
+    public Uni<Round> resetRound(String roomId, UUID roundId) {
+        return Uni.combine().all().unis(
+            voteRepository.delete("round.roundId", roundId),  // Delete all votes
+            roundRepository.findById(roundId)                  // Fetch round
+        ).asTuple()
+        .onItem().transformToUni(tuple -> {
+            Round round = tuple.getItem2();
+            round.revealedAt = null;
+            round.average = null;
+            round.median = null;
+            round.consensusReached = false;
+            return roundRepository.persist(round);
+        })
+        .onItem().call(round -> publishResetEvent(roomId, round));
+    }
+    ```
 
-**IMPORTANT:** You MUST modify ConnectionRegistry to call your subscription management methods. Here's the recommended integration approach:
+*   **Critical - Repository Injections:** You will need to inject FOUR repositories in VotingService:
+    1. `@Inject RoundRepository roundRepository;`
+    2. `@Inject VoteRepository voteRepository;`
+    3. `@Inject RoomRepository roomRepository;` (to fetch Room entity when creating rounds)
+    4. `@Inject RoomParticipantRepository roomParticipantRepository;` (to fetch RoomParticipant when creating votes)
 
-1. Add `@Inject RoomEventSubscriber eventSubscriber;` to ConnectionRegistry
-2. In `addConnection(roomId, session)`, after adding to the map, check if this is the FIRST connection for this room: `if (roomConnections.get(roomId).size() == 1) { eventSubscriber.subscribeToRoom(roomId); }`
-3. In `removeConnection(session)`, after removing from map, check if room is now EMPTY: `if (sessions.isEmpty()) { eventSubscriber.unsubscribeFromRoom(roomId); }`
-
-This ensures subscription lifecycle is tightly coupled to actual WebSocket connection state, which is exactly what the architecture requires.
+    Plus:
+    5. `@Inject RoomEventPublisher roomEventPublisher;` (for event broadcasting)
 
 ### Package Organization
 
-*   Your new classes belong in `backend/src/main/java/com/scrumpoker/event/`
-*   The package already exists with a `package-info.java` documenting its purpose
-*   Follow existing naming conventions: service classes use noun names (RoomEventPublisher, RoomEventSubscriber)
-*   Use `@ApplicationScoped` for CDI beans that should be singletons
+*   Both `VotingService.java` and `ConsensusCalculator.java` belong in `backend/src/main/java/com/scrumpoker/domain/room/`
+*   Follow existing naming conventions: service classes use noun names with "Service" suffix
+*   Use `@ApplicationScoped` for VotingService to make it a CDI singleton
+*   ConsensusCalculator should be a utility class with static methods (no CDI annotations needed)
 
-### Reactive Programming Patterns
+### Method Signatures (Recommended)
 
-**Example pattern for publishing:**
 ```java
-@Inject
-ReactiveRedisDataSource redisDataSource;
+@ApplicationScoped
+public class VotingService {
 
-public Uni<Void> publishEvent(String roomId, String type, Map<String, Object> payload) {
-    String channel = "room:" + roomId;
-    RoomEvent event = new RoomEvent(type, payload);
-    String json = objectMapper.writeValueAsString(event);
-    return redisDataSource.pubsub(String.class).publish(channel, json);
+    @WithTransaction
+    public Uni<Vote> castVote(String roomId, UUID roundId, UUID participantId, String cardValue) { ... }
+
+    @WithTransaction
+    public Uni<Round> startRound(String roomId, String storyTitle) { ... }
+
+    @WithTransaction
+    public Uni<Round> revealRound(String roomId, UUID roundId) { ... }
+
+    @WithTransaction
+    public Uni<Round> resetRound(String roomId, UUID roundId) { ... }
 }
-```
 
-**Example pattern for subscribing:**
-```java
-public void subscribeToRoom(String roomId) {
-    String channel = "room:" + roomId;
-    Multi<String> subscription = redisDataSource.pubsub(String.class).subscribe(channel);
+public class ConsensusCalculator {
 
-    subscription.subscribe().with(
-        message -> handleReceivedMessage(roomId, message),
-        failure -> Log.errorf(failure, "Redis subscription error for room %s", roomId)
-    );
+    private static final double VARIANCE_THRESHOLD = 2.0;
+
+    public static boolean calculateConsensus(List<Vote> votes) { ... }
+
+    private static boolean isNumericCardValue(String cardValue) { ... }
+
+    private static double calculateVariance(List<Double> numericValues) { ... }
 }
 ```
 
@@ -233,21 +286,24 @@ public void subscribeToRoom(String roomId) {
 
 Before you start coding, ensure you understand:
 
-- [x] Redis Pub/Sub channel naming convention: `room:{roomId}`
-- [x] ConnectionRegistry provides `broadcastToRoom()` for local WebSocket delivery
-- [x] Subscription lifecycle MUST be managed based on first-join/last-leave events
-- [x] Use Quarkus reactive Redis client with Mutiny for non-blocking operations
-- [x] RoomEvent class should match WebSocketMessage structure for consistency
-- [x] Integration requires modifying ConnectionRegistry to call subscription methods
-- [x] JSON serialization using injected ObjectMapper instance
-- [x] Thread-safe concurrent data structures for tracking active subscriptions
-- [x] Error handling for Redis failures should be graceful (log, don't crash)
+- [x] Service must follow reactive Mutiny patterns with `Uni<>` return types
+- [x] Use `@WithTransaction` for all write operations
+- [x] Inject 4 repositories: Round, Vote, Room, RoomParticipant
+- [x] Inject RoomEventPublisher for broadcasting events
+- [x] Implement upsert logic for duplicate votes using findByRoundIdAndParticipantId
+- [x] Fetch entity references (Room, Round, RoomParticipant) before creating related entities
+- [x] Calculate consensus using variance threshold < 2.0 for numeric votes only
+- [x] Handle non-numeric card values (?, ∞, ☕) in median calculation
+- [x] Event publishing happens AFTER successful persistence using `.onItem().call()`
+- [x] Reset round deletes votes but preserves Round entity (sets fields to null)
+- [x] Use `findLatestByRoomId()` to determine next round number in startRound
+- [x] Event payloads must match WebSocket protocol specification format
 
 **Next Steps:**
-1. Create `RoomEvent.java` data class
-2. Implement `RoomEventPublisher.java` with `publishEvent()` method
-3. Implement `RoomEventSubscriber.java` with subscription lifecycle management
-4. Modify `ConnectionRegistry.java` to integrate subscription hooks
-5. Write integration tests validating pub/sub flow
+1. Create `ConsensusCalculator.java` utility class with variance calculation
+2. Implement `VotingService.java` with all four methods
+3. Ensure proper entity relationship handling for Vote and Round creation
+4. Implement reactive event publishing after each operation
+5. Test with known vote values to verify statistics calculations
 
-Good luck! Remember to follow the reactive programming patterns and ensure thread safety throughout.
+Good luck! Remember to follow the reactive programming patterns and ensure proper transaction boundaries throughout.

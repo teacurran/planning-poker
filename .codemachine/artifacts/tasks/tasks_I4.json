@@ -42,7 +42,7 @@
     "acceptance_criteria": "Cast vote persists to database and publishes event, Starting round creates Round entity with correct timestamp, Reveal round calculates correct average and median (test with known vote values), Consensus detection works (e.g., all votes 5 → consensus true, votes 3,5,8 → false), Duplicate vote from same participant updates existing vote (not create new), Reset round deletes votes and resets Round entity",
     "dependencies": ["I2.T3", "I4.T2"],
     "parallelizable": false,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I4.T4",
