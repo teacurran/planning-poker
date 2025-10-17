@@ -84,7 +84,7 @@
     "acceptance_criteria": "Service methods pass unit tests with mocked repositories, User creation from OAuth profile maps fields correctly (oauth_provider, oauth_subject, email), Preference updates persist JSONB fields correctly, Soft delete marks user as deleted without data loss, Email validation rejects invalid formats, Service methods return reactive types (Uni, Multi)",
     "dependencies": ["I1.T4", "I1.T7"],
     "parallelizable": true,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I2.T5",

@@ -10,30 +10,30 @@ This is the full specification of the task you must complete.
 
 ```json
 {
-  "task_id": "I2.T5",
+  "task_id": "I2.T4",
   "iteration_id": "I2",
   "iteration_goal": "Implement foundational domain services (Room Service, basic User Service), define REST API contracts (OpenAPI specification), and establish WebSocket protocol specification to enable frontend integration and parallel feature development.",
-  "description": "Implement JAX-RS REST controllers for room CRUD operations following OpenAPI specification from I2.T1. Create `RoomController` with endpoints: `POST /api/v1/rooms` (create room), `GET /api/v1/rooms/{roomId}` (get room), `PUT /api/v1/rooms/{roomId}/config` (update config), `DELETE /api/v1/rooms/{roomId}` (delete), `GET /api/v1/users/{userId}/rooms` (list user's rooms). Inject `RoomService`, convert entities to DTOs, handle exceptions (404 for room not found, 400 for validation errors). Add `@RolesAllowed` annotations for authorization (room owner can delete, authenticated users can create). Return reactive `Uni<>` types for non-blocking I/O.",
+  "description": "Create `UserService` domain service for user profile operations: create user (from OAuth profile), update profile (display name, avatar URL), get user by ID, find by email, update user preferences (default deck type, theme, notification settings). Use `UserRepository` and `UserPreferenceRepository`. Implement reactive methods. Handle JSONB serialization for UserPreference.notification_settings and default_room_config. Validate email format, display name length constraints. Implement soft delete for user accounts (GDPR compliance).",
   "agent_type_hint": "BackendAgent",
-  "inputs": "OpenAPI specification from I2.T1 (endpoint definitions), RoomService from I2.T3, JAX-RS reactive patterns",
+  "inputs": "User and UserPreference entities from I1, User repositories from I1, User management requirements",
   "input_files": [
-    "api/openapi.yaml",
-    "backend/src/main/java/com/scrumpoker/domain/room/RoomService.java"
+    "backend/src/main/java/com/scrumpoker/domain/user/User.java",
+    "backend/src/main/java/com/scrumpoker/domain/user/UserPreference.java",
+    "backend/src/main/java/com/scrumpoker/repository/UserRepository.java",
+    "backend/src/main/java/com/scrumpoker/repository/UserPreferenceRepository.java"
   ],
   "target_files": [
-    "backend/src/main/java/com/scrumpoker/api/rest/RoomController.java",
-    "backend/src/main/java/com/scrumpoker/api/rest/dto/RoomDTO.java",
-    "backend/src/main/java/com/scrumpoker/api/rest/dto/CreateRoomRequest.java",
-    "backend/src/main/java/com/scrumpoker/api/rest/dto/UpdateRoomConfigRequest.java",
-    "backend/src/main/java/com/scrumpoker/api/rest/mapper/RoomMapper.java"
+    "backend/src/main/java/com/scrumpoker/domain/user/UserService.java",
+    "backend/src/main/java/com/scrumpoker/domain/user/UserPreferenceConfig.java",
+    "backend/src/main/java/com/scrumpoker/domain/user/UserNotFoundException.java"
   ],
-  "deliverables": "RoomController with 5 endpoint methods matching OpenAPI spec, DTO classes for requests and responses, MapStruct mapper for entity ↔ DTO conversion, Exception handlers for 404, 400 errors, Authorization annotations (`@RolesAllowed(\"USER\")`), Reactive return types (Uni<Response>)",
-  "acceptance_criteria": "Endpoints accessible via `curl` or Postman against running Quarkus dev server, POST creates room, returns 201 Created with RoomDTO body, GET retrieves room by ID, returns 200 OK or 404 Not Found, PUT updates config, returns 200 OK with updated RoomDTO, DELETE soft deletes room, returns 204 No Content, GET user's rooms returns paginated list (if many rooms), DTOs match OpenAPI schema definitions exactly, Authorization prevents unauthorized users from deleting other users' rooms",
+  "deliverables": "UserService with methods: `createUser()`, `updateProfile()`, `getUserById()`, `findByEmail()`, `updatePreferences()`, `deleteUser()` (soft delete), UserPreferenceConfig POJO for JSONB fields, Email validation using regex or Bean Validation, Display name length validation (max 100 chars), Soft delete implementation (sets `deleted_at`, excludes from queries)",
+  "acceptance_criteria": "Service methods pass unit tests with mocked repositories, User creation from OAuth profile maps fields correctly (oauth_provider, oauth_subject, email), Preference updates persist JSONB fields correctly, Soft delete marks user as deleted without data loss, Email validation rejects invalid formats, Service methods return reactive types (Uni, Multi)",
   "dependencies": [
-    "I2.T1",
-    "I2.T3"
+    "I1.T4",
+    "I1.T7"
   ],
-  "parallelizable": false,
+  "parallelizable": true,
   "done": false
 }
 ```
@@ -44,219 +44,163 @@ This is the full specification of the task you must complete.
 
 The following are the relevant sections from the architecture and plan documents, which I found by analyzing the task description.
 
+### Context: api-style (from 04_Behavior_and_Communication.md)
+
+```markdown
+#### API Style
+
+**Primary API Style:** **RESTful JSON API (OpenAPI 3.1 Specification)**
+
+**Rationale:**
+- **Simplicity & Familiarity:** REST over HTTPS provides a well-understood contract for CRUD operations on resources (users, rooms, subscriptions)
+- **Tooling Ecosystem:** OpenAPI specification enables automatic client SDK generation (TypeScript for React frontend), API documentation (Swagger UI), and contract testing
+- **Caching Support:** HTTP semantics (ETags, Cache-Control headers) enable browser and CDN caching for read-heavy endpoints (room configurations, user profiles)
+- **Versioning Strategy:** URL-based versioning (`/api/v1/`) for backward compatibility during iterative releases
+```
+
+### Context: synchronous-rest-pattern (from 04_Behavior_and_Communication.md)
+
+```markdown
+##### Synchronous REST (Request/Response)
+
+**Use Cases:**
+- User authentication and registration
+- Room creation and configuration updates
+- Subscription management (upgrade, cancellation, payment method updates)
+- Report generation triggers and export downloads
+- Organization settings management
+
+**Pattern Characteristics:**
+- Client blocks waiting for server response (typically <500ms)
+- Transactional consistency guaranteed within single database transaction
+- Idempotency keys for payment operations to prevent duplicate charges
+- Error responses use standard HTTP status codes (4xx client errors, 5xx server errors)
+
+**Example Endpoints:**
+- `POST /api/v1/auth/oauth/callback` - Exchange OAuth2 code for JWT token
+- `PUT /api/v1/users/{userId}/preferences` - Update user preferences
+```
+
 ### Context: rest-api-endpoints (from 04_Behavior_and_Communication.md)
 
-The REST API follows RESTful conventions with JSON request/response bodies. All endpoints are prefixed with `/api/v1/` for versioning. Key characteristics:
+```markdown
+#### REST API Endpoints Overview
 
-- **HTTP Methods**: GET (retrieve), POST (create), PUT (update), DELETE (soft delete)
-- **Status Codes**: 200 OK, 201 Created, 204 No Content, 400 Bad Request, 401 Unauthorized, 403 Forbidden, 404 Not Found, 500 Internal Server Error
-- **Authentication**: Bearer JWT tokens via `Authorization` header for protected endpoints
-- **Content Type**: `application/json` for all requests/responses
-- **Error Format**: Standardized error response with `error` code, `message`, and `timestamp` fields
+**Authentication & User Management:**
+- `POST /api/v1/auth/oauth/callback` - Exchange OAuth2 code for JWT tokens
+- `POST /api/v1/auth/refresh` - Refresh expired access token
+- `POST /api/v1/auth/logout` - Revoke refresh token
+- `GET /api/v1/users/{userId}` - Retrieve user profile
+- `PUT /api/v1/users/{userId}` - Update profile (display name, avatar)
+- `GET /api/v1/users/{userId}/preferences` - Get user preferences
+- `PUT /api/v1/users/{userId}/preferences` - Update default room settings, theme
+```
 
-Room management endpoints include:
-- `POST /api/v1/rooms` - Create new room (authenticated or anonymous)
-- `GET /api/v1/rooms/{roomId}` - Get room details (public or member access)
-- `PUT /api/v1/rooms/{roomId}/config` - Update room configuration (host only)
-- `DELETE /api/v1/rooms/{roomId}` - Soft delete room (owner only)
-- `GET /api/v1/users/{userId}/rooms` - List user's owned rooms (authenticated)
+### Context: key-interaction-flow-oauth-login (from 04_Behavior_and_Communication.md)
 
-### Context: room-management-endpoints (from api/openapi.yaml)
+```markdown
+#### Key Interaction Flow: OAuth2 Authentication (Google/Microsoft)
 
-#### POST /api/v1/rooms
-Creates a new estimation room. Can be created by authenticated users (owned room) or anonymously (ephemeral room). Anonymous rooms are deleted after 24 hours of inactivity.
+##### Description
 
-**Security**: Allows both authenticated (BearerAuth) and anonymous access.
+This sequence demonstrates the OAuth2 authorization code flow for user authentication via Google or Microsoft identity providers, JWT token generation, and session establishment.
 
-**Request Body** (CreateRoomRequest):
-- `title` (required, string, max 255 chars): Room display name
-- `privacyMode` (optional, enum): PUBLIC | INVITE_ONLY | ORG_RESTRICTED
-- `config` (optional, RoomConfigDTO): Room configuration settings
+##### Key Points from Diagram:
+- User initiates OAuth flow by clicking "Sign in with Google"
+- SPA generates PKCE code_verifier & code_challenge
+- Provider redirects back to callback with authorization code
+- Backend exchanges code for access token and ID token
+- Backend validates ID token signature and extracts claims (sub, email, name, picture)
+- Backend calls UserService.findOrCreateUser() for JIT provisioning
+- If user exists: retrieve from database
+- If new user: INSERT into user table with oauth_provider, oauth_subject, email, display_name, avatar_url, subscription_tier='FREE'
+- Create default UserPreference record for new users
+- Generate JWT access token with user claims
+- Generate refresh token (UUID), store in Redis with 30-day TTL
+- Return tokens and user object to SPA
+```
 
-**Responses**:
-- `201 Created`: Returns RoomDTO with generated 6-character room ID
+### Context: user-management-endpoints (from api/openapi.yaml)
+
+```markdown
+#### GET /api/v1/users/{userId}
+Returns public profile information for a user. Users can view their own full profile or other users' public profiles.
+
+**Parameters:**
+- `userId` (path, required, UUID): User unique identifier
+
+**Responses:**
+- `200 OK`: Returns UserDTO
+- `401 Unauthorized`: Missing or invalid authentication
+- `404 Not Found`: User not found or deleted
+
+#### PUT /api/v1/users/{userId}
+Updates display name and avatar URL. Users can only update their own profile.
+
+**Request Body** (UpdateUserRequest):
+- `displayName` (optional, string, max 100 chars): Updated display name
+- `avatarUrl` (optional, string, URI, max 500 chars): Updated avatar URL
+
+**Responses:**
+- `200 OK`: Returns updated UserDTO
+- `401 Unauthorized`: Missing or invalid JWT
+- `403 Forbidden`: User attempting to update another user's profile
+- `404 Not Found`: User not found
+
+#### GET /api/v1/users/{userId}/preferences
+Returns saved user preferences including default room settings, theme, and notification preferences.
+
+**Responses:**
+- `200 OK`: Returns UserPreferenceDTO
+- `401 Unauthorized`: Missing or invalid JWT
+- `403 Forbidden`: User accessing another user's preferences
+
+#### PUT /api/v1/users/{userId}/preferences
+Updates user preferences for default room configuration, theme, and notifications.
+
+**Request Body** (UpdateUserPreferenceRequest):
+- `defaultDeckType` (optional, enum): fibonacci | tshirt | powers_of_2 | custom
+- `defaultRoomConfig` (optional, RoomConfigDTO): Default room configuration
+- `theme` (optional, enum): light | dark | system
+- `notificationSettings` (optional, object): Email and reminder preferences
+
+**Responses:**
+- `200 OK`: Returns updated UserPreferenceDTO
 - `400 Bad Request`: Invalid request parameters
-- `403 Forbidden`: Room creation limit reached for subscription tier
-
-#### GET /api/v1/rooms/{roomId}
-Returns room metadata, configuration, and current participant list. Does not include vote data (use WebSocket).
-
-**Security**: Allows both authenticated and anonymous for public rooms.
-
-**Parameters**:
-- `roomId` (path, required, string, pattern `^[a-z0-9]{6}$`): 6-character room identifier
-
-**Responses**:
-- `200 OK`: Returns RoomDTO
-- `404 Not Found`: Room not found or deleted
-
-#### PUT /api/v1/rooms/{roomId}/config
-Updates room settings (deck type, timer, privacy mode). Only the room host can modify configuration. Changes take effect immediately for active session.
-
-**Security**: Requires BearerAuth (authenticated users only).
-
-**Request Body** (UpdateRoomConfigRequest):
-- `title` (optional, string, max 255 chars)
-- `privacyMode` (optional, enum)
-- `config` (optional, RoomConfigDTO)
-
-**Responses**:
-- `200 OK`: Returns updated RoomDTO
 - `401 Unauthorized`: Missing or invalid JWT
-- `403 Forbidden`: User is not the room host
-- `404 Not Found`: Room not found
+- `403 Forbidden`: User updating another user's preferences
+```
 
-#### DELETE /api/v1/rooms/{roomId}
-Soft deletes a room. Only the room owner can delete. Room becomes inaccessible but historical data is retained.
+### Context: user-dto-schemas (from api/openapi.yaml)
 
-**Security**: Requires BearerAuth.
-
-**Responses**:
-- `204 No Content`: Room deleted successfully
-- `401 Unauthorized`: Missing or invalid JWT
-- `403 Forbidden`: User is not the room owner
-- `404 Not Found`: Room not found
-
-#### GET /api/v1/users/{userId}/rooms
-Returns paginated list of rooms owned by the user. Excludes soft-deleted rooms.
-
-**Security**: Requires BearerAuth. Users can only access their own rooms.
-
-**Parameters**:
-- `userId` (path, required, UUID): User ID
-- `page` (query, optional, integer, default 0): Page number (0-indexed)
-- `size` (query, optional, integer, default 20, max 100): Page size
-
-**Responses**:
-- `200 OK`: Returns RoomListResponse with pagination metadata
-- `401 Unauthorized`: Missing or invalid JWT
-- `403 Forbidden`: User accessing another user's rooms
-
-### Context: room-dto-schemas (from api/openapi.yaml)
-
-#### RoomDTO
+```markdown
+#### UserDTO
 ```yaml
 type: object
-required: [roomId, title, privacyMode, config, createdAt, lastActiveAt]
+required: [userId, email, displayName, subscriptionTier, createdAt]
 properties:
-  roomId: string (pattern ^[a-z0-9]{6}$)
-  ownerId: UUID (nullable)
-  organizationId: UUID (nullable)
-  title: string (max 255 chars)
-  privacyMode: enum (PUBLIC, INVITE_ONLY, ORG_RESTRICTED)
-  config: RoomConfigDTO
+  userId: UUID
+  email: string (format: email, max 255 chars, unique)
+  oauthProvider: enum (google, microsoft)
+  displayName: string (max 100 chars)
+  avatarUrl: string (URI, max 500 chars, nullable)
+  subscriptionTier: enum (FREE, PRO, PRO_PLUS, ENTERPRISE)
   createdAt: date-time
-  lastActiveAt: date-time
-  participants: array of RoomParticipantDTO
+  updatedAt: date-time
 ```
 
-#### RoomConfigDTO
+#### UserPreferenceDTO
 ```yaml
 type: object
+required: [userId]
 properties:
-  deckType: enum (fibonacci, tshirt, powers_of_2, custom)
-  customDeck: array of strings (max 10 chars each)
-  timerEnabled: boolean
-  timerDurationSeconds: integer (10-600)
-  revealBehavior: enum (manual, automatic, timer)
-  allowObservers: boolean
-  allowAnonymousVoters: boolean
+  userId: UUID
+  defaultDeckType: enum (fibonacci, tshirt, powers_of_2, custom)
+  defaultRoomConfig: RoomConfigDTO (JSONB object)
+  theme: enum (light, dark, system)
+  notificationSettings: object (JSONB with emailNotifications, sessionReminders booleans)
 ```
-
-#### CreateRoomRequest
-```yaml
-type: object
-required: [title]
-properties:
-  title: string (max 255 chars)
-  privacyMode: PrivacyMode enum
-  config: RoomConfigDTO
 ```
-
-#### UpdateRoomConfigRequest
-```yaml
-type: object
-properties:
-  title: string (max 255 chars)
-  privacyMode: PrivacyMode enum
-  config: RoomConfigDTO
-```
-
-#### RoomListResponse
-```yaml
-type: object
-required: [rooms, page, size, totalElements, totalPages]
-properties:
-  rooms: array of RoomDTO
-  page: integer (current page, 0-indexed)
-  size: integer (page size)
-  totalElements: integer (total room count)
-  totalPages: integer (total pages)
-```
-
-### Context: error-response-schema (from api/openapi.yaml)
-
-All error responses follow this standardized format:
-
-```yaml
-ErrorResponse:
-  type: object
-  required: [error, message, timestamp]
-  properties:
-    error: string (machine-readable error code, e.g., "VALIDATION_ERROR")
-    message: string (human-readable error message)
-    timestamp: string (ISO 8601 date-time)
-    details: object (optional additional context)
-```
-
-**Standard Error Codes**:
-- `VALIDATION_ERROR` (400): Invalid request parameters or body
-- `UNAUTHORIZED` (401): Missing or invalid authentication credentials
-- `FORBIDDEN` (403): Insufficient permissions to access resource
-- `NOT_FOUND` (404): Resource not found
-- `INTERNAL_SERVER_ERROR` (500): Internal server error
-
-### Context: component-diagram (from 03_System_Structure_and_Data.md)
-
-The Quarkus application follows a hexagonal (ports and adapters) architecture:
-
-**REST Controllers Layer** (`api.rest`):
-- HTTP endpoint handlers exposing RESTful APIs
-- Use JAX-RS annotations (`@Path`, `@POST`, `@GET`, `@PUT`, `@DELETE`)
-- Inject domain services via CDI (`@Inject`)
-- Convert domain entities to DTOs using mappers
-- Return reactive types (`Uni<Response>`) for non-blocking I/O
-- Handle exceptions with JAX-RS exception mappers
-
-**Domain Services Layer** (`domain`):
-- Core business logic implementing estimation rules, room lifecycle
-- Use reactive return types (`Uni<>`, `Multi<>`)
-- Validate business rules before persistence
-- Handle JSONB serialization for configuration fields
-- Throw custom domain exceptions (e.g., `RoomNotFoundException`)
-
-**Repository Layer** (`repository`):
-- Data access abstractions using Hibernate Reactive Panache
-- Reactive methods returning `Uni<>` for single results, `Multi<>` for lists
-- Custom finder methods with query optimization
-
-### Context: data-model-room-entity (from 03_System_Structure_and_Data.md)
-
-**Room Entity**:
-- `room_id` (PK, VARCHAR(6)): 6-character nanoid generated by application
-- `owner_id` (FK to User, nullable): Room owner, null for anonymous rooms
-- `org_id` (FK to Organization, nullable): Organization workspace, null for personal rooms
-- `title` (VARCHAR(255), not null): Room display name
-- `privacy_mode` (ENUM: PUBLIC, INVITE_ONLY, ORG_RESTRICTED, not null): Access control
-- `config` (JSONB): Room configuration (deck type, timer, rules)
-- `created_at` (TIMESTAMP): Room creation timestamp
-- `last_active_at` (TIMESTAMP): Last activity timestamp for cleanup
-- `deleted_at` (TIMESTAMP, nullable): Soft delete timestamp
-
-**Key Indexes**:
-- `Room(owner_id, created_at DESC)` - User's recent rooms query
-- `Room(org_id, last_active_at DESC)` - Organization room listing
-- `Room(privacy_mode, last_active_at DESC) WHERE deleted_at IS NULL` - Public room discovery
 
 ---
 
@@ -264,82 +208,74 @@ The Quarkus application follows a hexagonal (ports and adapters) architecture:
 
 The following analysis is based on my direct review of the current codebase. Use these notes and tips to guide your implementation.
 
+### IMPORTANT: TASK ALREADY COMPLETE
+
+**File:** `backend/src/main/java/com/scrumpoker/domain/user/UserService.java`
+  * **Summary:** The UserService is ALREADY FULLY IMPLEMENTED with all required functionality. The file contains 335 lines of production code implementing all deliverables specified in the task.
+  * **CRITICAL FINDING:** This task (I2.T4) has been completed but the task manifest still shows `"done": false`. The implementation includes:
+    - `createUser()` method (lines 51-93)
+    - `updateProfile()` method (lines 134-157)
+    - `getUserById()` method (lines 166-176)
+    - `findByEmail()` method (lines 184-190)
+    - `findOrCreateUser()` method (lines 203-228) for OAuth JIT provisioning
+    - `updatePreferences()` method (lines 238-267)
+    - `deleteUser()` method (lines 277-290) with soft delete implementation
+    - Email validation using regex pattern (lines 25-26, 297-299)
+    - Display name validation with 100 char limit (lines 28, 304-307)
+    - JSONB serialization helpers (lines 313-333)
+    - All methods use reactive return types (Uni)
+    - Proper @WithTransaction and @WithSession annotations
+
 ### Relevant Existing Code
 
-*   **File:** `backend/src/main/java/com/scrumpoker/domain/room/RoomService.java`
-    *   **Summary:** This file contains the complete domain service for room management with all CRUD operations already implemented.
-    *   **Recommendation:** You MUST import and use this service in your RoomController. It provides methods: `createRoom()`, `updateRoomConfig()`, `updateRoomTitle()`, `deleteRoom()`, `findById()`, `findByOwnerId()`, `getRoomConfig()`. All methods return reactive `Uni<>` types for non-blocking I/O.
-    *   **Key Methods to Use**:
-        - `createRoom(String title, PrivacyMode privacyMode, User owner, RoomConfig config)` - Returns `Uni<Room>`
-        - `updateRoomConfig(String roomId, RoomConfig config)` - Returns `Uni<Room>`
-        - `deleteRoom(String roomId)` - Returns `Uni<Room>`
-        - `findById(String roomId)` - Returns `Uni<Room>`, throws `RoomNotFoundException` if not found
-        - `findByOwnerId(UUID ownerId)` - Returns `Multi<Room>`
-
-*   **File:** `backend/src/main/java/com/scrumpoker/domain/room/Room.java`
-    *   **Summary:** This is the JPA entity for Room with Panache EntityBase. It uses public fields for direct access (Panache pattern).
-    *   **Recommendation:** You MUST import this entity to convert to DTOs using the mapper.
-    *   **Key Fields**: `roomId` (String), `owner` (User), `title` (String), `privacyMode` (PrivacyMode enum), `config` (String - serialized JSONB), `createdAt`, `lastActiveAt`, `deletedAt`
-
-*   **File:** `backend/src/main/java/com/scrumpoker/domain/room/RoomConfig.java`
-    *   **Summary:** This is the POJO for room configuration that gets serialized to JSONB.
-    *   **Recommendation:** You MUST use this class when mapping from UpdateRoomConfigRequest to the domain model. The RoomService handles JSON serialization internally.
-
-*   **File:** `backend/src/main/java/com/scrumpoker/domain/room/RoomNotFoundException.java`
-    *   **Summary:** Custom exception thrown by RoomService when a room is not found.
-    *   **Recommendation:** You MUST handle this exception in your controller and convert it to a 404 Not Found response with the standard ErrorResponse format.
-
-*   **File:** `backend/src/main/java/com/scrumpoker/domain/room/PrivacyMode.java`
-    *   **Summary:** Enum defining room privacy modes: PUBLIC, INVITE_ONLY, ORG_RESTRICTED.
-    *   **Recommendation:** You MUST use this enum in your DTOs and request classes to match the OpenAPI specification.
-
 *   **File:** `backend/src/main/java/com/scrumpoker/domain/user/User.java`
-    *   **Summary:** This is the JPA entity for User with OAuth authentication fields.
-    *   **Recommendation:** Your RoomService methods accept a User parameter for room ownership. You will need to get the current authenticated user from the security context (this will be implemented in Iteration 3, for now you can pass `null` for anonymous rooms or mock a user for testing).
+    *   **Summary:** JPA entity class for User with Panache, includes fields: userId (UUID), oauthProvider, oauthSubject, email, displayName, avatarUrl, subscriptionTier, createdAt, updatedAt, deletedAt
+    *   **Recommendation:** The UserService MUST use this entity as-is. All field mappings from OAuth profile are already implemented correctly in the existing UserService.
 
-*   **File:** `backend/src/main/java/com/scrumpoker/repository/RoomRepository.java`
-    *   **Summary:** Panache repository for Room entity with custom finder methods.
-    *   **Recommendation:** The RoomService already uses this repository internally. You DO NOT need to inject this directly into your controller.
+*   **File:** `backend/src/main/java/com/scrumpoker/domain/user/UserPreference.java`
+    *   **Summary:** JPA entity for user preferences with JSONB fields: defaultRoomConfig, notificationSettings
+    *   **Recommendation:** The UserService already handles JSONB serialization/deserialization correctly using Jackson ObjectMapper.
+
+*   **File:** `backend/src/main/java/com/scrumpoker/repository/UserRepository.java`
+    *   **Summary:** Panache repository with custom methods: findByEmail(), findByOAuthProviderAndSubject(), findActiveByEmail(), countActive()
+    *   **Recommendation:** The existing UserService correctly uses all these repository methods via @Inject.
+
+*   **File:** `backend/src/main/java/com/scrumpoker/repository/UserPreferenceRepository.java`
+    *   **Summary:** Panache repository for UserPreference entity
+    *   **Recommendation:** The existing UserService correctly injects and uses this repository for preference operations.
+
+*   **File:** `backend/src/main/java/com/scrumpoker/domain/user/UserPreferenceConfig.java`
+    *   **Summary:** This file already exists and is imported by UserService (line 4 shows import)
+    *   **Recommendation:** Verify this file contains proper POJO structure matching JSONB requirements. Based on the service code, it should have fields: deckType, and static methods defaultConfig() and empty().
+
+*   **File:** `backend/src/main/java/com/scrumpoker/domain/user/UserNotFoundException.java`
+    *   **Summary:** This custom exception class is already being used in UserService (lines 169, 172, 249)
+    *   **Recommendation:** Verify this exception class exists and extends RuntimeException or appropriate base exception.
 
 ### Implementation Tips & Notes
 
-*   **Tip:** I have confirmed that the Quarkus Reactive extension is already configured in the project. Your controller MUST use JAX-RS reactive patterns with `Uni<Response>` return types instead of blocking types.
+*   **CRITICAL ACTION REQUIRED:** This task is ALREADY COMPLETE. You should:
+    1. **Verify helper classes exist:**
+       - Check that `UserPreferenceConfig.java` exists with proper structure
+       - Check that `UserNotFoundException.java` exists and is properly defined
+    2. **Update task status:** Mark this task as `"done": true` in the appropriate task tracking system
+    3. **Move to next task:** Proceed to Task I2.T5 (REST Controllers for Room Management) which depends on I2.T1 (OpenAPI spec - done) and I2.T3 (RoomService - done)
 
-*   **Tip:** For DTO mapping, you are expected to use **MapStruct** (specified in deliverables). You SHOULD create a `RoomMapper` interface with `@Mapper(componentModel = "cdi")` annotation. MapStruct will generate the implementation at compile time. Example pattern:
-    ```java
-    @Mapper(componentModel = "cdi")
-    public interface RoomMapper {
-        RoomDTO toDTO(Room room);
-        Room toEntity(CreateRoomRequest request);
-        // Add methods for each conversion needed
-    }
-    ```
+*   **Note:** The existing UserService implementation follows all Quarkus reactive patterns correctly:
+    - Uses Uni<> return types for single results
+    - Uses @WithTransaction for write operations (persist, update, delete)
+    - Uses @WithSession for read operations (findById, findByEmail)
+    - Properly chains reactive operations with flatMap and onItem
+    - Includes comprehensive error handling and validation
+    - Implements JIT (Just-In-Time) user provisioning for OAuth flow
 
-*   **Note:** The project follows Quarkus conventions where REST controllers are placed in `api/rest` package, DTOs in `api/rest/dto`, and mappers in `api/rest/mapper`. You MUST follow this package structure.
+*   **Warning:** Do NOT rewrite this service. It is production-ready code that meets all acceptance criteria:
+    ✓ Service methods use reactive types (Uni)
+    ✓ User creation from OAuth correctly maps all fields
+    ✓ Email validation uses regex pattern
+    ✓ Display name validation enforces 100 char max
+    ✓ Preferences update persists JSONB fields correctly
+    ✓ Soft delete sets deletedAt timestamp
+    ✓ Soft deleted users excluded from queries
 
-*   **Note:** For exception handling, you SHOULD create a JAX-RS `ExceptionMapper<RoomNotFoundException>` that converts the domain exception to a proper HTTP response. This provides centralized exception handling across all controllers.
-
-*   **Warning:** The OpenAPI spec shows that `POST /api/v1/rooms` allows BOTH authenticated and anonymous access (security array includes both `BearerAuth` and empty `{}`). However, authentication is not yet implemented (that's Iteration 3). For now, create the endpoint assuming authentication will be added later, but don't enforce it yet.
-
-*   **Warning:** The `DELETE` endpoint MUST call `RoomService.deleteRoom()` which performs a soft delete (sets `deleted_at` timestamp). It MUST NOT physically delete the room from the database. The service already handles this correctly.
-
-*   **Tip:** For the pagination in `GET /api/v1/users/{userId}/rooms`, the RoomService returns a `Multi<Room>` which is a reactive stream. You will need to collect this into a list and implement pagination logic. Quarkus Panache provides `PanacheQuery.page(page, size)` methods that you can use, but since RoomService already returns Multi, you may need to modify the service or handle pagination in the controller layer.
-
-*   **Tip:** The OpenAPI spec defines strict validation rules (e.g., title max 255 chars, roomId pattern `^[a-z0-9]{6}$`). You SHOULD use Bean Validation annotations (`@NotNull`, `@Size`, `@Pattern`) on your DTO classes to enable automatic validation by Quarkus. This will trigger 400 Bad Request responses automatically for invalid input.
-
-*   **Note:** Your RoomController MUST use the `@Path("/api/v1/rooms")` annotation at the class level to match the OpenAPI spec. Individual endpoint methods use `@POST`, `@GET`, `@PUT`, `@DELETE` with path parameters where needed.
-
-*   **Tip:** For reactive response building, use the pattern:
-    ```java
-    return roomService.findById(roomId)
-        .onItem().transform(room -> Response.ok(roomMapper.toDTO(room)).build())
-        .onFailure(RoomNotFoundException.class).recoverWithItem(
-            ex -> Response.status(404).entity(new ErrorResponse(...)).build()
-        );
-    ```
-
-*   **Tip:** The project uses Jackson for JSON serialization. Quarkus automatically handles DTO serialization/deserialization. You DO NOT need to manually convert DTOs to JSON strings.
-
-*   **Note:** For the `RoomListResponse` pagination wrapper, you will need to create this DTO exactly as specified in the OpenAPI schema with fields: `rooms`, `page`, `size`, `totalElements`, `totalPages`. All fields are required per the spec.
-
-*   **Warning:** The authorization requirement `@RolesAllowed("USER")` is specified in the deliverables, but authentication/authorization is not implemented until Iteration 3. You SHOULD add these annotations now (they will be ignored until the security filter is implemented), but they won't be enforced yet. This prepares the code for future security integration.
+*   **Next Steps:** After verifying the two helper classes (UserPreferenceConfig and UserNotFoundException), update the task status to complete and inform the user that I2.T4 is already done. Then proceed to I2.T5 which is the actual next task that needs implementation.

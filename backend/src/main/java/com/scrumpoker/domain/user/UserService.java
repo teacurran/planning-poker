@@ -22,26 +22,46 @@ import java.util.regex.Pattern;
 @ApplicationScoped
 public class UserService {
 
+    /**
+     * Email validation pattern following RFC 5322.
+     */
     private static final Pattern EMAIL_PATTERN = Pattern.compile(
             "^[A-Za-z0-9+_.-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$"
     );
-    private static final int MAX_DISPLAY_NAME_LENGTH = 100;
-
-    @Inject
-    UserRepository userRepository;
-
-    @Inject
-    UserPreferenceRepository userPreferenceRepository;
-
-    @Inject
-    ObjectMapper objectMapper;
 
     /**
-     * Creates a new user from OAuth profile data and initializes default preferences.
-     * This method is typically called during OAuth2 JIT (Just-In-Time) user provisioning.
+     * Maximum allowed length for user display name.
+     */
+    private static final int MAX_DISPLAY_NAME_LENGTH = 100;
+
+    /**
+     * Repository for user entity operations.
+     */
+    @Inject
+    private UserRepository userRepository;
+
+    /**
+     * Repository for user preference entity operations.
+     */
+    @Inject
+    private UserPreferenceRepository userPreferenceRepository;
+
+    /**
+     * Jackson object mapper for JSON serialization/deserialization.
+     */
+    @Inject
+    private ObjectMapper objectMapper;
+
+    /**
+     * Creates a new user from OAuth profile data and initializes
+     * default preferences.
+     * This method is typically called during OAuth2 JIT
+     * (Just-In-Time) user provisioning.
      *
-     * @param oauthProvider The OAuth provider (e.g., "google", "microsoft")
-     * @param oauthSubject The OAuth subject identifier (unique user ID from provider)
+     * @param oauthProvider The OAuth provider
+     *        (e.g., "google", "microsoft")
+     * @param oauthSubject The OAuth subject identifier
+     *        (unique user ID from provider)
      * @param email User's email address
      * @param displayName User's display name
      * @param avatarUrl URL to user's avatar image
@@ -49,29 +69,35 @@ public class UserService {
      * @throws IllegalArgumentException if validation fails
      */
     @WithTransaction
-    public Uni<User> createUser(String oauthProvider, String oauthSubject, String email,
-                                 String displayName, String avatarUrl) {
+    public Uni<User> createUser(final String oauthProvider,
+                                 final String oauthSubject,
+                                 final String email,
+                                 final String displayName,
+                                 final String avatarUrl) {
         // Validate inputs
         if (oauthProvider == null || oauthProvider.trim().isEmpty()) {
             return Uni.createFrom().failure(
-                    new IllegalArgumentException("OAuth provider cannot be null or empty")
+                    new IllegalArgumentException(
+                            "OAuth provider cannot be null or empty")
             );
         }
         if (oauthSubject == null || oauthSubject.trim().isEmpty()) {
             return Uni.createFrom().failure(
-                    new IllegalArgumentException("OAuth subject cannot be null or empty")
+                    new IllegalArgumentException(
+                            "OAuth subject cannot be null or empty")
             );
         }
         if (!isValidEmail(email)) {
             return Uni.createFrom().failure(
-                    new IllegalArgumentException("Invalid email format: " + email)
+                    new IllegalArgumentException(
+                            "Invalid email format: " + email)
             );
         }
         if (!isValidDisplayName(displayName)) {
+            final String msg = "Display name must be between 1 and "
+                    + MAX_DISPLAY_NAME_LENGTH + " characters";
             return Uni.createFrom().failure(
-                    new IllegalArgumentException(
-                            "Display name must be between 1 and " + MAX_DISPLAY_NAME_LENGTH + " characters"
-                    )
+                    new IllegalArgumentException(msg)
             );
         }
 
@@ -94,24 +120,31 @@ public class UserService {
 
     /**
      * Creates default UserPreference record for a newly created user.
+     *
+     * @param user The user for whom preferences are being created
+     * @return Uni containing the created UserPreference entity
      */
-    private Uni<UserPreference> createDefaultPreferences(User user) {
+    private Uni<UserPreference> createDefaultPreferences(
+            final User user) {
         UserPreference preference = new UserPreference();
         preference.userId = user.userId;
         preference.user = user;
         preference.defaultDeckType = "fibonacci";
         // theme defaults to "light" at database level
 
-        // Manually set timestamps (Hibernate Reactive doesn't reliably support @CreationTimestamp)
+        // Manually set timestamps
+        // (Hibernate Reactive doesn't reliably support @CreationTimestamp)
         Instant now = Instant.now();
         preference.createdAt = now;
         preference.updatedAt = now;
 
         // Set default JSONB configurations
         try {
-            UserPreferenceConfig defaultConfig = UserPreferenceConfig.defaultConfig();
+            final UserPreferenceConfig defaultConfig =
+                    UserPreferenceConfig.defaultConfig();
             preference.defaultRoomConfig = serializeConfig(defaultConfig);
-            preference.notificationSettings = serializeConfig(defaultConfig);
+            preference.notificationSettings =
+                    serializeConfig(defaultConfig);
         } catch (RuntimeException e) {
             // Fallback to empty JSON objects if serialization fails
             preference.defaultRoomConfig = "{}";
@@ -122,7 +155,8 @@ public class UserService {
     }
 
     /**
-     * Updates user profile information (display name and avatar URL).
+     * Updates user profile information
+     * (display name and avatar URL).
      *
      * @param userId User ID
      * @param displayName New display name (optional)
@@ -132,15 +166,19 @@ public class UserService {
      * @throws IllegalArgumentException if validation fails
      */
     @WithTransaction
-    public Uni<User> updateProfile(UUID userId, String displayName, String avatarUrl) {
+    public Uni<User> updateProfile(final UUID userId,
+                                     final String displayName,
+                                     final String avatarUrl) {
         return getUserById(userId)
                 .flatMap(user -> {
                     // Validate display name if provided
-                    if (displayName != null && !isValidDisplayName(displayName)) {
+                    if (displayName != null
+                            && !isValidDisplayName(displayName)) {
+                        final String msg = "Display name must be between 1 "
+                                + "and " + MAX_DISPLAY_NAME_LENGTH
+                                + " characters";
                         return Uni.createFrom().failure(
-                                new IllegalArgumentException(
-                                        "Display name must be between 1 and " + MAX_DISPLAY_NAME_LENGTH + " characters"
-                                )
+                                new IllegalArgumentException(msg)
                         );
                     }
 
@@ -164,9 +202,10 @@ public class UserService {
      * @throws UserNotFoundException if user not found or soft-deleted
      */
     @WithSession
-    public Uni<User> getUserById(UUID userId) {
+    public Uni<User> getUserById(final UUID userId) {
         return userRepository.findById(userId)
-                .onItem().ifNull().failWith(() -> new UserNotFoundException(userId))
+                .onItem().ifNull().failWith(
+                        () -> new UserNotFoundException(userId))
                 .onItem().transform(user -> {
                     if (user.deletedAt != null) {
                         throw new UserNotFoundException(userId);
@@ -176,13 +215,14 @@ public class UserService {
     }
 
     /**
-     * Finds a user by email address. Returns only active (non-deleted) users.
+     * Finds a user by email address.
+     * Returns only active (non-deleted) users.
      *
      * @param email Email address to search for
      * @return Uni containing the User entity, or null if not found
      */
     @WithSession
-    public Uni<User> findByEmail(String email) {
+    public Uni<User> findByEmail(final String email) {
         if (email == null || email.trim().isEmpty()) {
             return Uni.createFrom().nullItem();
         }
@@ -201,34 +241,38 @@ public class UserService {
      * @return Uni containing the found or created User entity
      */
     @WithTransaction
-    public Uni<User> findOrCreateUser(String oauthProvider, String oauthSubject,
-                                       String email, String displayName, String avatarUrl) {
-        return userRepository.findByOAuthProviderAndSubject(oauthProvider, oauthSubject)
+    public Uni<User> findOrCreateUser(final String oauthProvider,
+                                       final String oauthSubject,
+                                       final String email,
+                                       final String displayName,
+                                       final String avatarUrl) {
+        return userRepository.findByOAuthProviderAndSubject(
+                oauthProvider, oauthSubject)
                 .onItem().ifNotNull().transform(user -> {
                     // User exists, update profile if changed
-                    boolean updated = false;
                     if (email != null && !email.equals(user.email)) {
                         user.email = email;
-                        updated = true;
                     }
-                    if (displayName != null && !displayName.equals(user.displayName)) {
+                    if (displayName != null
+                            && !displayName.equals(user.displayName)) {
                         user.displayName = displayName;
-                        updated = true;
                     }
-                    if (avatarUrl != null && !avatarUrl.equals(user.avatarUrl)) {
+                    if (avatarUrl != null
+                            && !avatarUrl.equals(user.avatarUrl)) {
                         user.avatarUrl = avatarUrl;
-                        updated = true;
                     }
                     return user;
                 })
                 .onItem().ifNull().switchTo(
                         // User doesn't exist, create new one
-                        () -> createUser(oauthProvider, oauthSubject, email, displayName, avatarUrl)
+                        () -> createUser(oauthProvider, oauthSubject,
+                                email, displayName, avatarUrl)
                 );
     }
 
     /**
-     * Updates user preferences including default room configuration and notification settings.
+     * Updates user preferences including default room configuration
+     * and notification settings.
      *
      * @param userId User ID
      * @param config Configuration object containing preferences to update
@@ -236,30 +280,39 @@ public class UserService {
      * @throws UserNotFoundException if user not found
      */
     @WithTransaction
-    public Uni<UserPreference> updatePreferences(UUID userId, UserPreferenceConfig config) {
+    public Uni<UserPreference> updatePreferences(
+            final UUID userId, final UserPreferenceConfig config) {
         if (config == null) {
             return Uni.createFrom().failure(
-                    new IllegalArgumentException("Configuration cannot be null")
+                    new IllegalArgumentException(
+                            "Configuration cannot be null")
             );
         }
 
         // Verify user exists
         return getUserById(userId)
                 .flatMap(user -> userPreferenceRepository.findById(userId)
-                        .onItem().ifNull().failWith(() -> new UserNotFoundException(userId))
+                        .onItem().ifNull().failWith(
+                                () -> new UserNotFoundException(userId))
                         .flatMap(preference -> {
                             try {
                                 // Update JSONB fields
                                 if (config.deckType != null) {
-                                    preference.defaultDeckType = config.deckType;
+                                    preference.defaultDeckType =
+                                            config.deckType;
                                 }
-                                preference.defaultRoomConfig = serializeConfig(config);
-                                preference.notificationSettings = serializeConfig(config);
+                                preference.defaultRoomConfig =
+                                        serializeConfig(config);
+                                preference.notificationSettings =
+                                        serializeConfig(config);
 
-                                return userPreferenceRepository.persist(preference);
+                                return userPreferenceRepository
+                                        .persist(preference);
                             } catch (RuntimeException e) {
+                                final String msg =
+                                        "Failed to serialize preferences";
                                 return Uni.createFrom().failure(
-                                        new IllegalArgumentException("Failed to serialize preferences", e)
+                                        new IllegalArgumentException(msg, e)
                                 );
                             }
                         })
@@ -275,12 +328,14 @@ public class UserService {
      * @throws UserNotFoundException if user not found or already deleted
      */
     @WithTransaction
-    public Uni<User> deleteUser(UUID userId) {
+    public Uni<User> deleteUser(final UUID userId) {
         return getUserById(userId)
                 .flatMap(user -> {
                     if (user.deletedAt != null) {
+                        final String msg = "User is already deleted: "
+                                + userId;
                         return Uni.createFrom().failure(
-                                new IllegalArgumentException("User is already deleted: " + userId)
+                                new IllegalArgumentException(msg)
                         );
                     }
 
@@ -293,42 +348,62 @@ public class UserService {
 
     /**
      * Validates email format using regex pattern.
+     *
+     * @param email The email address to validate
+     * @return true if email is valid, false otherwise
      */
-    private boolean isValidEmail(String email) {
-        return email != null && !email.trim().isEmpty() && EMAIL_PATTERN.matcher(email).matches();
+    private boolean isValidEmail(final String email) {
+        return email != null && !email.trim().isEmpty()
+                && EMAIL_PATTERN.matcher(email).matches();
     }
 
     /**
      * Validates display name length constraints.
+     *
+     * @param displayName The display name to validate
+     * @return true if display name is valid, false otherwise
      */
-    private boolean isValidDisplayName(String displayName) {
-        return displayName != null &&
-                !displayName.trim().isEmpty() &&
-                displayName.length() <= MAX_DISPLAY_NAME_LENGTH;
+    private boolean isValidDisplayName(final String displayName) {
+        return displayName != null
+                && !displayName.trim().isEmpty()
+                && displayName.length() <= MAX_DISPLAY_NAME_LENGTH;
     }
 
     /**
      * Serializes UserPreferenceConfig to JSON string for JSONB storage.
+     *
+     * @param config The configuration object to serialize
+     * @return JSON string representation
+     * @throws RuntimeException if serialization fails
      */
-    private String serializeConfig(UserPreferenceConfig config) {
+    private String serializeConfig(final UserPreferenceConfig config) {
         try {
             return objectMapper.writeValueAsString(config);
         } catch (JsonProcessingException e) {
-            throw new RuntimeException("Failed to serialize user preference config", e);
+            final String msg = "Failed to serialize user preference config";
+            throw new RuntimeException(msg, e);
         }
     }
 
     /**
      * Deserializes JSON string to UserPreferenceConfig object.
+     *
+     * @param json The JSON string to deserialize
+     * @return UserPreferenceConfig object
+     * @throws RuntimeException if deserialization fails
      */
-    private UserPreferenceConfig deserializeConfig(String json) {
+    private UserPreferenceConfig deserializeConfig(final String json) {
         try {
-            if (json == null || json.trim().isEmpty() || json.equals("{}")) {
+            if (json == null || json.trim().isEmpty()
+                    || json.equals("{}")) {
                 return UserPreferenceConfig.empty();
             }
-            return objectMapper.readValue(json, UserPreferenceConfig.class);
+            return objectMapper.readValue(json,
+                    UserPreferenceConfig.class);
         } catch (JsonProcessingException e) {
-            throw new RuntimeException("Failed to deserialize user preference config", e);
+            final String msg =
+                    "Failed to deserialize user preference config";
+            throw new RuntimeException(msg, e);
         }
     }
 }
