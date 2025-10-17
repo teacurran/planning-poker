@@ -68,7 +68,7 @@
     "acceptance_criteria": "POST /oauth/callback with valid code returns 200 with access + refresh tokens, New user created in database on first OAuth login, Existing user found and tokens issued on subsequent login, POST /refresh with valid refresh token returns new token pair, POST /logout deletes refresh token from Redis (subsequent refresh fails), Invalid codes/tokens return 401 Unauthorized",
     "dependencies": ["I3.T1", "I3.T2", "I2.T4"],
     "parallelizable": false,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I3.T4",
