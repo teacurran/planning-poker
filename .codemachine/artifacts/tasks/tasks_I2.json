@@ -18,7 +18,7 @@
     "acceptance_criteria": "OpenAPI file validates against OpenAPI 3.1 schema (use Swagger Editor or spectral), All CRUD endpoints for core entities documented, Security requirements specified for protected endpoints, DTO schemas match database entity structure (field names, types, nullability), Error responses follow consistent structure across all endpoints, File imports successfully into Swagger UI or Redoc for documentation rendering",
     "dependencies": [],
     "parallelizable": true,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I2.T2",

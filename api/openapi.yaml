@@ -1,0 +1,2263 @@
+openapi: 3.1.0
+info:
+  title: Planning Poker API
+  version: 1.0.0
+  description: |
+    RESTful JSON API for Planning Poker - Real-time collaborative estimation tool for agile teams.
+
+    ## Features
+    - OAuth2 authentication with JWT tokens
+    - Real-time estimation sessions via REST + WebSocket
+    - Subscription management with Stripe integration
+    - Enterprise SSO and organization workspaces
+    - Session history and reporting
+
+    ## Authentication
+    Most endpoints require Bearer JWT authentication. Obtain tokens via OAuth2 authorization code flow.
+
+    ## Rate Limiting
+    - Anonymous users: 100 requests/hour
+    - Authenticated users: 1000 requests/hour
+    - Enterprise: 10000 requests/hour
+
+    ## Versioning
+    API uses URL-based versioning (currently v1). Breaking changes will increment the version number.
+
+  contact:
+    name: Planning Poker API Support
+    email: api-support@planningpoker.example.com
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: https://api.planningpoker.example.com
+    description: Production server
+  - url: https://staging-api.planningpoker.example.com
+    description: Staging server
+  - url: http://localhost:8080
+    description: Local development server
+
+tags:
+  - name: Authentication
+    description: OAuth2 authentication and token management
+  - name: Users
+    description: User profile and preferences management
+  - name: Rooms
+    description: Estimation room lifecycle and configuration
+  - name: Subscriptions
+    description: Subscription tiers and billing management
+  - name: Organizations
+    description: Enterprise organization and SSO management
+  - name: Reports
+    description: Session history, analytics, and export
+
+security:
+  - BearerAuth: []
+
+paths:
+  # ===========================================
+  # AUTHENTICATION ENDPOINTS
+  # ===========================================
+  /api/v1/auth/oauth/callback:
+    post:
+      tags:
+        - Authentication
+      summary: Exchange OAuth2 authorization code for JWT tokens
+      description: |
+        Exchanges OAuth2 authorization code from provider (Google/Microsoft) for access and refresh tokens.
+        Returns JWT access token (15min expiry) and refresh token (30 days).
+      operationId: oauthCallback
+      security: []  # Public endpoint
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - code
+                - provider
+                - redirectUri
+              properties:
+                code:
+                  type: string
+                  description: Authorization code from OAuth2 provider
+                  example: "4/0AX4XfWh..."
+                provider:
+                  type: string
+                  enum: [google, microsoft]
+                  description: OAuth2 provider
+                  example: google
+                redirectUri:
+                  type: string
+                  format: uri
+                  description: Redirect URI used in authorization request (must match)
+                  example: "https://planningpoker.example.com/auth/callback"
+            example:
+              code: "4/0AX4XfWh..."
+              provider: google
+              redirectUri: "https://planningpoker.example.com/auth/callback"
+      responses:
+        '200':
+          description: Successfully authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+              example:
+                accessToken: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                refreshToken: "v1.MR5tqKz..."
+                expiresIn: 900
+                tokenType: "Bearer"
+                user:
+                  userId: "123e4567-e89b-12d3-a456-426614174000"
+                  email: "alice@example.com"
+                  displayName: "Alice Smith"
+                  avatarUrl: "https://example.com/avatar.jpg"
+                  subscriptionTier: "PRO"
+                  createdAt: "2025-01-01T10:00:00Z"
+                  updatedAt: "2025-01-10T15:30:00Z"
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/auth/refresh:
+    post:
+      tags:
+        - Authentication
+      summary: Refresh expired access token
+      description: |
+        Exchanges refresh token for new access token. Refresh tokens are single-use and rotated on each refresh.
+      operationId: refreshToken
+      security: []  # Uses refresh token, not access token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - refreshToken
+              properties:
+                refreshToken:
+                  type: string
+                  description: Valid refresh token
+                  example: "v1.MR5tqKz..."
+      responses:
+        '200':
+          description: Token refreshed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/auth/logout:
+    post:
+      tags:
+        - Authentication
+      summary: Revoke refresh token
+      description: |
+        Revokes the refresh token to prevent future token refreshes. Access token remains valid until expiry.
+      operationId: logout
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - refreshToken
+              properties:
+                refreshToken:
+                  type: string
+                  description: Refresh token to revoke
+                  example: "v1.MR5tqKz..."
+      responses:
+        '204':
+          description: Logout successful
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  # ===========================================
+  # USER MANAGEMENT ENDPOINTS
+  # ===========================================
+  /api/v1/users/{userId}:
+    get:
+      tags:
+        - Users
+      summary: Retrieve user profile
+      description: |
+        Returns public profile information for a user. Users can view their own full profile or other users' public profiles.
+      operationId: getUserProfile
+      parameters:
+        - $ref: '#/components/parameters/UserIdPath'
+      responses:
+        '200':
+          description: User profile retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserDTO'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+    put:
+      tags:
+        - Users
+      summary: Update user profile
+      description: |
+        Updates display name and avatar URL. Users can only update their own profile.
+      operationId: updateUserProfile
+      parameters:
+        - $ref: '#/components/parameters/UserIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUserRequest'
+      responses:
+        '200':
+          description: Profile updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserDTO'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/users/{userId}/preferences:
+    get:
+      tags:
+        - Users
+      summary: Get user preferences
+      description: |
+        Returns saved user preferences including default room settings, theme, and notification preferences.
+      operationId: getUserPreferences
+      parameters:
+        - $ref: '#/components/parameters/UserIdPath'
+      responses:
+        '200':
+          description: Preferences retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserPreferenceDTO'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+    put:
+      tags:
+        - Users
+      summary: Update user preferences
+      description: |
+        Updates user preferences for default room configuration, theme, and notifications.
+      operationId: updateUserPreferences
+      parameters:
+        - $ref: '#/components/parameters/UserIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUserPreferenceRequest'
+      responses:
+        '200':
+          description: Preferences updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserPreferenceDTO'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  # ===========================================
+  # ROOM MANAGEMENT ENDPOINTS
+  # ===========================================
+  /api/v1/rooms:
+    post:
+      tags:
+        - Rooms
+      summary: Create new estimation room
+      description: |
+        Creates a new estimation room. Can be created by authenticated users (owned room) or anonymously (ephemeral room).
+        Anonymous rooms are deleted after 24 hours of inactivity.
+      operationId: createRoom
+      security:
+        - BearerAuth: []
+        - {}  # Allow anonymous
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRoomRequest'
+      responses:
+        '201':
+          description: Room created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoomDTO'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Room creation limit reached for subscription tier
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/rooms/{roomId}:
+    get:
+      tags:
+        - Rooms
+      summary: Get room configuration and state
+      description: |
+        Returns room metadata, configuration, and current participant list. Does not include vote data (use WebSocket).
+      operationId: getRoom
+      security:
+        - BearerAuth: []
+        - {}  # Allow anonymous for public rooms
+      parameters:
+        - $ref: '#/components/parameters/RoomIdPath'
+      responses:
+        '200':
+          description: Room retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoomDTO'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+    delete:
+      tags:
+        - Rooms
+      summary: Delete room (soft delete)
+      description: |
+        Soft deletes a room. Only the room owner can delete. Room becomes inaccessible but historical data is retained.
+      operationId: deleteRoom
+      parameters:
+        - $ref: '#/components/parameters/RoomIdPath'
+      responses:
+        '204':
+          description: Room deleted successfully
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/rooms/{roomId}/config:
+    put:
+      tags:
+        - Rooms
+      summary: Update room configuration
+      description: |
+        Updates room settings (deck type, timer, privacy mode). Only the room host can modify configuration.
+        Changes take effect immediately for active session.
+      operationId: updateRoomConfig
+      parameters:
+        - $ref: '#/components/parameters/RoomIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateRoomConfigRequest'
+      responses:
+        '200':
+          description: Configuration updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoomDTO'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/users/{userId}/rooms:
+    get:
+      tags:
+        - Rooms
+      summary: List user's owned rooms
+      description: |
+        Returns paginated list of rooms owned by the user. Excludes soft-deleted rooms.
+      operationId: listUserRooms
+      parameters:
+        - $ref: '#/components/parameters/UserIdPath'
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/SizeParam'
+      responses:
+        '200':
+          description: Room list retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoomListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  # ===========================================
+  # SUBSCRIPTION & BILLING ENDPOINTS
+  # ===========================================
+  /api/v1/subscriptions/{userId}:
+    get:
+      tags:
+        - Subscriptions
+      summary: Get current subscription status
+      description: |
+        Returns current subscription tier, billing status, and feature limits.
+      operationId: getSubscription
+      parameters:
+        - $ref: '#/components/parameters/UserIdPath'
+      responses:
+        '200':
+          description: Subscription retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubscriptionDTO'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/subscriptions/checkout:
+    post:
+      tags:
+        - Subscriptions
+      summary: Create Stripe checkout session for upgrade
+      description: |
+        Creates a Stripe Checkout session for upgrading to Pro or Pro Plus tier. Returns checkout URL for redirect.
+      operationId: createCheckoutSession
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CheckoutRequest'
+      responses:
+        '200':
+          description: Checkout session created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CheckoutResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/subscriptions/{subscriptionId}/cancel:
+    post:
+      tags:
+        - Subscriptions
+      summary: Cancel subscription (end of billing period)
+      description: |
+        Cancels subscription at end of current billing period. Access continues until period end.
+      operationId: cancelSubscription
+      parameters:
+        - name: subscriptionId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Subscription ID
+          example: "550e8400-e29b-41d4-a716-446655440000"
+      responses:
+        '200':
+          description: Subscription canceled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubscriptionDTO'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/subscriptions/webhook:
+    post:
+      tags:
+        - Subscriptions
+      summary: Stripe webhook endpoint
+      description: |
+        Receives webhook events from Stripe (payment success, subscription canceled, etc.).
+        Verifies webhook signature before processing.
+      operationId: handleStripeWebhook
+      security: []  # Authenticated via Stripe signature
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Stripe webhook event payload
+      responses:
+        '200':
+          description: Webhook processed successfully
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/billing/invoices:
+    get:
+      tags:
+        - Subscriptions
+      summary: List payment history
+      description: |
+        Returns paginated list of payment invoices for the authenticated user.
+      operationId: listInvoices
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/SizeParam'
+      responses:
+        '200':
+          description: Invoice list retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvoiceListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  # ===========================================
+  # REPORTING & ANALYTICS ENDPOINTS
+  # ===========================================
+  /api/v1/reports/sessions:
+    get:
+      tags:
+        - Reports
+      summary: List session history
+      description: |
+        Returns paginated session history with filters.
+        **Tier Requirements:**
+        - Free tier: Last 30 days, max 10 results
+        - Pro tier: Last 90 days, max 100 results
+        - Pro Plus/Enterprise: Unlimited history
+      operationId: listSessions
+      parameters:
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date
+          description: Start date (ISO 8601 format)
+          example: "2025-01-01"
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date
+          description: End date (ISO 8601 format)
+          example: "2025-01-31"
+        - name: roomId
+          in: query
+          schema:
+            type: string
+            pattern: '^[a-z0-9]{6}$'
+          description: Filter by room ID
+          example: "abc123"
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/SizeParam'
+      responses:
+        '200':
+          description: Session list retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Insufficient subscription tier
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/reports/sessions/{sessionId}:
+    get:
+      tags:
+        - Reports
+      summary: Get detailed session report
+      description: |
+        Returns detailed session report including all rounds and votes.
+        **Tier Requirements:**
+        - Free tier: Summary only (average, median)
+        - Pro tier and above: Full round-by-round detail with individual votes
+      operationId: getSessionReport
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Session ID
+          example: "123e4567-e89b-12d3-a456-426614174000"
+      responses:
+        '200':
+          description: Session report retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionDetailDTO'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Insufficient subscription tier for detailed report
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/reports/export:
+    post:
+      tags:
+        - Reports
+      summary: Generate export job (CSV/PDF)
+      description: |
+        Creates an asynchronous export job for session data. Returns job ID for polling status.
+        **Tier Requirements:** Pro tier or higher
+      operationId: createExportJob
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExportRequest'
+      responses:
+        '202':
+          description: Export job created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExportJobResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Export feature requires Pro tier or higher
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/jobs/{jobId}:
+    get:
+      tags:
+        - Reports
+      summary: Poll export job status
+      description: |
+        Returns job status (PENDING, PROCESSING, COMPLETED, FAILED). When COMPLETED, includes download URL (expires in 24h).
+      operationId: getJobStatus
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Job ID returned from export endpoint
+          example: "123e4567-e89b-12d3-a456-426614174000"
+      responses:
+        '200':
+          description: Job status retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobStatusResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  # ===========================================
+  # ORGANIZATION MANAGEMENT ENDPOINTS
+  # ===========================================
+  /api/v1/organizations:
+    post:
+      tags:
+        - Organizations
+      summary: Create organization workspace
+      description: |
+        Creates a new organization workspace. **Requires Enterprise tier subscription.**
+      operationId: createOrganization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOrganizationRequest'
+      responses:
+        '201':
+          description: Organization created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrganizationDTO'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Requires Enterprise subscription
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/organizations/{orgId}:
+    get:
+      tags:
+        - Organizations
+      summary: Get organization settings
+      description: |
+        Returns organization configuration, branding, and member count. Requires organization membership.
+      operationId: getOrganization
+      parameters:
+        - $ref: '#/components/parameters/OrgIdPath'
+      responses:
+        '200':
+          description: Organization retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrganizationDTO'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/organizations/{orgId}/sso:
+    put:
+      tags:
+        - Organizations
+      summary: Configure OIDC/SAML2 SSO settings
+      description: |
+        Updates SSO configuration for organization. **Requires ADMIN role.**
+      operationId: updateSsoConfig
+      parameters:
+        - $ref: '#/components/parameters/OrgIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SsoConfigRequest'
+      responses:
+        '200':
+          description: SSO configuration updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrganizationDTO'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/organizations/{orgId}/members:
+    post:
+      tags:
+        - Organizations
+      summary: Invite member to organization
+      description: |
+        Sends invitation email to join organization. **Requires ADMIN role.**
+      operationId: inviteMember
+      parameters:
+        - $ref: '#/components/parameters/OrgIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InviteMemberRequest'
+      responses:
+        '201':
+          description: Member invited
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrgMemberDTO'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/organizations/{orgId}/members/{userId}:
+    delete:
+      tags:
+        - Organizations
+      summary: Remove member from organization
+      description: |
+        Removes user from organization. **Requires ADMIN role.** Cannot remove last admin.
+      operationId: removeMember
+      parameters:
+        - $ref: '#/components/parameters/OrgIdPath'
+        - $ref: '#/components/parameters/UserIdPath'
+      responses:
+        '204':
+          description: Member removed
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/organizations/{orgId}/audit-logs:
+    get:
+      tags:
+        - Organizations
+      summary: Query audit trail
+      description: |
+        Returns paginated audit log entries for compliance. **Requires ADMIN role.**
+      operationId: getAuditLogs
+      parameters:
+        - $ref: '#/components/parameters/OrgIdPath'
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: Start timestamp (ISO 8601 format)
+          example: "2025-01-01T00:00:00Z"
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: End timestamp (ISO 8601 format)
+          example: "2025-01-31T23:59:59Z"
+        - name: action
+          in: query
+          schema:
+            type: string
+          description: Filter by action type (e.g., user.login, room.create)
+          example: "user.login"
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/SizeParam'
+      responses:
+        '200':
+          description: Audit logs retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditLogListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+# ===========================================
+# COMPONENTS
+# ===========================================
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        JWT access token obtained via OAuth2 flow. Include in Authorization header as "Bearer {token}".
+        Tokens expire after 15 minutes. Use refresh token to obtain new access token.
+
+    OAuth2:
+      type: oauth2
+      description: OAuth2 authorization code flow with Google and Microsoft providers
+      flows:
+        authorizationCode:
+          authorizationUrl: https://accounts.google.com/o/oauth2/v2/auth
+          tokenUrl: https://api.planningpoker.example.com/api/v1/auth/oauth/callback
+          scopes:
+            openid: OpenID Connect authentication
+            email: Access user email address
+            profile: Access user profile information
+
+  parameters:
+    UserIdPath:
+      name: userId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: User UUID
+      example: "123e4567-e89b-12d3-a456-426614174000"
+
+    RoomIdPath:
+      name: roomId
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^[a-z0-9]{6}$'
+        minLength: 6
+        maxLength: 6
+      description: 6-character room identifier (nanoid)
+      example: "abc123"
+
+    OrgIdPath:
+      name: orgId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Organization UUID
+      example: "123e4567-e89b-12d3-a456-426614174000"
+
+    PageParam:
+      name: page
+      in: query
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
+      description: Page number (0-indexed)
+      example: 0
+
+    SizeParam:
+      name: size
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+      description: Page size
+      example: 20
+
+  responses:
+    BadRequest:
+      description: Invalid request parameters or body
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: "VALIDATION_ERROR"
+            message: "Invalid email format"
+            timestamp: "2025-01-15T10:30:00Z"
+
+    Unauthorized:
+      description: Missing or invalid authentication credentials
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: "UNAUTHORIZED"
+            message: "Invalid or expired token"
+            timestamp: "2025-01-15T10:30:00Z"
+
+    Forbidden:
+      description: Insufficient permissions to access resource
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: "FORBIDDEN"
+            message: "Requires ADMIN role"
+            timestamp: "2025-01-15T10:30:00Z"
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: "NOT_FOUND"
+            message: "Room not found"
+            timestamp: "2025-01-15T10:30:00Z"
+
+    InternalServerError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: "INTERNAL_SERVER_ERROR"
+            message: "An unexpected error occurred"
+            timestamp: "2025-01-15T10:30:00Z"
+
+  schemas:
+    # ===========================================
+    # ERROR RESPONSE SCHEMA
+    # ===========================================
+    ErrorResponse:
+      type: object
+      required:
+        - error
+        - message
+        - timestamp
+      properties:
+        error:
+          type: string
+          description: Error code (machine-readable)
+          example: "VALIDATION_ERROR"
+        message:
+          type: string
+          description: Human-readable error message
+          example: "Invalid email format"
+        timestamp:
+          type: string
+          format: date-time
+          description: Error timestamp (ISO 8601 format)
+          example: "2025-01-15T10:30:00Z"
+        details:
+          type: object
+          description: Additional error context (field validation errors, etc.)
+          additionalProperties: true
+
+    # ===========================================
+    # ENUM SCHEMAS
+    # ===========================================
+    SubscriptionTier:
+      type: string
+      enum:
+        - FREE
+        - PRO
+        - PRO_PLUS
+        - ENTERPRISE
+      description: Subscription tier level
+
+    SubscriptionStatus:
+      type: string
+      enum:
+        - ACTIVE
+        - PAST_DUE
+        - CANCELED
+        - TRIALING
+      description: Subscription status
+
+    PrivacyMode:
+      type: string
+      enum:
+        - PUBLIC
+        - INVITE_ONLY
+        - ORG_RESTRICTED
+      description: Room privacy mode
+
+    RoomRole:
+      type: string
+      enum:
+        - HOST
+        - VOTER
+        - OBSERVER
+      description: Participant role in room
+
+    OrgRole:
+      type: string
+      enum:
+        - ADMIN
+        - MEMBER
+      description: Organization membership role
+
+    EntityType:
+      type: string
+      enum:
+        - USER
+        - ORG
+      description: Subscription entity type (polymorphic)
+
+    PaymentStatus:
+      type: string
+      enum:
+        - SUCCEEDED
+        - PENDING
+        - FAILED
+      description: Payment transaction status
+
+    # ===========================================
+    # AUTHENTICATION SCHEMAS
+    # ===========================================
+    TokenResponse:
+      type: object
+      required:
+        - accessToken
+        - refreshToken
+        - expiresIn
+        - tokenType
+        - user
+      properties:
+        accessToken:
+          type: string
+          description: JWT access token (15min expiry)
+          example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+        refreshToken:
+          type: string
+          description: Refresh token (30 days expiry, single-use)
+          example: "v1.MR5tqKz..."
+        expiresIn:
+          type: integer
+          description: Access token TTL in seconds
+          example: 900
+        tokenType:
+          type: string
+          description: Token type (always "Bearer")
+          example: "Bearer"
+        user:
+          $ref: '#/components/schemas/UserDTO'
+
+    # ===========================================
+    # USER SCHEMAS
+    # ===========================================
+    UserDTO:
+      type: object
+      required:
+        - userId
+        - email
+        - displayName
+        - subscriptionTier
+        - createdAt
+      properties:
+        userId:
+          type: string
+          format: uuid
+          description: User unique identifier
+          example: "123e4567-e89b-12d3-a456-426614174000"
+        email:
+          type: string
+          format: email
+          maxLength: 255
+          description: User email address (unique)
+          example: "alice@example.com"
+        oauthProvider:
+          type: string
+          enum: [google, microsoft]
+          description: OAuth2 provider
+          example: "google"
+        displayName:
+          type: string
+          maxLength: 100
+          description: User display name
+          example: "Alice Smith"
+        avatarUrl:
+          type: string
+          format: uri
+          maxLength: 500
+          nullable: true
+          description: Profile avatar URL
+          example: "https://example.com/avatar.jpg"
+        subscriptionTier:
+          $ref: '#/components/schemas/SubscriptionTier'
+        createdAt:
+          type: string
+          format: date-time
+          description: Account creation timestamp
+          example: "2025-01-01T10:00:00Z"
+        updatedAt:
+          type: string
+          format: date-time
+          description: Last profile update timestamp
+          example: "2025-01-10T15:30:00Z"
+
+    UpdateUserRequest:
+      type: object
+      properties:
+        displayName:
+          type: string
+          maxLength: 100
+          description: Updated display name
+          example: "Alice Smith"
+        avatarUrl:
+          type: string
+          format: uri
+          maxLength: 500
+          nullable: true
+          description: Updated avatar URL
+          example: "https://example.com/avatar.jpg"
+
+    UserPreferenceDTO:
+      type: object
+      required:
+        - userId
+      properties:
+        userId:
+          type: string
+          format: uuid
+          description: User unique identifier
+          example: "123e4567-e89b-12d3-a456-426614174000"
+        defaultDeckType:
+          type: string
+          enum: [fibonacci, tshirt, powers_of_2, custom]
+          description: Default deck type for new rooms
+          example: "fibonacci"
+        defaultRoomConfig:
+          $ref: '#/components/schemas/RoomConfigDTO'
+        theme:
+          type: string
+          enum: [light, dark, system]
+          description: UI theme preference
+          example: "dark"
+        notificationSettings:
+          type: object
+          description: Notification preferences
+          properties:
+            emailNotifications:
+              type: boolean
+              example: true
+            sessionReminders:
+              type: boolean
+              example: true
+
+    UpdateUserPreferenceRequest:
+      type: object
+      properties:
+        defaultDeckType:
+          type: string
+          enum: [fibonacci, tshirt, powers_of_2, custom]
+        defaultRoomConfig:
+          $ref: '#/components/schemas/RoomConfigDTO'
+        theme:
+          type: string
+          enum: [light, dark, system]
+        notificationSettings:
+          type: object
+          properties:
+            emailNotifications:
+              type: boolean
+            sessionReminders:
+              type: boolean
+
+    # ===========================================
+    # ROOM SCHEMAS
+    # ===========================================
+    RoomDTO:
+      type: object
+      required:
+        - roomId
+        - title
+        - privacyMode
+        - config
+        - createdAt
+        - lastActiveAt
+      properties:
+        roomId:
+          type: string
+          pattern: '^[a-z0-9]{6}$'
+          minLength: 6
+          maxLength: 6
+          description: 6-character room identifier (nanoid)
+          example: "abc123"
+        ownerId:
+          type: string
+          format: uuid
+          nullable: true
+          description: Owner user ID (null for anonymous rooms)
+          example: "123e4567-e89b-12d3-a456-426614174000"
+        organizationId:
+          type: string
+          format: uuid
+          nullable: true
+          description: Organization ID (null for personal rooms)
+          example: "123e4567-e89b-12d3-a456-426614174000"
+        title:
+          type: string
+          maxLength: 255
+          description: Room display name
+          example: "Sprint 42 Planning"
+        privacyMode:
+          $ref: '#/components/schemas/PrivacyMode'
+        config:
+          $ref: '#/components/schemas/RoomConfigDTO'
+        createdAt:
+          type: string
+          format: date-time
+          description: Room creation timestamp
+          example: "2025-01-15T10:00:00Z"
+        lastActiveAt:
+          type: string
+          format: date-time
+          description: Last activity timestamp
+          example: "2025-01-15T14:30:00Z"
+        participants:
+          type: array
+          description: Current active participants
+          items:
+            $ref: '#/components/schemas/RoomParticipantDTO'
+
+    RoomConfigDTO:
+      type: object
+      description: Room configuration settings (stored as JSONB)
+      properties:
+        deckType:
+          type: string
+          enum: [fibonacci, tshirt, powers_of_2, custom]
+          description: Estimation deck type
+          example: "fibonacci"
+        customDeck:
+          type: array
+          description: Custom card values (only if deckType is custom)
+          items:
+            type: string
+            maxLength: 10
+          example: ["0", "1", "2", "3", "5", "8", "13", "?"]
+        timerEnabled:
+          type: boolean
+          description: Enable voting timer
+          example: true
+        timerDurationSeconds:
+          type: integer
+          minimum: 10
+          maximum: 600
+          description: Timer duration in seconds
+          example: 120
+        revealBehavior:
+          type: string
+          enum: [manual, automatic, timer]
+          description: When to reveal votes
+          example: "manual"
+        allowObservers:
+          type: boolean
+          description: Allow non-voting observers
+          example: true
+        allowAnonymousVoters:
+          type: boolean
+          description: Allow anonymous participants
+          example: true
+
+    CreateRoomRequest:
+      type: object
+      required:
+        - title
+      properties:
+        title:
+          type: string
+          maxLength: 255
+          description: Room display name
+          example: "Sprint 42 Planning"
+        privacyMode:
+          $ref: '#/components/schemas/PrivacyMode'
+        config:
+          $ref: '#/components/schemas/RoomConfigDTO'
+
+    UpdateRoomConfigRequest:
+      type: object
+      properties:
+        title:
+          type: string
+          maxLength: 255
+        privacyMode:
+          $ref: '#/components/schemas/PrivacyMode'
+        config:
+          $ref: '#/components/schemas/RoomConfigDTO'
+
+    RoomParticipantDTO:
+      type: object
+      required:
+        - participantId
+        - displayName
+        - role
+        - connectedAt
+      properties:
+        participantId:
+          type: string
+          description: Participant identifier (userId or anonymousId)
+          example: "123e4567-e89b-12d3-a456-426614174000"
+        userId:
+          type: string
+          format: uuid
+          nullable: true
+          description: User ID (null for anonymous)
+          example: "123e4567-e89b-12d3-a456-426614174000"
+        displayName:
+          type: string
+          maxLength: 100
+          description: Display name in room
+          example: "Alice Smith"
+        avatarUrl:
+          type: string
+          format: uri
+          nullable: true
+          description: Avatar URL
+          example: "https://example.com/avatar.jpg"
+        role:
+          $ref: '#/components/schemas/RoomRole'
+        connectedAt:
+          type: string
+          format: date-time
+          description: Connection timestamp
+          example: "2025-01-15T14:00:00Z"
+
+    RoomListResponse:
+      type: object
+      required:
+        - rooms
+        - page
+        - size
+        - totalElements
+        - totalPages
+      properties:
+        rooms:
+          type: array
+          items:
+            $ref: '#/components/schemas/RoomDTO'
+        page:
+          type: integer
+          description: Current page number (0-indexed)
+          example: 0
+        size:
+          type: integer
+          description: Page size
+          example: 20
+        totalElements:
+          type: integer
+          description: Total number of rooms
+          example: 42
+        totalPages:
+          type: integer
+          description: Total number of pages
+          example: 3
+
+    # ===========================================
+    # SUBSCRIPTION SCHEMAS
+    # ===========================================
+    SubscriptionDTO:
+      type: object
+      required:
+        - subscriptionId
+        - entityId
+        - entityType
+        - tier
+        - status
+        - currentPeriodStart
+        - currentPeriodEnd
+      properties:
+        subscriptionId:
+          type: string
+          format: uuid
+          description: Subscription unique identifier
+          example: "550e8400-e29b-41d4-a716-446655440000"
+        stripeSubscriptionId:
+          type: string
+          maxLength: 100
+          description: Stripe subscription ID
+          example: "sub_1MqjMq2eZvKYlo2C..."
+        entityId:
+          type: string
+          format: uuid
+          description: User or organization ID
+          example: "123e4567-e89b-12d3-a456-426614174000"
+        entityType:
+          $ref: '#/components/schemas/EntityType'
+        tier:
+          $ref: '#/components/schemas/SubscriptionTier'
+        status:
+          $ref: '#/components/schemas/SubscriptionStatus'
+        currentPeriodStart:
+          type: string
+          format: date-time
+          description: Current billing period start
+          example: "2025-01-01T00:00:00Z"
+        currentPeriodEnd:
+          type: string
+          format: date-time
+          description: Current billing period end
+          example: "2025-02-01T00:00:00Z"
+        canceledAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Cancellation timestamp (null if active)
+          example: null
+        createdAt:
+          type: string
+          format: date-time
+          description: Subscription creation timestamp
+          example: "2025-01-01T00:00:00Z"
+
+    CheckoutRequest:
+      type: object
+      required:
+        - tier
+        - successUrl
+        - cancelUrl
+      properties:
+        tier:
+          type: string
+          enum: [PRO, PRO_PLUS]
+          description: Target subscription tier
+          example: "PRO"
+        successUrl:
+          type: string
+          format: uri
+          description: Redirect URL on successful payment
+          example: "https://planningpoker.example.com/billing/success"
+        cancelUrl:
+          type: string
+          format: uri
+          description: Redirect URL on canceled payment
+          example: "https://planningpoker.example.com/billing/cancel"
+
+    CheckoutResponse:
+      type: object
+      required:
+        - sessionId
+        - checkoutUrl
+      properties:
+        sessionId:
+          type: string
+          description: Stripe Checkout session ID
+          example: "cs_test_a1..."
+        checkoutUrl:
+          type: string
+          format: uri
+          description: Stripe Checkout URL for redirect
+          example: "https://checkout.stripe.com/pay/cs_test_a1..."
+
+    PaymentHistoryDTO:
+      type: object
+      required:
+        - paymentId
+        - subscriptionId
+        - amount
+        - currency
+        - status
+        - paidAt
+      properties:
+        paymentId:
+          type: string
+          format: uuid
+          description: Payment unique identifier
+          example: "123e4567-e89b-12d3-a456-426614174000"
+        subscriptionId:
+          type: string
+          format: uuid
+          description: Associated subscription ID
+          example: "550e8400-e29b-41d4-a716-446655440000"
+        stripeInvoiceId:
+          type: string
+          maxLength: 100
+          description: Stripe invoice ID
+          example: "in_1MqjMq2eZvKYlo2C..."
+        amount:
+          type: integer
+          description: Amount in cents
+          example: 2999
+        currency:
+          type: string
+          maxLength: 3
+          description: ISO 4217 currency code
+          example: "USD"
+        status:
+          $ref: '#/components/schemas/PaymentStatus'
+        paidAt:
+          type: string
+          format: date-time
+          description: Payment timestamp
+          example: "2025-01-01T00:00:00Z"
+
+    InvoiceListResponse:
+      type: object
+      required:
+        - invoices
+        - page
+        - size
+        - totalElements
+        - totalPages
+      properties:
+        invoices:
+          type: array
+          items:
+            $ref: '#/components/schemas/PaymentHistoryDTO'
+        page:
+          type: integer
+          example: 0
+        size:
+          type: integer
+          example: 20
+        totalElements:
+          type: integer
+          example: 12
+        totalPages:
+          type: integer
+          example: 1
+
+    # ===========================================
+    # REPORTING SCHEMAS
+    # ===========================================
+    SessionSummaryDTO:
+      type: object
+      required:
+        - sessionId
+        - roomId
+        - startedAt
+        - endedAt
+        - totalRounds
+        - totalStories
+      properties:
+        sessionId:
+          type: string
+          format: uuid
+          description: Session unique identifier
+          example: "123e4567-e89b-12d3-a456-426614174000"
+        roomId:
+          type: string
+          pattern: '^[a-z0-9]{6}$'
+          description: Room identifier
+          example: "abc123"
+        roomTitle:
+          type: string
+          description: Room title at time of session
+          example: "Sprint 42 Planning"
+        startedAt:
+          type: string
+          format: date-time
+          description: Session start timestamp
+          example: "2025-01-15T10:00:00Z"
+        endedAt:
+          type: string
+          format: date-time
+          description: Session end timestamp
+          example: "2025-01-15T12:00:00Z"
+        totalRounds:
+          type: integer
+          description: Number of estimation rounds
+          example: 8
+        totalStories:
+          type: integer
+          description: Number of stories estimated
+          example: 8
+        participantCount:
+          type: integer
+          description: Total unique participants
+          example: 5
+
+    SessionDetailDTO:
+      allOf:
+        - $ref: '#/components/schemas/SessionSummaryDTO'
+        - type: object
+          properties:
+            participants:
+              type: array
+              description: Session participant list
+              items:
+                type: object
+                properties:
+                  userId:
+                    type: string
+                    format: uuid
+                    nullable: true
+                  displayName:
+                    type: string
+                  role:
+                    $ref: '#/components/schemas/RoomRole'
+            rounds:
+              type: array
+              description: Detailed round-by-round data (Pro tier and above)
+              items:
+                $ref: '#/components/schemas/RoundDTO'
+
+    RoundDTO:
+      type: object
+      required:
+        - roundId
+        - roundNumber
+        - startedAt
+      properties:
+        roundId:
+          type: string
+          format: uuid
+          description: Round unique identifier
+          example: "123e4567-e89b-12d3-a456-426614174000"
+        roundNumber:
+          type: integer
+          description: Round sequence number (1-indexed)
+          example: 1
+        storyTitle:
+          type: string
+          maxLength: 500
+          nullable: true
+          description: Story being estimated
+          example: "As a user, I want to login with Google"
+        startedAt:
+          type: string
+          format: date-time
+          description: Round start timestamp
+          example: "2025-01-15T10:00:00Z"
+        revealedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Vote reveal timestamp
+          example: "2025-01-15T10:05:00Z"
+        average:
+          type: number
+          format: double
+          nullable: true
+          description: Average of numeric votes
+          example: 5.6
+        median:
+          type: number
+          format: double
+          nullable: true
+          description: Median of numeric votes
+          example: 5.0
+        consensusReached:
+          type: boolean
+          description: Whether consensus was reached
+          example: true
+        votes:
+          type: array
+          description: Individual votes (Pro tier and above)
+          items:
+            $ref: '#/components/schemas/VoteDTO'
+
+    VoteDTO:
+      type: object
+      required:
+        - voteId
+        - participantId
+        - cardValue
+        - votedAt
+      properties:
+        voteId:
+          type: string
+          format: uuid
+          description: Vote unique identifier
+          example: "123e4567-e89b-12d3-a456-426614174000"
+        participantId:
+          type: string
+          description: Voter participant ID
+          example: "123e4567-e89b-12d3-a456-426614174000"
+        displayName:
+          type: string
+          description: Voter display name
+          example: "Alice Smith"
+        cardValue:
+          type: string
+          maxLength: 10
+          description: Card value selected
+          example: "5"
+        votedAt:
+          type: string
+          format: date-time
+          description: Vote timestamp
+          example: "2025-01-15T10:02:00Z"
+
+    SessionListResponse:
+      type: object
+      required:
+        - sessions
+        - page
+        - size
+        - totalElements
+        - totalPages
+      properties:
+        sessions:
+          type: array
+          items:
+            $ref: '#/components/schemas/SessionSummaryDTO'
+        page:
+          type: integer
+          example: 0
+        size:
+          type: integer
+          example: 20
+        totalElements:
+          type: integer
+          example: 42
+        totalPages:
+          type: integer
+          example: 3
+
+    ExportRequest:
+      type: object
+      required:
+        - format
+        - sessionIds
+      properties:
+        format:
+          type: string
+          enum: [CSV, PDF]
+          description: Export file format
+          example: "CSV"
+        sessionIds:
+          type: array
+          description: Session IDs to export
+          items:
+            type: string
+            format: uuid
+          example: ["123e4567-e89b-12d3-a456-426614174000"]
+
+    ExportJobResponse:
+      type: object
+      required:
+        - jobId
+        - status
+        - createdAt
+      properties:
+        jobId:
+          type: string
+          format: uuid
+          description: Job unique identifier
+          example: "123e4567-e89b-12d3-a456-426614174000"
+        status:
+          type: string
+          enum: [PENDING, PROCESSING, COMPLETED, FAILED]
+          description: Job status
+          example: "PENDING"
+        createdAt:
+          type: string
+          format: date-time
+          description: Job creation timestamp
+          example: "2025-01-15T10:00:00Z"
+
+    JobStatusResponse:
+      type: object
+      required:
+        - jobId
+        - status
+        - createdAt
+      properties:
+        jobId:
+          type: string
+          format: uuid
+          description: Job unique identifier
+          example: "123e4567-e89b-12d3-a456-426614174000"
+        status:
+          type: string
+          enum: [PENDING, PROCESSING, COMPLETED, FAILED]
+          description: Job status
+          example: "COMPLETED"
+        createdAt:
+          type: string
+          format: date-time
+          description: Job creation timestamp
+          example: "2025-01-15T10:00:00Z"
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Job completion timestamp
+          example: "2025-01-15T10:05:00Z"
+        downloadUrl:
+          type: string
+          format: uri
+          nullable: true
+          description: Download URL (expires in 24h)
+          example: "https://cdn.planningpoker.example.com/exports/abc123.csv"
+        error:
+          type: string
+          nullable: true
+          description: Error message if status is FAILED
+          example: null
+
+    # ===========================================
+    # ORGANIZATION SCHEMAS
+    # ===========================================
+    OrganizationDTO:
+      type: object
+      required:
+        - orgId
+        - name
+        - domain
+        - createdAt
+      properties:
+        orgId:
+          type: string
+          format: uuid
+          description: Organization unique identifier
+          example: "123e4567-e89b-12d3-a456-426614174000"
+        name:
+          type: string
+          maxLength: 255
+          description: Organization display name
+          example: "Acme Corporation"
+        domain:
+          type: string
+          maxLength: 255
+          description: Organization email domain (unique)
+          example: "acme.com"
+        ssoConfig:
+          $ref: '#/components/schemas/SsoConfigDTO'
+        branding:
+          $ref: '#/components/schemas/BrandingDTO'
+        subscriptionId:
+          type: string
+          format: uuid
+          nullable: true
+          description: Associated subscription ID
+          example: "550e8400-e29b-41d4-a716-446655440000"
+        memberCount:
+          type: integer
+          description: Total organization members
+          example: 42
+        createdAt:
+          type: string
+          format: date-time
+          description: Organization creation timestamp
+          example: "2025-01-01T00:00:00Z"
+        updatedAt:
+          type: string
+          format: date-time
+          description: Last update timestamp
+          example: "2025-01-10T15:30:00Z"
+
+    SsoConfigDTO:
+      type: object
+      description: SSO configuration (OIDC or SAML2)
+      properties:
+        protocol:
+          type: string
+          enum: [OIDC, SAML2]
+          description: SSO protocol
+          example: "OIDC"
+        issuer:
+          type: string
+          format: uri
+          description: Identity provider issuer URL
+          example: "https://sso.acme.com"
+        clientId:
+          type: string
+          description: OAuth2 client ID (OIDC only)
+          example: "planning-poker-client"
+        authorizationEndpoint:
+          type: string
+          format: uri
+          description: Authorization endpoint URL (OIDC)
+          example: "https://sso.acme.com/oauth2/authorize"
+        tokenEndpoint:
+          type: string
+          format: uri
+          description: Token endpoint URL (OIDC)
+          example: "https://sso.acme.com/oauth2/token"
+        jwksUri:
+          type: string
+          format: uri
+          description: JSON Web Key Set URI (OIDC)
+          example: "https://sso.acme.com/.well-known/jwks.json"
+        samlEntityId:
+          type: string
+          description: SAML entity ID (SAML2 only)
+          example: "https://sso.acme.com/saml/metadata"
+        samlSsoUrl:
+          type: string
+          format: uri
+          description: SAML SSO URL (SAML2 only)
+          example: "https://sso.acme.com/saml/sso"
+
+    BrandingDTO:
+      type: object
+      description: Organization branding customization
+      properties:
+        logoUrl:
+          type: string
+          format: uri
+          maxLength: 500
+          description: Organization logo URL
+          example: "https://cdn.acme.com/logo.png"
+        primaryColor:
+          type: string
+          pattern: '^#[0-9A-Fa-f]{6}$'
+          description: Primary brand color (hex)
+          example: "#0066CC"
+        secondaryColor:
+          type: string
+          pattern: '^#[0-9A-Fa-f]{6}$'
+          description: Secondary brand color (hex)
+          example: "#FF6600"
+
+    CreateOrganizationRequest:
+      type: object
+      required:
+        - name
+        - domain
+      properties:
+        name:
+          type: string
+          maxLength: 255
+          description: Organization display name
+          example: "Acme Corporation"
+        domain:
+          type: string
+          maxLength: 255
+          description: Organization email domain
+          example: "acme.com"
+        branding:
+          $ref: '#/components/schemas/BrandingDTO'
+
+    SsoConfigRequest:
+      type: object
+      required:
+        - protocol
+      properties:
+        protocol:
+          type: string
+          enum: [OIDC, SAML2]
+        issuer:
+          type: string
+          format: uri
+        clientId:
+          type: string
+        clientSecret:
+          type: string
+          format: password
+          description: OAuth2 client secret (not returned in responses)
+        authorizationEndpoint:
+          type: string
+          format: uri
+        tokenEndpoint:
+          type: string
+          format: uri
+        jwksUri:
+          type: string
+          format: uri
+        samlEntityId:
+          type: string
+        samlSsoUrl:
+          type: string
+          format: uri
+        samlCertificate:
+          type: string
+          description: X.509 certificate for SAML signature verification
+
+    OrgMemberDTO:
+      type: object
+      required:
+        - userId
+        - displayName
+        - email
+        - role
+        - joinedAt
+      properties:
+        userId:
+          type: string
+          format: uuid
+          description: User ID
+          example: "123e4567-e89b-12d3-a456-426614174000"
+        displayName:
+          type: string
+          description: User display name
+          example: "Alice Smith"
+        email:
+          type: string
+          format: email
+          description: User email
+          example: "alice@acme.com"
+        avatarUrl:
+          type: string
+          format: uri
+          nullable: true
+          description: Avatar URL
+          example: "https://example.com/avatar.jpg"
+        role:
+          $ref: '#/components/schemas/OrgRole'
+        joinedAt:
+          type: string
+          format: date-time
+          description: Membership start timestamp
+          example: "2025-01-01T00:00:00Z"
+
+    InviteMemberRequest:
+      type: object
+      required:
+        - email
+        - role
+      properties:
+        email:
+          type: string
+          format: email
+          description: Invitee email address
+          example: "bob@acme.com"
+        role:
+          $ref: '#/components/schemas/OrgRole'
+
+    AuditLogDTO:
+      type: object
+      required:
+        - logId
+        - action
+        - resourceType
+        - timestamp
+      properties:
+        logId:
+          type: string
+          format: uuid
+          description: Log entry unique identifier
+          example: "123e4567-e89b-12d3-a456-426614174000"
+        orgId:
+          type: string
+          format: uuid
+          nullable: true
+          description: Organization ID
+          example: "123e4567-e89b-12d3-a456-426614174000"
+        userId:
+          type: string
+          format: uuid
+          nullable: true
+          description: Acting user ID
+          example: "123e4567-e89b-12d3-a456-426614174000"
+        action:
+          type: string
+          maxLength: 100
+          description: Action performed (e.g., user.login, room.create)
+          example: "user.login"
+        resourceType:
+          type: string
+          maxLength: 50
+          description: Resource type affected
+          example: "USER"
+        resourceId:
+          type: string
+          maxLength: 255
+          nullable: true
+          description: Resource identifier
+          example: "123e4567-e89b-12d3-a456-426614174000"
+        ipAddress:
+          type: string
+          maxLength: 45
+          nullable: true
+          description: Client IP address
+          example: "192.168.1.1"
+        userAgent:
+          type: string
+          maxLength: 500
+          nullable: true
+          description: Client user agent
+          example: "Mozilla/5.0..."
+        timestamp:
+          type: string
+          format: date-time
+          description: Event timestamp
+          example: "2025-01-15T10:00:00Z"
+
+    AuditLogListResponse:
+      type: object
+      required:
+        - logs
+        - page
+        - size
+        - totalElements
+        - totalPages
+      properties:
+        logs:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuditLogDTO'
+        page:
+          type: integer
+          example: 0
+        size:
+          type: integer
+          example: 20
+        totalElements:
+          type: integer
+          example: 1000
+        totalPages:
+          type: integer
+          example: 50

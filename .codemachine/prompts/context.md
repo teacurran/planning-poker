@@ -10,26 +10,24 @@ This is the full specification of the task you must complete.
 
 ```json
 {
-  "task_id": "I1.T8",
-  "iteration_id": "I1",
-  "iteration_goal": "Establish project scaffolding, configure development environment, define database schema, and set up CI/CD foundation to enable parallel backend and frontend development in subsequent iterations.",
-  "description": "Create integration tests for all Panache repositories using Testcontainers (PostgreSQL container). Write tests for: entity persistence (insert, update, delete), custom finder methods, relationship navigation, JSONB field serialization/deserialization, soft delete behavior (User, Room). Use Quarkus `@QuarkusTest` annotation with `@TestProfile` for test database configuration. Assert results using AssertJ or Rest Assured for fluent assertions.",
-  "agent_type_hint": "BackendAgent",
-  "inputs": "Repository interfaces from I1.T7, Testcontainers setup patterns for PostgreSQL, Sample entity instances for testing",
+  "task_id": "I2.T1",
+  "iteration_id": "I2",
+  "iteration_goal": "Implement foundational domain services (Room Service, basic User Service), define REST API contracts (OpenAPI specification), and establish WebSocket protocol specification to enable frontend integration and parallel feature development.",
+  "description": "Create comprehensive OpenAPI 3.1 YAML specification documenting all planned REST API endpoints. Define schemas for DTOs (UserDTO, RoomDTO, SubscriptionDTO, etc.), request bodies, response structures, error codes (400, 401, 403, 404, 500 with standardized error schema). Document endpoints for: user management (`/api/v1/users/*`), room CRUD (`/api/v1/rooms/*`), authentication (`/api/v1/auth/*`), subscriptions (`/api/v1/subscriptions/*`), reporting (`/api/v1/reports/*`), organizations (`/api/v1/organizations/*`). Include security schemes (Bearer JWT, OAuth2 flows). Add descriptions, examples, and validation rules (min/max lengths, patterns, required fields).",
+  "agent_type_hint": "DocumentationAgent",
+  "inputs": "REST API endpoint overview from architecture blueprint (Section 4 - API Design), Entity models from I1.T4 (for DTO schema definitions), Authentication/authorization requirements",
   "input_files": [
-    "backend/src/main/java/com/scrumpoker/repository/*.java",
+    ".codemachine/artifacts/architecture/04_Behavior_and_Communication.md",
     "backend/src/main/java/com/scrumpoker/domain/**/*.java"
   ],
   "target_files": [
-    "backend/src/test/java/com/scrumpoker/repository/UserRepositoryTest.java",
-    "backend/src/test/java/com/scrumpoker/repository/RoomRepositoryTest.java",
-    "backend/src/test/java/com/scrumpoker/repository/VoteRepositoryTest.java",
-    "backend/src/test/resources/application-test.properties"
+    "api/openapi.yaml",
+    "docs/api-design.md"
   ],
-  "deliverables": "12 repository test classes with minimum 3 test methods each (create, findById, custom finder), Testcontainers PostgreSQL configuration in test profile, Tests for JSONB field operations (Room.config, UserPreference.default_room_config), Soft delete tests verifying `deleted_at` timestamp behavior, Foreign key relationship tests (e.g., deleting User cascades to UserPreference)",
-  "acceptance_criteria": "`mvn test` executes all repository tests successfully, Testcontainers starts PostgreSQL container automatically, All CRUD operations pass (insert, select, update, delete), Custom finder methods return expected results, JSONB fields round-trip correctly (save and retrieve complex objects), Soft delete tests confirm `deleted_at` set correctly, Test coverage >80% for repository classes",
-  "dependencies": ["I1.T7"],
-  "parallelizable": false,
+  "deliverables": "OpenAPI 3.1 YAML file with 30+ endpoint definitions, Complete schema definitions for all DTOs (User, Room, Vote, Subscription, Organization, etc.), Error response schema with standardized structure (`{\"error\": \"...\", \"message\": \"...\", \"timestamp\": \"...\"}`), Security scheme definitions (JWT Bearer, OAuth2 authorization code flow), Request/response examples for critical endpoints, Validation rules in schemas (string formats, numeric ranges, enum values)",
+  "acceptance_criteria": "OpenAPI file validates against OpenAPI 3.1 schema (use Swagger Editor or spectral), All CRUD endpoints for core entities documented, Security requirements specified for protected endpoints, DTO schemas match database entity structure (field names, types, nullability), Error responses follow consistent structure across all endpoints, File imports successfully into Swagger UI or Redoc for documentation rendering",
+  "dependencies": [],
+  "parallelizable": true,
   "done": false
 }
 ```
@@ -40,39 +38,112 @@ This is the full specification of the task you must complete.
 
 The following are the relevant sections from the architecture and plan documents, which I found by analyzing the task description.
 
-### Context: integration-testing (from 03_Verification_and_Glossary.md)
+### Context: api-design-and-communication (from 04_Behavior_and_Communication.md)
 
 ```markdown
-#### Integration Testing
+<!-- anchor: api-design-and-communication -->
+### 3.7. API Design & Communication
 
-**Scope:** Multiple components working together with real infrastructure (database, cache, message queue)
+<!-- anchor: api-style -->
+#### API Style
 
-**Framework:** Quarkus Test (`@QuarkusTest`), Testcontainers, REST Assured
+**Primary API Style:** **RESTful JSON API (OpenAPI 3.1 Specification)**
 
-**Coverage Target:** Critical integration points (API → Service → Repository → Database)
+**Rationale:**
+- **Simplicity & Familiarity:** REST over HTTPS provides a well-understood contract for CRUD operations on resources (users, rooms, subscriptions)
+- **Tooling Ecosystem:** OpenAPI specification enables automatic client SDK generation (TypeScript for React frontend), API documentation (Swagger UI), and contract testing
+- **Caching Support:** HTTP semantics (ETags, Cache-Control headers) enable browser and CDN caching for read-heavy endpoints (room configurations, user profiles)
+- **Versioning Strategy:** URL-based versioning (`/api/v1/`) for backward compatibility during iterative releases
 
-**Approach:**
-- Use Testcontainers for PostgreSQL and Redis (real instances, not mocks)
-- Test REST endpoints end-to-end (request → response with database persistence)
-- Test WebSocket flows (connection → message handling → database → Pub/Sub broadcast)
-- Verify transaction boundaries and data consistency
-- Run in CI pipeline (longer execution time acceptable: 10-15 minutes)
+**WebSocket Protocol:** **Custom JSON-RPC Style Over WebSocket**
 
-**Examples:**
-- `RoomControllerTest`: POST /rooms creates database record, GET retrieves it
-- `VotingFlowIntegrationTest`: WebSocket vote message → database insert → Redis Pub/Sub → client broadcast
-- `StripeWebhookControllerTest`: Webhook event → signature verification → database update
+**Rationale:**
+- **Real-Time Bidirectional Communication:** WebSocket connections maintained for duration of estimation session, enabling sub-100ms latency for vote events and reveals
+- **Message Format:** JSON envelopes with `type`, `requestId`, and `payload` fields for request/response correlation
+- **Versioned Message Types:** Each message type (e.g., `vote.cast.v1`, `room.reveal.v1`) versioned independently for protocol evolution
+- **Fallback Strategy:** Graceful degradation to HTTP long-polling for environments with WebSocket restrictions (corporate proxies)
 
-**Acceptance Criteria:**
-- All integration tests pass (`mvn verify`)
-- Testcontainers start successfully (PostgreSQL, Redis)
-- Database schema migrations execute correctly in tests
-- No test pollution (each test isolated with database cleanup)
+**Alternative Considered:**
+- **GraphQL:** Rejected due to complexity overhead for small team and straightforward data model. GraphQL subscription complexity for WebSocket integration not justified by query flexibility benefits.
+- **gRPC:** Rejected due to browser support limitations (requires gRPC-Web proxy) and team unfamiliarity. Better suited for backend-to-backend microservice communication.
+```
+
+### Context: rest-api-endpoints (from 04_Behavior_and_Communication.md)
+
+```markdown
+<!-- anchor: rest-api-endpoints -->
+#### REST API Endpoints Overview
+
+**Authentication & User Management:**
+- `POST /api/v1/auth/oauth/callback` - Exchange OAuth2 code for JWT tokens
+- `POST /api/v1/auth/refresh` - Refresh expired access token
+- `POST /api/v1/auth/logout` - Revoke refresh token
+- `GET /api/v1/users/{userId}` - Retrieve user profile
+- `PUT /api/v1/users/{userId}` - Update profile (display name, avatar)
+- `GET /api/v1/users/{userId}/preferences` - Get user preferences
+- `PUT /api/v1/users/{userId}/preferences` - Update default room settings, theme
+
+**Room Management:**
+- `POST /api/v1/rooms` - Create new room (authenticated or anonymous)
+- `GET /api/v1/rooms/{roomId}` - Get room configuration and current state
+- `PUT /api/v1/rooms/{roomId}/config` - Update room settings (host only)
+- `DELETE /api/v1/rooms/{roomId}` - Delete room (owner only)
+- `GET /api/v1/users/{userId}/rooms` - List user's owned rooms
+
+**Subscription & Billing:**
+- `GET /api/v1/subscriptions/{userId}` - Get current subscription status
+- `POST /api/v1/subscriptions/checkout` - Create Stripe checkout session for upgrade
+- `POST /api/v1/subscriptions/{subscriptionId}/cancel` - Cancel subscription (end of period)
+- `POST /api/v1/subscriptions/webhook` - Stripe webhook endpoint (signature verification)
+- `GET /api/v1/billing/invoices` - List payment history
+
+**Reporting & Analytics:**
+- `GET /api/v1/reports/sessions` - List session history (tier-gated pagination, filters)
+- `GET /api/v1/reports/sessions/{sessionId}` - Detailed session report (tier-gated round detail)
+- `POST /api/v1/reports/export` - Generate export job (CSV/PDF), returns job ID
+- `GET /api/v1/jobs/{jobId}` - Poll export job status, retrieve download URL
+
+**Organization Management (Enterprise):**
+- `POST /api/v1/organizations` - Create organization workspace
+- `GET /api/v1/organizations/{orgId}` - Get org settings
+- `PUT /api/v1/organizations/{orgId}/sso` - Configure OIDC/SAML2 settings
+- `POST /api/v1/organizations/{orgId}/members` - Invite member
+- `DELETE /api/v1/organizations/{orgId}/members/{userId}` - Remove member
+- `GET /api/v1/organizations/{orgId}/audit-logs` - Query audit trail
+```
+
+### Context: synchronous-rest-pattern (from 04_Behavior_and_Communication.md)
+
+```markdown
+<!-- anchor: synchronous-rest-pattern -->
+##### Synchronous REST (Request/Response)
+
+**Use Cases:**
+- User authentication and registration
+- Room creation and configuration updates
+- Subscription management (upgrade, cancellation, payment method updates)
+- Report generation triggers and export downloads
+- Organization settings management
+
+**Pattern Characteristics:**
+- Client blocks waiting for server response (typically <500ms)
+- Transactional consistency guaranteed within single database transaction
+- Idempotency keys for payment operations to prevent duplicate charges
+- Error responses use standard HTTP status codes (4xx client errors, 5xx server errors)
+
+**Example Endpoints:**
+- `POST /api/v1/auth/oauth/callback` - Exchange OAuth2 code for JWT token
+- `POST /api/v1/rooms` - Create new estimation room
+- `GET /api/v1/rooms/{roomId}` - Retrieve room configuration
+- `PUT /api/v1/users/{userId}/preferences` - Update user preferences
+- `POST /api/v1/subscriptions/{subscriptionId}/upgrade` - Upgrade subscription tier
+- `GET /api/v1/reports/sessions?from=2025-01-01&to=2025-01-31` - Query session history
 ```
 
 ### Context: data-model-overview-erd (from 03_System_Structure_and_Data.md)
 
 ```markdown
+<!-- anchor: data-model-overview-erd -->
 ### 3.6. Data Model Overview & ERD
 
 #### Description
@@ -104,21 +175,6 @@ The data model follows a relational schema leveraging PostgreSQL's ACID properti
 | **AuditLog** | Compliance and security audit trail | `log_id` (PK), `org_id` (FK nullable), `user_id` (FK nullable), `action`, `resource_type`, `resource_id`, `ip_address`, `user_agent`, `timestamp` |
 ```
 
-### Context: glossary (from 03_Verification_and_Glossary.md)
-
-```markdown
-## 6. Glossary
-
-| Term | Definition |
-|------|------------|
-| **Testcontainers** | Java library providing lightweight, disposable database/cache containers for integration tests |
-| **Uni** | Mutiny type representing asynchronous single-item result (similar to CompletableFuture) |
-| **Multi** | Mutiny type representing asynchronous stream of 0-N items (similar to Reactive Streams Publisher) |
-| **Panache** | Quarkus extension simplifying Hibernate with active record or repository patterns |
-| **JSONB** | JSON Binary (PostgreSQL data type) |
-| **Soft Delete** | Marking records as deleted (e.g., `deleted_at` timestamp) without physical deletion |
-```
-
 ---
 
 ## 3. Codebase Analysis & Strategic Guidance
@@ -127,156 +183,64 @@ The following analysis is based on my direct review of the current codebase. Use
 
 ### Relevant Existing Code
 
-*   **File:** `backend/src/test/java/com/scrumpoker/repository/UserRepositoryTest.java`
-    *   **Summary:** This is a COMPLETE, WORKING integration test example showing the exact pattern you MUST follow. It uses `@QuarkusTest`, `@RunOnVertxContext`, and `UniAsserter` for reactive testing. ALL 11 tests pass successfully.
-    *   **Recommendation:** You MUST follow this test pattern exactly. Study lines 22-42 for the test class setup pattern, lines 40-61 for the basic persist/find test pattern, and lines 143-162 for soft delete testing. This is your PRIMARY reference.
-
-*   **File:** `backend/src/test/java/com/scrumpoker/repository/VoteRepositoryTest.java`
-    *   **Summary:** This is another COMPLETE, WORKING integration test showing complex multi-entity relationship testing. It demonstrates how to test foreign key relationships and proper entity persistence ordering. ALL 15 tests pass successfully.
-    *   **Recommendation:** You MUST use this as reference for testing entities with complex relationships. Study lines 55-84 for the relationship persistence pattern (must persist parent entities before children). Lines 164-215 show the correct pattern for testing custom finder methods with multiple related entities.
-
-*   **File:** `backend/src/test/java/com/scrumpoker/repository/RoomRepositoryTest.java`
-    *   **Summary:** This is the definitive example for testing JSONB fields and soft deletes. It shows exactly how to test JSON serialization/deserialization (lines 75-93) and soft delete behavior (lines 368-395). ALL 15 tests pass successfully.
-    *   **Recommendation:** You MUST follow the JSONB testing pattern from lines 75-93. For soft delete testing, follow the exact pattern from lines 368-395 which shows both persistence verification AND exclusion from active queries.
-
-*   **File:** `backend/src/test/resources/application.properties`
-    *   **Summary:** This file shows the CRITICAL configuration for Testcontainers integration. It explicitly documents that you MUST NOT set JDBC/reactive URLs - Dev Services auto-configures them.
-    *   **Recommendation:** You do NOT need to modify this file. Testcontainers activation is already configured correctly via Maven Surefire plugin settings.
-
-*   **File:** `backend/pom.xml` (lines 120-142)
-    *   **Summary:** This section shows all required test dependencies are already configured: `quarkus-junit5`, `quarkus-test-vertx`, `rest-assured`, and `assertj-core` (version 3.24.2).
-    *   **Recommendation:** You do NOT need to modify the pom.xml. All dependencies for reactive testing are already present.
-
-*   **File:** `backend/src/main/java/com/scrumpoker/repository/VoteRepository.java`
-    *   **Summary:** This is an example repository showing the Panache repository pattern with custom finder methods. Shows the use of `Uni<List<Vote>>` and `Uni<Vote>` return types.
-    *   **Recommendation:** You MUST verify your tests cover ALL custom finder methods defined in each repository. Note the reactive return types - your tests MUST use `UniAsserter` to handle these properly.
+*   **File:** `backend/src/main/java/com/scrumpoker/domain/user/User.java`
+    *   **Summary:** This file defines the `User` entity with OAuth authentication fields. Key fields include: `userId` (UUID), `email`, `oauthProvider`, `oauthSubject`, `displayName`, `avatarUrl`, `subscriptionTier` (enum), `createdAt`, `updatedAt`, and `deletedAt` (for soft deletes). The entity supports unique constraints on email and oauth_provider+oauth_subject combination.
+    *   **Recommendation:** When creating the UserDTO schema in OpenAPI, you MUST map all these fields correctly. Note that `deletedAt` should NOT be exposed in the DTO for privacy reasons. The `subscriptionTier` field uses the `SubscriptionTier` enum which you can find in `backend/src/main/java/com/scrumpoker/domain/user/SubscriptionTier.java`. Your UserDTO schema MUST include: userId (UUID format), email (email format), displayName (string, max 100 chars), avatarUrl (string, max 500 chars, nullable), subscriptionTier (enum: FREE, PRO, PRO_PLUS, ENTERPRISE).
 
 *   **File:** `backend/src/main/java/com/scrumpoker/domain/room/Room.java`
-    *   **Summary:** Entity showing JSONB field usage. The `config` field is defined as `columnDefinition = "jsonb"` and stored as a String. Also shows soft delete with `deletedAt` timestamp.
-    *   **Recommendation:** When testing JSONB fields, you MUST test that JSON strings round-trip correctly through the database. Store a JSON string, retrieve it, and assert it matches exactly.
+    *   **Summary:** This file defines the `Room` entity representing estimation sessions. Critical fields: `roomId` (String, 6-character nanoid - NOT a UUID!), `owner` (ManyToOne to User, nullable for anonymous rooms), `organization` (ManyToOne to Organization, nullable), `title` (String, max 255), `privacyMode` (enum), `config` (String containing JSONB), `createdAt`, `lastActiveAt`, `deletedAt` (soft delete).
+    *   **Recommendation:** Your RoomDTO schema MUST reflect that `roomId` is a **6-character string**, not a UUID. The `config` field is stored as JSONB and should be represented as an object in the OpenAPI schema with properties like: `deckType`, `timerEnabled`, `timerDurationSeconds`, `revealBehavior`, `allowObservers`. The `privacyMode` enum values are defined in `backend/src/main/java/com/scrumpoker/domain/room/PrivacyMode.java` (PUBLIC, INVITE_ONLY, ORG_RESTRICTED).
 
-*   **File:** `backend/src/main/java/com/scrumpoker/domain/user/UserPreference.java`
-    *   **Summary:** Another entity with JSONB fields (`default_room_config`, `notification_settings`). Shows nullable JSONB columns.
-    *   **Recommendation:** Test both null and non-null JSONB values to ensure proper handling of nullable JSONB columns.
+*   **File:** `backend/src/main/java/com/scrumpoker/domain/billing/Subscription.java`
+    *   **Summary:** Defines the `Subscription` entity linking users/organizations to Stripe subscriptions. Key fields: `subscriptionId` (UUID), `stripeSubscriptionId` (String, max 100), `entityId` (UUID - polymorphic reference to User or Organization), `entityType` (enum: USER, ORG), `tier` (SubscriptionTier enum), `status` (SubscriptionStatus enum), `currentPeriodStart`, `currentPeriodEnd`, `canceledAt`.
+    *   **Recommendation:** Your SubscriptionDTO schema MUST include all these fields with proper types. The `entityType` field is an enum defined in `backend/src/main/java/com/scrumpoker/domain/billing/EntityType.java`. The `status` field uses the `SubscriptionStatus` enum found in `backend/src/main/java/com/scrumpoker/domain/billing/SubscriptionStatus.java` with values: ACTIVE, PAST_DUE, CANCELED, TRIALING.
+
+*   **File:** `backend/src/main/java/com/scrumpoker/domain/organization/Organization.java`
+    *   **Summary:** Defines the `Organization` entity for Enterprise customers. Fields: `orgId` (UUID), `name` (String, max 255), `domain` (String, max 255, unique), `ssoConfig` (String containing JSONB), `branding` (String containing JSONB), `subscription` (ManyToOne to Subscription), `createdAt`, `updatedAt`.
+    *   **Recommendation:** Your OrganizationDTO schema should represent `ssoConfig` and `branding` as objects. The `ssoConfig` JSONB should contain fields for OIDC/SAML2 configuration. The `branding` JSONB should include: `logoUrl`, `primaryColor`, `secondaryColor`.
+
+*   **File:** `backend/src/main/resources/db/migration/V1__initial_schema.sql`
+    *   **Summary:** This migration script creates all 11 core database tables and defines ENUM types. It provides authoritative information on column types, constraints, and nullability.
+    *   **Recommendation:** Use this file as the **source of truth** for field constraints in your OpenAPI schemas. For example:
+        - User.email: VARCHAR(255), NOT NULL, UNIQUE → OpenAPI: type: string, format: email, maxLength: 255, required: true
+        - Room.roomId: VARCHAR(6), CHECK (LENGTH(room_id) = 6) → OpenAPI: type: string, pattern: "^[a-z0-9]{6}$", minLength: 6, maxLength: 6
+        - Vote.card_value: VARCHAR(10) → OpenAPI: type: string, maxLength: 10
 
 ### Implementation Tips & Notes
 
-*   **CRITICAL PATTERN - Reactive Test Structure:** You MUST use this exact pattern for EVERY test:
-    ```java
-    @Test
-    @RunOnVertxContext
-    void testSomething(UniAsserter asserter) {
-        // Given: setup test data
+*   **Tip:** The project uses ENUMs extensively for type safety. You MUST define all enum values in the OpenAPI schema using the `enum` keyword. I have identified the following enums in the codebase that you MUST document:
+    - `SubscriptionTier`: FREE, PRO, PRO_PLUS, ENTERPRISE (from V1 migration)
+    - `SubscriptionStatus`: ACTIVE, PAST_DUE, CANCELED, TRIALING (from V1 migration)
+    - `PrivacyMode`: PUBLIC, INVITE_ONLY, ORG_RESTRICTED (from V1 migration)
+    - `RoomRole`: HOST, VOTER, OBSERVER (from V1 migration)
+    - `OrgRole`: ADMIN, MEMBER (from V1 migration)
+    - `EntityType`: USER, ORG (from V1 migration)
+    - `PaymentStatus`: SUCCEEDED, PENDING, FAILED (from V1 migration)
 
-        // When: execute operation wrapped in Panache.withTransaction()
-        asserter.execute(() -> Panache.withTransaction(() ->
-            repository.persist(entity)
-        ));
+*   **Tip:** JSONB fields in PostgreSQL are stored as strings in the Java entities (e.g., `Room.config` is `public String config`). In your OpenAPI schema, you should represent these as **objects** with defined properties for better API documentation and client SDK generation. For example, the Room config JSONB should be documented as an object with properties: deckType, timerEnabled, timerDurationSeconds, revealBehavior, allowObservers.
 
-        // Then: assert results
-        asserter.assertThat(() -> Panache.withTransaction(() ->
-            repository.findById(id)
-        ), found -> {
-            assertThat(found).isNotNull();
-            // more assertions...
-        });
-    }
-    ```
+*   **Note:** The architecture specifies OAuth2 authorization code flow for authentication. Your OpenAPI security schemes MUST include:
+    1. **BearerAuth** (HTTP Bearer scheme) for JWT token-based authentication on most endpoints
+    2. **OAuth2** security scheme with authorization code flow for the `/api/v1/auth/oauth/callback` endpoint
 
-*   **CRITICAL - Entity Persistence Order:** When testing entities with foreign keys, you MUST persist parent entities before children. Example from VoteRepositoryTest:
-    ```java
-    userRepository.persist(testUser).flatMap(user ->
-        roomRepository.persist(testRoom).flatMap(room ->
-            roundRepository.persist(testRound).flatMap(round ->
-                participantRepository.persist(testParticipant).flatMap(participant ->
-                    voteRepository.persist(vote)
-                )
-            )
-        )
-    )
-    ```
+*   **Note:** The architecture blueprint specifies URL-based versioning with `/api/v1/` prefix. ALL endpoint paths in your OpenAPI spec MUST begin with `/api/v1/`.
 
-*   **CRITICAL - BeforeEach Cleanup:** You MUST clean up test data in `@BeforeEach` using this pattern:
-    ```java
-    @BeforeEach
-    @RunOnVertxContext
-    void setUp(UniAsserter asserter) {
-        // Clean up children first, then parents (reverse of creation order)
-        asserter.execute(() -> Panache.withTransaction(() -> childRepository.deleteAll()));
-        asserter.execute(() -> Panache.withTransaction(() -> parentRepository.deleteAll()));
-    }
-    ```
+*   **Note:** The acceptance criteria requires a standardized error response schema. You MUST define a reusable `ErrorResponse` component in your OpenAPI spec with the structure: `{ "error": "string", "message": "string", "timestamp": "string (ISO 8601 datetime)" }`. Reference this schema in ALL error responses (400, 401, 403, 404, 500).
 
-*   **CRITICAL - Helper Methods:** You MUST create helper methods to construct test entities. DO NOT set ID fields manually for UUID-based entities (Hibernate auto-generates them). Example:
-    ```java
-    private User createTestUser(String email, String provider, String subject) {
-        User user = new User();
-        // DO NOT SET user.userId - Hibernate auto-generates it
-        user.email = email;
-        user.oauthProvider = provider;
-        user.oauthSubject = subject;
-        user.displayName = "Test User";
-        user.subscriptionTier = SubscriptionTier.FREE;
-        return user;
-    }
-    ```
+*   **Warning:** The Room entity has a special `roomId` field that is a **6-character nanoid string**, NOT a UUID like other entities. This is critical for URL sharing (`/room/abc123`). Ensure your OpenAPI path parameter definition for `{roomId}` reflects this with proper pattern validation.
 
-*   **JSONB Testing Pattern:** Test JSONB fields by storing a JSON string and verifying exact round-trip:
-    ```java
-    String jsonConfig = "{\"deckType\":\"fibonacci\",\"timerEnabled\":true}";
-    room.config = jsonConfig;
-    // ... persist and retrieve ...
-    assertThat(found.config).isEqualTo(jsonConfig);
-    assertThat(found.config).contains("fibonacci");
-    ```
+*   **Warning:** Several entities support soft deletes (User, Room) via a `deleted_at` column. DO NOT expose the `deleted_at` field in your DTO schemas - it's an internal implementation detail. Deleted entities should simply not be returned by the API.
 
-*   **Soft Delete Testing Pattern:** Test soft delete in TWO steps:
-    1. Verify `deleted_at` is set on the entity
-    2. Verify soft-deleted entity is EXCLUDED from "active" finder queries
-    ```java
-    // Set soft delete
-    entity.deletedAt = Instant.now();
-    repository.persist(entity);
+*   **Tip:** The architecture mentions "tier-gated" features extensively. While you're only documenting the API in this task (not implementing enforcement), you should add clear descriptions to endpoints that have tier restrictions. For example, the detailed session report endpoint should have a description noting: "Requires Pro tier or higher. Free tier users receive a 403 Forbidden response."
 
-    // Verify still exists but marked deleted
-    assertThat(found.deletedAt).isNotNull();
+*   **Tip:** For request/response examples in your OpenAPI spec, use realistic sample data that reflects the actual domain. For example, a Room example should use a 6-character roomId like "abc123", not a UUID. A User example should include a valid email and realistic OAuth provider (google/microsoft).
 
-    // Verify excluded from active queries
-    assertThat(repository.findActiveByX()).doesNotContain(entity);
-    ```
+*   **Note:** The project structure shows that the `api/` directory does not yet exist. You will need to create it when writing `api/openapi.yaml`.
 
-*   **Relationship Navigation Testing:** When testing entity relationships, fetch both entities separately and verify the foreign key matches. See VoteRepositoryTest lines 88-122 for the pattern.
+*   **Note:** The architecture specifies that WebSocket authentication uses JWT tokens passed as query parameters (`?token={jwt}`). While WebSocket protocol is documented separately (task I2.T2), your OpenAPI spec should document this pattern in the description of authentication endpoints that issue these tokens.
 
-*   **Test Naming Convention:** Follow the pattern `test<MethodName>` or `test<BehaviorDescription>`. Examples: `testPersistAndFindById`, `testFindByEmail`, `testSoftDelete`.
+*   **Tip:** For the `docs/api-design.md` file, create a concise markdown document that provides an overview of the API design philosophy, links to the OpenAPI specification, and quick reference for developers. Include sections on: Authentication flow, API versioning strategy, Error handling, Rate limiting (if applicable), and how to use the Swagger UI for testing.
 
-*   **AssertJ Fluent Assertions:** Use AssertJ's fluent API consistently. Common patterns:
-    - `assertThat(found).isNotNull()`
-    - `assertThat(list).hasSize(3)`
-    - `assertThat(list).extracting(Entity::getField).containsExactly(...)`
-    - `assertThat(list).allMatch(predicate)`
+*   **CRITICAL:** You MUST validate your OpenAPI file against the OpenAPI 3.1 schema before completing this task. Use online tools like Swagger Editor (https://editor.swagger.io/) or the `spectral` CLI tool. The acceptance criteria explicitly requires this validation to pass.
 
-*   **Testcontainers Activation:** Testcontainers automatically activates via Quarkus Dev Services when no explicit datasource URL is configured. The existing `application.properties` file is already correctly configured - DO NOT modify it.
-
-*   **Test Coverage Requirement:** The task specifies >80% coverage. You MUST write at least 3 tests per repository, but SHOULD write more to cover all custom finder methods and edge cases.
-
-*   **Running Tests:** Execute with `mvn test` for unit tests or `mvn verify` for integration tests. All tests should pass without errors. Testcontainers will automatically download and start a PostgreSQL container on first run.
-
-*   **CURRENT STATUS:** Based on the directory listing, ALL 12 repository test files already exist:
-    - UserRepositoryTest.java ✓
-    - UserPreferenceRepositoryTest.java ✓
-    - OrganizationRepositoryTest.java ✓
-    - OrgMemberRepositoryTest.java ✓
-    - RoomRepositoryTest.java ✓
-    - RoomParticipantRepositoryTest.java ✓
-    - RoundRepositoryTest.java ✓
-    - VoteRepositoryTest.java ✓
-    - SessionHistoryRepositoryTest.java ✓
-    - SubscriptionRepositoryTest.java ✓
-    - PaymentHistoryRepositoryTest.java ✓
-    - AuditLogRepositoryTest.java ✓
-
-*   **YOUR TASK:** Run `mvn test` to verify all repository tests pass. If any tests fail, debug and fix them using the patterns from the working test examples above. Ensure all acceptance criteria are met.
-
----
-
-**End of Task Briefing Package**
+*   **CRITICAL:** Ensure your schemas match the database entity structure exactly. Field names should use camelCase in JSON (matching Java conventions), types should align with database column types, and nullability should match the database schema. Any mismatch will cause issues in future iterations when services and controllers are implemented.
