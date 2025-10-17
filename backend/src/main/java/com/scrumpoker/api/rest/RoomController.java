@@ -134,6 +134,20 @@ public class RoomController {
             );
         }
 
+        // Update privacy mode if provided
+        if (request.privacyMode != null && !request.privacyMode.isEmpty()) {
+            try {
+                PrivacyMode privacyMode = PrivacyMode.valueOf(request.privacyMode.toUpperCase());
+                updateChain = updateChain.flatMap(room ->
+                    roomService.updatePrivacyMode(roomId, privacyMode)
+                );
+            } catch (IllegalArgumentException e) {
+                ErrorResponse error = new ErrorResponse("VALIDATION_ERROR",
+                    "Invalid privacy mode: " + request.privacyMode + ". Valid values: PUBLIC, INVITE_ONLY, ORG_RESTRICTED");
+                return Uni.createFrom().item(Response.status(Response.Status.BAD_REQUEST).entity(error).build());
+            }
+        }
+
         // Update config if provided
         if (request.config != null) {
             RoomConfig config = roomMapper.toConfig(request.config);

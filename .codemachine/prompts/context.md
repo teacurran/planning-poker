@@ -29,10 +29,7 @@ This is the full specification of the task you must complete.
   ],
   "deliverables": "RoomController with 5 endpoint methods matching OpenAPI spec, DTO classes for requests and responses, MapStruct mapper for entity ↔ DTO conversion, Exception handlers for 404, 400 errors, Authorization annotations (`@RolesAllowed(\"USER\")`), Reactive return types (Uni<Response>)",
   "acceptance_criteria": "Endpoints accessible via `curl` or Postman against running Quarkus dev server, POST creates room, returns 201 Created with RoomDTO body, GET retrieves room by ID, returns 200 OK or 404 Not Found, PUT updates config, returns 200 OK with updated RoomDTO, DELETE soft deletes room, returns 204 No Content, GET user's rooms returns paginated list (if many rooms), DTOs match OpenAPI schema definitions exactly, Authorization prevents unauthorized users from deleting other users' rooms",
-  "dependencies": [
-    "I2.T1",
-    "I2.T3"
-  ],
+  "dependencies": ["I2.T1", "I2.T3"],
   "parallelizable": false,
   "done": false
 }
@@ -44,7 +41,7 @@ This is the full specification of the task you must complete.
 
 The following are the relevant sections from the architecture and plan documents, which I found by analyzing the task description.
 
-### Context: REST API Endpoints Overview (from 04_Behavior_and_Communication.md)
+### Context: rest-api-endpoints (from 04_Behavior_and_Communication.md)
 
 ```markdown
 #### REST API Endpoints Overview
@@ -57,22 +54,17 @@ The following are the relevant sections from the architecture and plan documents
 - `GET /api/v1/users/{userId}/rooms` - List user's owned rooms
 ```
 
-### Context: Synchronous REST Pattern (from 04_Behavior_and_Communication.md)
+### Context: synchronous-rest-pattern (from 04_Behavior_and_Communication.md)
 
 ```markdown
 ##### Synchronous REST (Request/Response)
 
 **Use Cases:**
-- User authentication and registration
 - Room creation and configuration updates
-- Subscription management (upgrade, cancellation, payment method updates)
-- Report generation triggers and export downloads
-- Organization settings management
 
 **Pattern Characteristics:**
 - Client blocks waiting for server response (typically <500ms)
 - Transactional consistency guaranteed within single database transaction
-- Idempotency keys for payment operations to prevent duplicate charges
 - Error responses use standard HTTP status codes (4xx client errors, 5xx server errors)
 
 **Example Endpoints:**
@@ -80,7 +72,7 @@ The following are the relevant sections from the architecture and plan documents
 - `GET /api/v1/rooms/{roomId}` - Retrieve room configuration
 ```
 
-### Context: API Style (from 04_Behavior_and_Communication.md)
+### Context: api-style (from 04_Behavior_and_Communication.md)
 
 ```markdown
 #### API Style
@@ -88,78 +80,9 @@ The following are the relevant sections from the architecture and plan documents
 **Primary API Style:** **RESTful JSON API (OpenAPI 3.1 Specification)**
 
 **Rationale:**
-- **Simplicity & Familiarity:** REST over HTTPS provides a well-understood contract for CRUD operations on resources (users, rooms, subscriptions)
-- **Tooling Ecosystem:** OpenAPI specification enables automatic client SDK generation (TypeScript for React frontend), API documentation (Swagger UI), and contract testing
-- **Caching Support:** HTTP semantics (ETags, Cache-Control headers) enable browser and CDN caching for read-heavy endpoints (room configurations, user profiles)
-- **Versioning Strategy:** URL-based versioning (`/api/v1/`) for backward compatibility during iterative releases
-```
-
-### Context: Room Management Endpoints from OpenAPI (from api/openapi.yaml)
-
-```yaml
-# POST /api/v1/rooms - Create new estimation room
-# Response: 201 Created with RoomDTO body
-# Security: BearerAuth OR anonymous (empty security)
-# Request Body: CreateRoomRequest (title required, privacyMode and config optional)
-
-# GET /api/v1/rooms/{roomId} - Get room configuration and state
-# Response: 200 OK with RoomDTO, or 404 Not Found
-# Security: BearerAuth OR anonymous for public rooms
-# Parameters: roomId (path, 6-char nanoid pattern)
-
-# DELETE /api/v1/rooms/{roomId} - Soft delete room
-# Response: 204 No Content, or 401/403/404
-# Security: BearerAuth required
-# Only owner can delete
-
-# PUT /api/v1/rooms/{roomId}/config - Update room configuration
-# Response: 200 OK with updated RoomDTO, or 400/401/403/404
-# Security: BearerAuth required
-# Only host can modify
-# Request Body: UpdateRoomConfigRequest (all fields optional: title, privacyMode, config)
-
-# GET /api/v1/users/{userId}/rooms - List user's owned rooms
-# Response: 200 OK with RoomListResponse (paginated), or 401/403
-# Security: BearerAuth required
-# Parameters: userId (path, UUID), page (query, default 0), size (query, default 20, max 100)
-```
-
-### Context: DTO Schemas from OpenAPI (from api/openapi.yaml)
-
-```yaml
-# RoomDTO (lines 1339-1392)
-properties:
-  roomId: string (pattern '^[a-z0-9]{6}$', 6 chars)
-  ownerId: UUID (nullable)
-  organizationId: UUID (nullable)
-  title: string (max 255 chars)
-  privacyMode: enum (PUBLIC, INVITE_ONLY, ORG_RESTRICTED)
-  config: RoomConfigDTO
-  createdAt: date-time
-  lastActiveAt: date-time
-  participants: array of RoomParticipantDTO
-
-# CreateRoomRequest (lines 1433-1446)
-required: [title]
-properties:
-  title: string (max 255 chars)
-  privacyMode: PrivacyMode enum
-  config: RoomConfigDTO
-
-# UpdateRoomConfigRequest (lines 1448-1457)
-properties: (all optional)
-  title: string (max 255 chars)
-  privacyMode: PrivacyMode enum
-  config: RoomConfigDTO
-
-# RoomListResponse (lines 1496-1524)
-required: [rooms, page, size, totalElements, totalPages]
-properties:
-  rooms: array of RoomDTO
-  page: integer (0-indexed)
-  size: integer
-  totalElements: integer (total count)
-  totalPages: integer
+- **Simplicity & Familiarity:** REST over HTTPS provides well-understood contract for CRUD operations
+- **Tooling Ecosystem:** OpenAPI enables automatic client SDK generation
+- **Versioning Strategy:** URL-based versioning (`/api/v1/`)
 ```
 
 ---
@@ -170,227 +93,157 @@ The following analysis is based on my direct review of the current codebase. Use
 
 ### Relevant Existing Code
 
+*   **File:** `backend/src/main/java/com/scrumpoker/api/rest/RoomController.java`
+    *   **Summary:** **THIS FILE ALREADY EXISTS AND IS FULLY IMPLEMENTED!** All 5 required REST endpoints are present with correct implementations, reactive return types, exception handling, DTOs, pagination, and authorization annotations.
+    *   **Critical Discovery:** The RoomController already contains:
+        - POST /api/v1/rooms (lines 50-79) - Creates room, returns 201 Created
+        - GET /api/v1/rooms/{roomId} (lines 86-103) - Returns 200 OK or delegates to RoomNotFoundExceptionMapper for 404
+        - PUT /api/v1/rooms/{roomId}/config (lines 110-150) - Updates config/title conditionally, returns 200 OK
+        - DELETE /api/v1/rooms/{roomId} (lines 157-174) - Soft deletes, returns 204 No Content
+        - GET /api/v1/users/{userId}/rooms (lines 182-235) - Paginated list with manual skip/limit
+    *   **Recommendation:** **DO NOT REIMPLEMENT FROM SCRATCH!** Instead, REVIEW the existing implementation carefully against the OpenAPI spec and acceptance criteria. Your task is to VERIFY correctness and TEST the endpoints, not to create new code.
+    *   **Current Status:** Authentication TODOs exist (expected for Iteration 3), `@RolesAllowed` annotations are present but not enforced yet (expected).
+
 *   **File:** `backend/src/main/java/com/scrumpoker/domain/room/RoomService.java`
-    *   **Summary:** This is the complete domain service implementing all room business logic including create, update config, update title, soft delete, find by ID, and find by owner ID. It uses reactive Uni/Multi return types, handles JSONB serialization for room configuration, validates business rules (title length, non-null privacy mode), and generates unique 6-character nanoid room IDs.
-    *   **Recommendation:** You MUST inject this `RoomService` class into your `RoomController` using `@Inject`. All business logic is already implemented - your controller should simply delegate to these service methods and convert domain entities to DTOs.
-    *   **Key Methods to Use:**
-        - `createRoom(String title, PrivacyMode privacyMode, User owner, RoomConfig config)` returns `Uni<Room>`
-        - `findById(String roomId)` returns `Uni<Room>` (throws `RoomNotFoundException` if not found or deleted)
-        - `updateRoomConfig(String roomId, RoomConfig config)` returns `Uni<Room>`
-        - `updateRoomTitle(String roomId, String title)` returns `Uni<Room>`
-        - `deleteRoom(String roomId)` returns `Uni<Room>` (soft delete)
-        - `findByOwnerId(UUID ownerId)` returns `Multi<Room>`
+    *   **Summary:** Complete domain service with all CRUD operations implemented using reactive types. Handles nanoid generation, JSONB config serialization, business validation, soft deletes.
+    *   **Recommendation:** The existing RoomController already injects and uses this service correctly. Verify the service method calls in the controller match the method signatures here.
+    *   **Key Methods (already being used in controller):**
+        - `createRoom()` - Line 71 of RoomController
+        - `findById()` - Lines 97, 128 of RoomController
+        - `updateRoomTitle()` - Line 133 of RoomController
+        - `updateRoomConfig()` - Line 141 of RoomController
+        - `deleteRoom()` - Line 170 of RoomController
+        - `findByOwnerId()` - Line 211 of RoomController
 
 *   **File:** `backend/src/main/java/com/scrumpoker/api/rest/mapper/RoomMapper.java`
-    *   **Summary:** This mapper converts between Room entities and RoomDTOs. It handles JSONB config deserialization and provides `toDTO(Room)` and `toConfig(RoomConfigDTO)` methods.
-    *   **Recommendation:** You MUST inject and use this existing `RoomMapper` for all entity ↔ DTO conversions. The `toDTO()` method already handles all Room entity fields including owner ID, organization ID, config JSONB parsing, and timestamp formatting. The `toConfig()` method converts RoomConfigDTO to domain RoomConfig objects.
-    *   **Note:** The mapper already exists and is complete - DO NOT create a new mapper class. The target_files list mentions mapper but you should VERIFY it exists and use it as-is.
+    *   **Summary:** Complete mapper handling entity ↔ DTO conversions with JSONB deserialization.
+    *   **Recommendation:** The RoomController already injects and uses this mapper correctly (line 43). The mapper's `toDTO()` method is called throughout the controller.
+    *   **Important:** Mapper sets participants to empty list (line 45) with TODO comment - this is expected until WebSocket implementation in I4.
 
 *   **File:** `backend/src/main/java/com/scrumpoker/api/rest/dto/RoomDTO.java`
-    *   **Summary:** This DTO is already fully implemented matching the OpenAPI schema exactly, with all required fields (roomId, ownerId, organizationId, title, privacyMode, config, createdAt, lastActiveAt, participants).
-    *   **Recommendation:** This DTO already exists - DO NOT recreate it. Import and use it in your controller for response bodies.
-
-*   **File:** `backend/src/main/java/com/scrumpoker/api/rest/dto/CreateRoomRequest.java`
-    *   **Summary:** This DTO already exists (based on directory structure).
-    *   **Recommendation:** You SHOULD verify this file exists and matches the OpenAPI spec requirements (title required, optional privacyMode and config). If it doesn't exist, create it matching the OpenAPI `CreateRoomRequest` schema.
-
-*   **File:** `backend/src/main/java/com/scrumpoker/api/rest/dto/UpdateRoomConfigRequest.java`
-    *   **Summary:** This DTO already exists (based on directory structure).
-    *   **Recommendation:** You SHOULD verify this file exists and matches OpenAPI spec (optional title, privacyMode, config fields). If missing, create it matching the OpenAPI `UpdateRoomConfigRequest` schema.
+    *   **Summary:** Fully implemented DTO matching OpenAPI schema with all required fields and Jackson annotations.
+    *   **Recommendation:** Already used in RoomController response bodies. Verify it matches OpenAPI schema at lines 1339-1392.
 
 *   **File:** `backend/src/main/java/com/scrumpoker/api/rest/exception/RoomNotFoundExceptionMapper.java`
-    *   **Summary:** This JAX-RS exception mapper is already fully implemented. It automatically converts `RoomNotFoundException` thrown by `RoomService` into 404 HTTP responses with a standardized ErrorResponse body.
-    *   **Recommendation:** This exception handler is already in place - your controller does NOT need to handle RoomNotFoundException explicitly. Just let the exception bubble up and the mapper will convert it to 404 automatically.
+    *   **Summary:** Exception mapper automatically converting RoomNotFoundException to 404 responses.
+    *   **Recommendation:** Already functioning in RoomController - when `findById()` throws RoomNotFoundException, this mapper creates 404 response automatically (no explicit exception handling needed in controller).
 
-*   **File:** `backend/src/main/java/com/scrumpoker/api/rest/dto/ErrorResponse.java`
-    *   **Summary:** Standardized error response DTO (already exists based on exception mapper usage).
-    *   **Recommendation:** For 400 validation errors (e.g., invalid title length), you SHOULD throw `IllegalArgumentException` which should already have a mapper, OR manually construct ErrorResponse and return Response.status(400).entity(errorResponse).build().
-
-*   **File:** `backend/src/main/java/com/scrumpoker/domain/room/Room.java`
-    *   **Summary:** JPA entity for Room with all required fields including nanoid roomId, owner (nullable User), organization (nullable), title, privacyMode enum, config JSONB string, createdAt, lastActiveAt, and deletedAt for soft deletes.
-    *   **Recommendation:** You DO NOT need to interact with this entity directly in your controller - always go through RoomService and use the mapper to convert to DTOs.
+*   **File:** `api/openapi.yaml`
+    *   **Summary:** Complete OpenAPI 3.1 specification with detailed endpoint definitions, schemas, examples.
+    *   **Recommendation:** Use this as the VERIFICATION REFERENCE. Compare existing RoomController implementation against:
+        - POST /api/v1/rooms (lines 313-349) - Should return 201 Created ✓
+        - GET /api/v1/rooms/{roomId} (lines 351-374) - Should return 200/404 ✓
+        - PUT /api/v1/rooms/{roomId}/config (lines 397-430) - Should return 200 ✓
+        - DELETE /api/v1/rooms/{roomId} (lines 376-395) - Should return 204 ✓
+        - GET /api/v1/users/{userId}/rooms (lines 432-456) - Should return paginated RoomListResponse ✓
 
 ### Implementation Tips & Notes
 
-*   **Tip:** The OpenAPI spec is located at `api/openapi.yaml` and defines all 5 endpoints you need to implement. Review lines 313-456 which specify:
-    - POST /api/v1/rooms (lines 313-349) - returns 201 Created
-    - GET /api/v1/rooms/{roomId} (lines 351-374) - returns 200 OK or 404
-    - DELETE /api/v1/rooms/{roomId} (lines 376-395) - returns 204 No Content
-    - PUT /api/v1/rooms/{roomId}/config (lines 397-430) - returns 200 OK
-    - GET /api/v1/users/{userId}/rooms (lines 432-456) - returns paginated RoomListResponse
+*   **Critical Tip:** This task appears to have been completed already! The RoomController.java file exists at line 237 (complete file) with all required functionality.
+*   **Your Actual Task:** VERIFY the existing implementation meets all acceptance criteria by:
+    1. Starting Quarkus dev mode: `./mvnw quarkus:dev`
+    2. Testing POST /api/v1/rooms with curl
+    3. Testing GET /api/v1/rooms/{roomId} with valid and invalid IDs
+    4. Testing PUT /api/v1/rooms/{roomId}/config
+    5. Testing DELETE /api/v1/rooms/{roomId}
+    6. Testing GET /api/v1/users/{userId}/rooms with pagination params
+    7. Comparing responses against OpenAPI spec
+*   **Note:** Authorization annotations are present but won't be enforced until I3 (expected). The controller has TODO comments for auth checks (lines 60, 125, 168, 198).
+*   **Note:** Pagination is implemented manually with stream skip/limit (lines 220-224) which is acceptable for MVP.
+*   **Testing Pattern:** Based on UserRepositoryTest.java, you should consider creating REST integration tests using REST Assured if tests don't already exist.
 
-*   **Tip:** All RoomService methods return reactive types (Uni or Multi). Your JAX-RS controller endpoints MUST also return these reactive types. The pattern is:
-    ```java
-    @POST
-    public Uni<Response> createRoom(CreateRoomRequest request) {
-        return roomService.createRoom(...)
-            .onItem().transform(room -> Response.status(201).entity(roomMapper.toDTO(room)).build());
-    }
-    ```
+### Critical Observations
 
-*   **Tip:** For authorization, the task mentions `@RolesAllowed("USER")` but authentication is not yet implemented (that's iteration I3). For NOW, you SHOULD add the annotation for future compatibility but it won't be enforced yet. The important authorization check is ensuring room owners can delete their own rooms - you'll need to verify `room.owner.userId` matches the authenticated user ID (when auth is implemented).
+1. **TASK ALREADY COMPLETE:** The RoomController file exists with 237 lines of fully implemented code
+2. **All 5 endpoints present:** POST, GET, PUT, DELETE, GET list
+3. **Reactive types used:** All methods return `Uni<Response>`
+4. **Exception handling:** Delegates to exception mappers
+5. **DTOs exist:** RoomDTO, CreateRoomRequest, UpdateRoomConfigRequest, RoomListResponse, ErrorResponse
+6. **Mapper exists:** RoomMapper with toDTO() and toConfig()
+7. **OpenAPI annotations:** @Operation, @APIResponse annotations present
+8. **Authorization ready:** @RolesAllowed annotations present for future enforcement
 
-*   **Warning:** The OpenAPI spec shows POST /api/v1/rooms allows BOTH authenticated users AND anonymous users (security: `- BearerAuth: []` and `- {}`). For now, since auth isn't implemented, all requests are effectively anonymous. You SHOULD create rooms with `owner = null` for now.
+### Verification Checklist
 
-*   **Note:** The GET /api/v1/users/{userId}/rooms endpoint requires pagination parameters (page, size) per OpenAPI spec (lines 442-443). You MUST return a `RoomListResponse` DTO with pagination metadata (page, size, totalElements, totalPages). The response schema is defined at lines 1496-1524. You'll need to implement pagination logic when calling `roomService.findByOwnerId()`.
+Since the code exists, verify these acceptance criteria:
 
-*   **Note:** The OpenAPI spec defines `RoomParticipantDTO` in the participants field of RoomDTO, but the existing mapper sets this to an empty list with a TODO comment. You SHOULD keep this as empty list for now - participants will be populated via WebSocket state in iteration I4.
+- [ ] Start Quarkus: `cd backend && ./mvnw quarkus:dev`
+- [ ] POST /api/v1/rooms returns 201 Created with RoomDTO
+- [ ] POST validates title is required (400 if missing)
+- [ ] GET /api/v1/rooms/{validId} returns 200 OK with RoomDTO
+- [ ] GET /api/v1/rooms/{invalidId} returns 404 Not Found
+- [ ] PUT /api/v1/rooms/{roomId}/config with title updates title (200 OK)
+- [ ] PUT /api/v1/rooms/{roomId}/config with config updates config (200 OK)
+- [ ] PUT /api/v1/rooms/{roomId}/config with both updates both (200 OK)
+- [ ] DELETE /api/v1/rooms/{roomId} returns 204 No Content
+- [ ] DELETE sets deleted_at (verify room no longer retrievable via GET)
+- [ ] GET /api/v1/users/{userId}/rooms returns RoomListResponse
+- [ ] Pagination works (page=0, size=5 returns max 5 rooms)
+- [ ] Response JSONs match OpenAPI schemas
+- [ ] Error responses have correct ErrorResponse structure
 
-*   **Critical:** For the PUT /api/v1/rooms/{roomId}/config endpoint, the OpenAPI UpdateRoomConfigRequest schema (lines 1448-1457) allows updating BOTH title AND config together OR separately (all fields optional). The RoomService has separate methods `updateRoomConfig()` and `updateRoomTitle()`. You MUST call the appropriate service method(s) based on which fields are present in the request.
+### Example Test Commands
 
-*   **Performance:** For GET /api/v1/users/{userId}/rooms pagination, the `Multi<Room>` returned by `findByOwnerId()` returns ALL rooms. You will need to collect this to a List and implement pagination logic manually (skip/take based on page/size params), or enhance RoomRepository to support pagination queries. For MVP, manual pagination is acceptable.
+```bash
+# Start Quarkus dev mode
+cd backend
+./mvnw quarkus:dev
 
-*   **Error Handling Pattern:** The existing codebase has exception mappers for 404 (RoomNotFoundException) and likely 400 (IllegalArgumentException). For validation errors, you SHOULD throw IllegalArgumentException with descriptive messages and let the mapper handle it, OR catch exceptions and manually create Response objects with ErrorResponse bodies.
+# In another terminal:
 
-### Authorization Strategy (for future reference)
+# Test POST - Create room
+curl -X POST http://localhost:8080/api/v1/rooms \
+  -H "Content-Type: application/json" \
+  -d '{"title": "Sprint 42 Planning", "privacyMode": "PUBLIC"}'
 
-*   **Current State:** Authentication/authorization is NOT yet implemented (iteration I3). User context and JWT validation don't exist yet.
-*   **What to do NOW:** Add `@RolesAllowed("USER")` annotations where specified in the task, but they won't be enforced. For owner checks (DELETE endpoint), add TODO comments like `// TODO: Verify room.owner.userId matches authenticated user when auth is implemented`
-*   **Future Implementation:** In I3, a JWT filter will extract user ID from token claims and set security context. The `@RolesAllowed` annotations will then be enforced by Quarkus Security.
+# Expected: 201 Created with roomId in response
 
-### JAX-RS Reactive Patterns
+# Test GET - Retrieve room (use roomId from above)
+curl http://localhost:8080/api/v1/rooms/abc123
 
-*   **Pattern 1 - Simple transformation:**
-    ```java
-    return roomService.findById(roomId)
-        .onItem().transform(room -> Response.ok(roomMapper.toDTO(room)).build());
-    ```
+# Expected: 200 OK with full RoomDTO
 
-*   **Pattern 2 - Chained operations:**
-    ```java
-    return roomService.createRoom(title, privacyMode, null, config)
-        .onItem().transform(roomMapper::toDTO)
-        .onItem().transform(dto -> Response.status(201).entity(dto).build());
-    ```
+# Test GET - Invalid room
+curl http://localhost:8080/api/v1/rooms/999999
 
-*   **Pattern 3 - Multi to List (for pagination):**
-    ```java
-    return roomService.findByOwnerId(ownerId)
-        .collect().asList()
-        .onItem().transform(rooms -> {
-            // Apply pagination logic here
-            List<RoomDTO> dtoList = rooms.stream()
-                .skip(page * size)
-                .limit(size)
-                .map(roomMapper::toDTO)
-                .collect(Collectors.toList());
+# Expected: 404 Not Found with ErrorResponse
 
-            int totalElements = rooms.size();
-            int totalPages = (int) Math.ceil((double) totalElements / size);
+# Test PUT - Update config
+curl -X PUT http://localhost:8080/api/v1/rooms/abc123/config \
+  -H "Content-Type: application/json" \
+  -d '{"title": "Updated Title", "config": {"deckType": "FIBONACCI", "timerEnabled": true}}'
 
-            RoomListResponse response = new RoomListResponse();
-            response.rooms = dtoList;
-            response.page = page;
-            response.size = size;
-            response.totalElements = totalElements;
-            response.totalPages = totalPages;
+# Expected: 200 OK with updated RoomDTO
 
-            return Response.ok(response).build();
-        });
-    ```
+# Test DELETE - Soft delete
+curl -X DELETE http://localhost:8080/api/v1/rooms/abc123
 
-*   **Pattern 4 - Error handling (if needed):**
-    ```java
-    return roomService.findById(roomId)
-        .onItem().transform(...)
-        .onFailure(RoomNotFoundException.class).recoverWithItem(
-            failure -> Response.status(404).entity(new ErrorResponse("NOT_FOUND", failure.getMessage())).build()
-        );
-    ```
-    Note: With exception mappers in place, you usually DON'T need explicit error handling - just let exceptions bubble up.
+# Expected: 204 No Content
 
-*   **Pattern 5 - Conditional logic in update:**
-    ```java
-    @PUT
-    @Path("/{roomId}/config")
-    public Uni<Response> updateRoomConfig(@PathParam("roomId") String roomId, UpdateRoomConfigRequest request) {
-        Uni<Room> updateChain = roomService.findById(roomId); // Start with find
+# Verify delete worked
+curl http://localhost:8080/api/v1/rooms/abc123
 
-        // If title present, chain title update
-        if (request.title != null) {
-            updateChain = updateChain.flatMap(room -> roomService.updateRoomTitle(roomId, request.title));
-        }
+# Expected: 404 Not Found (room soft deleted)
 
-        // If config present, chain config update
-        if (request.config != null) {
-            RoomConfig config = roomMapper.toConfig(request.config);
-            updateChain = updateChain.flatMap(room -> roomService.updateRoomConfig(roomId, config));
-        }
+# Test pagination (create several rooms first, then)
+curl "http://localhost:8080/api/v1/users/00000000-0000-0000-0000-000000000000/rooms?page=0&size=2"
 
-        // If privacyMode present, need to update (note: RoomService doesn't have updatePrivacyMode method - may need to add)
-
-        return updateChain
-            .onItem().transform(roomMapper::toDTO)
-            .onItem().transform(dto -> Response.ok(dto).build());
-    }
-    ```
-
-### Required DTOs Status
-
-*   **CreateRoomRequest.java** - Already exists, verify structure matches OpenAPI
-*   **UpdateRoomConfigRequest.java** - Already exists, verify structure matches OpenAPI
-*   **RoomListResponse.java** - NEEDS TO BE CREATED with fields: rooms (List<RoomDTO>), page, size, totalElements, totalPages
+# Expected: 200 OK with RoomListResponse containing pagination metadata
+```
 
 ---
 
-## 4. Quick Reference Checklist
+## 4. Summary
 
-Before you start coding, verify:
+**KEY FINDING:** The task asks you to "implement" RoomController, but the file ALREADY EXISTS with complete implementation of all 5 required endpoints!
 
-- [x] RoomService is fully implemented and injectable
-- [x] RoomMapper exists and handles entity ↔ DTO conversion
-- [x] RoomDTO, RoomConfigDTO, RoomParticipantDTO already exist
-- [ ] CreateRoomRequest DTO exists (verify/create)
-- [ ] UpdateRoomConfigRequest DTO exists (verify/create)
-- [ ] RoomListResponse DTO exists (CREATE - lines 1496-1524 from OpenAPI)
-- [x] Exception mappers for 404 and 400 are in place
-- [x] OpenAPI spec reviewed for exact endpoint signatures
-- [x] Reactive patterns (Uni/Multi) understood and ready to use
+**Your actual task should be:**
+1. **VERIFY** the existing implementation is correct
+2. **TEST** all endpoints against running Quarkus server
+3. **DOCUMENT** test results
+4. **FIX** any issues found (if any)
+5. **MARK TASK COMPLETE** if all acceptance criteria are met
 
-## 5. Step-by-Step Implementation Plan
+**Do NOT reimplement from scratch** - that would waste time and potentially introduce bugs into working code.
 
-1. **Verify/Create DTOs** (5 minutes)
-   - Check CreateRoomRequest.java exists and matches OpenAPI
-   - Check UpdateRoomConfigRequest.java exists and matches OpenAPI
-   - Create RoomListResponse.java with pagination fields
-
-2. **Create RoomController skeleton** (10 minutes)
-   - Add @Path("/api/v1/rooms") to class
-   - Inject RoomService and RoomMapper
-   - Create 5 empty endpoint method signatures
-
-3. **Implement POST /api/v1/rooms** (15 minutes)
-   - Extract request fields
-   - Convert PrivacyMode string to enum
-   - Call roomService.createRoom()
-   - Map to DTO and return 201 Created
-
-4. **Implement GET /api/v1/rooms/{roomId}** (10 minutes)
-   - Call roomService.findById()
-   - Map to DTO and return 200 OK
-   - Let exception mapper handle 404
-
-5. **Implement DELETE /api/v1/rooms/{roomId}** (10 minutes)
-   - Call roomService.deleteRoom()
-   - Return 204 No Content
-   - Add TODO for owner authorization check
-
-6. **Implement PUT /api/v1/rooms/{roomId}/config** (20 minutes)
-   - Handle optional title, privacyMode, config fields
-   - Chain updates conditionally
-   - Return 200 OK with updated DTO
-
-7. **Implement GET /api/v1/users/{userId}/rooms** (20 minutes)
-   - Extract pagination params
-   - Call roomService.findByOwnerId()
-   - Implement manual pagination (skip/limit)
-   - Build RoomListResponse with metadata
-   - Return 200 OK
-
-8. **Test all endpoints** (30 minutes)
-   - Start Quarkus dev mode
-   - Use curl or Postman to test each endpoint
-   - Verify responses match OpenAPI spec
-   - Check error scenarios (404, 400)
-
-Total estimated time: ~2 hours
+**Expected Outcome:** After testing, if all acceptance criteria pass, mark task I2.T5 as done=true.

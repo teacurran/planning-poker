@@ -129,6 +129,30 @@ public class RoomService {
     }
 
     /**
+     * Updates the privacy mode of an existing room.
+     *
+     * @param roomId The room ID
+     * @param privacyMode The new privacy mode
+     * @return Uni containing the updated room
+     * @throws IllegalArgumentException if privacyMode is null
+     * @throws RoomNotFoundException if room doesn't exist
+     */
+    @WithTransaction
+    public Uni<Room> updatePrivacyMode(String roomId, PrivacyMode privacyMode) {
+        if (privacyMode == null) {
+            return Uni.createFrom().failure(new IllegalArgumentException("Privacy mode cannot be null"));
+        }
+
+        return findById(roomId)
+            .onItem().transform(room -> {
+                room.privacyMode = privacyMode;
+                room.lastActiveAt = Instant.now();
+                return room;
+            })
+            .flatMap(room -> roomRepository.persist(room));
+    }
+
+    /**
      * Soft deletes a room by setting the deleted_at timestamp.
      * Does not physically remove the room from the database for audit trail.
      *
