@@ -4,11 +4,12 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.scrumpoker.domain.user.User;
 import com.scrumpoker.repository.RoomRepository;
+import io.quarkus.hibernate.reactive.panache.common.WithSession;
+import io.quarkus.hibernate.reactive.panache.common.WithTransaction;
 import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.Uni;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
-import jakarta.transaction.Transactional;
 
 import java.security.SecureRandom;
 import java.time.Instant;
@@ -44,17 +45,17 @@ public class RoomService {
      * @return Uni containing the created room
      * @throws IllegalArgumentException if title exceeds max length or privacy mode is null
      */
-    @Transactional
+    @WithTransaction
     public Uni<Room> createRoom(String title, PrivacyMode privacyMode, User owner, RoomConfig config) {
         // Validate inputs
         if (title == null || title.trim().isEmpty()) {
-            throw new IllegalArgumentException("Room title cannot be null or empty");
+            return Uni.createFrom().failure(new IllegalArgumentException("Room title cannot be null or empty"));
         }
         if (title.length() > MAX_TITLE_LENGTH) {
-            throw new IllegalArgumentException("Room title cannot exceed " + MAX_TITLE_LENGTH + " characters");
+            return Uni.createFrom().failure(new IllegalArgumentException("Room title cannot exceed " + MAX_TITLE_LENGTH + " characters"));
         }
         if (privacyMode == null) {
-            throw new IllegalArgumentException("Privacy mode cannot be null");
+            return Uni.createFrom().failure(new IllegalArgumentException("Privacy mode cannot be null"));
         }
 
         // Use default config if not provided
@@ -69,6 +70,8 @@ public class RoomService {
         room.privacyMode = privacyMode;
         room.owner = owner;
         room.config = serializeConfig(config);
+        room.createdAt = Instant.now();
+        room.lastActiveAt = Instant.now();
 
         // Persist and return
         return roomRepository.persist(room);
@@ -83,15 +86,16 @@ public class RoomService {
      * @return Uni containing the updated room
      * @throws RoomNotFoundException if room doesn't exist
      */
-    @Transactional
+    @WithTransaction
     public Uni<Room> updateRoomConfig(String roomId, RoomConfig config) {
         if (config == null) {
-            throw new IllegalArgumentException("Room config cannot be null");
+            return Uni.createFrom().failure(new IllegalArgumentException("Room config cannot be null"));
         }
 
         return findById(roomId)
             .onItem().transform(room -> {
                 room.config = serializeConfig(config);
+                room.lastActiveAt = Instant.now();
                 return room;
             })
             .flatMap(room -> roomRepository.persist(room));
@@ -106,18 +110,19 @@ public class RoomService {
      * @throws IllegalArgumentException if title is invalid
      * @throws RoomNotFoundException if room doesn't exist
      */
-    @Transactional
+    @WithTransaction
     public Uni<Room> updateRoomTitle(String roomId, String title) {
         if (title == null || title.trim().isEmpty()) {
-            throw new IllegalArgumentException("Room title cannot be null or empty");
+            return Uni.createFrom().failure(new IllegalArgumentException("Room title cannot be null or empty"));
         }
         if (title.length() > MAX_TITLE_LENGTH) {
-            throw new IllegalArgumentException("Room title cannot exceed " + MAX_TITLE_LENGTH + " characters");
+            return Uni.createFrom().failure(new IllegalArgumentException("Room title cannot exceed " + MAX_TITLE_LENGTH + " characters"));
         }
 
         return findById(roomId)
             .onItem().transform(room -> {
                 room.title = title.trim();
+                room.lastActiveAt = Instant.now();
                 return room;
             })
             .flatMap(room -> roomRepository.persist(room));
@@ -131,7 +136,7 @@ public class RoomService {
      * @return Uni containing the soft-deleted room
      * @throws RoomNotFoundException if room doesn't exist
      */
-    @Transactional
+    @WithTransaction
     public Uni<Room> deleteRoom(String roomId) {
         return findById(roomId)
             .onItem().transform(room -> {
@@ -149,6 +154,7 @@ public class RoomService {
      * @return Uni containing the room
      * @throws RoomNotFoundException if room doesn't exist or is deleted
      */
+    @WithSession
     public Uni<Room> findById(String roomId) {
         return roomRepository.findById(roomId)
             .onItem().ifNull().failWith(() -> new RoomNotFoundException(roomId))
@@ -181,6 +187,7 @@ public class RoomService {
      * @return Uni containing the room configuration
      * @throws RoomNotFoundException if room doesn't exist
      */
+    @WithSession
     public Uni<RoomConfig> getRoomConfig(String roomId) {
         return findById(roomId)
             .onItem().transform(room -> deserializeConfig(room.config));
