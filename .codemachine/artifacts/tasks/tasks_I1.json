@@ -39,7 +39,7 @@
     "acceptance_criteria": "`npm run dev` starts Vite dev server successfully, Navigating to `http://localhost:5173` displays HomePage component, Tailwind CSS classes render correctly (test with colored div), TypeScript compilation successful with no errors, Path aliases work (import using `@/components/...`)",
     "dependencies": [],
     "parallelizable": true,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I1.T3",

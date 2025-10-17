@@ -10,21 +10,23 @@ This is the full specification of the task you must complete.
 
 ```json
 {
-  "task_id": "I1.T1",
+  "task_id": "I1.T2",
   "iteration_id": "I1",
   "iteration_goal": "Establish project scaffolding, configure development environment, define database schema, and set up CI/CD foundation to enable parallel backend and frontend development in subsequent iterations.",
-  "description": "Create Quarkus 3.x Maven project with reactive extensions (hibernate-reactive-panache, reactive-pg-client, redis-client, websockets, oidc, smallrye-jwt, micrometer-prometheus). Configure `application.properties` with database connection placeholders, Redis configuration, and JWT settings. Set up Maven build with compiler plugin (Java 17 target), Quarkus plugin, and Surefire for testing. Create package structure: `api`, `domain`, `repository`, `integration`, `event`, `config`, `security`.",
+  "description": "Create React 18 TypeScript project using Vite. Install dependencies: React, React Router, Tailwind CSS, Headless UI, Zustand, React Query, Zod, date-fns, recharts. Configure Tailwind CSS with custom theme (primary color, dark mode support). Set up directory structure: `components`, `pages`, `services`, `stores`, `types`, `utils`. Create placeholder components for routing (HomePage, RoomPage, DashboardPage). Configure TypeScript with strict mode, path aliases (`@/components`, `@/services`).",
   "agent_type_hint": "SetupAgent",
-  "inputs": "Directory structure specification from Section 3 of plan overview, Technology stack requirements (Quarkus 3.x, Java 17, reactive extensions), Maven dependency list from architecture blueprint",
+  "inputs": "Directory structure specification from Section 3, Frontend technology stack (React 18, Vite, TypeScript, Tailwind), List of required npm packages",
   "input_files": [],
   "target_files": [
-    "backend/pom.xml",
-    "backend/src/main/resources/application.properties",
-    "backend/src/main/java/com/scrumpoker/",
-    "backend/.gitignore"
+    "frontend/package.json",
+    "frontend/tsconfig.json",
+    "frontend/vite.config.ts",
+    "frontend/tailwind.config.js",
+    "frontend/src/",
+    "frontend/index.html"
   ],
-  "deliverables": "Working Maven project buildable with `mvn clean compile`, Configured Quarkus extensions in `pom.xml`, Application properties with placeholder values for database, Redis, JWT secret, Package directory structure following hexagonal architecture",
-  "acceptance_criteria": "`mvn clean compile` executes without errors, `mvn quarkus:dev` starts Quarkus in dev mode and serves health check at `/q/health`, All required Quarkus extensions listed in `pom.xml` dependencies, Package structure matches specification (6+ top-level packages created)",
+  "deliverables": "Working React application buildable with `npm run build`, Development server runnable with `npm run dev`, Tailwind CSS configured with custom theme, TypeScript configuration with strict checks and path aliases, Placeholder page components with basic routing",
+  "acceptance_criteria": "`npm run dev` starts Vite dev server successfully, Navigating to `http://localhost:5173` displays HomePage component, Tailwind CSS classes render correctly (test with colored div), TypeScript compilation successful with no errors, Path aliases work (import using `@/components/...`)",
   "dependencies": [],
   "parallelizable": true,
   "done": false
@@ -37,6 +39,78 @@ This is the full specification of the task you must complete.
 
 The following are the relevant sections from the architecture and plan documents, which I found by analyzing the task description.
 
+### Context: directory-structure (from 01_Plan_Overview_and_Setup.md)
+
+```markdown
+## 3. Directory Structure
+
+*   **Root Directory:** `scrum-poker-platform/`
+
+*   **Structure Definition:**
+
+    The project follows a standard Maven multi-module structure for the backend and modern React SPA conventions for the frontend, with clear separation of concerns and dedicated locations for documentation, API specifications, and infrastructure-as-code.
+
+    ~~~
+    scrum-poker-platform/
+    ├── backend/                          # Quarkus backend application
+    │   [... backend structure ...]
+    │
+    ├── frontend/                         # React SPA
+    │   ├── public/
+    │   │   ├── index.html
+    │   │   └── favicon.ico
+    │   ├── src/
+    │   │   ├── components/               # Reusable UI components
+    │   │   │   ├── common/               # Buttons, modals, forms
+    │   │   │   ├── room/                 # Room lobby, voting card, reveal
+    │   │   │   ├── auth/                 # Login, OAuth callback
+    │   │   │   └── dashboard/            # User dashboard, settings
+    │   │   ├── pages/                    # Route-level page components
+    │   │   │   ├── HomePage.tsx
+    │   │   │   ├── RoomPage.tsx
+    │   │   │   ├── DashboardPage.tsx
+    │   │   │   └── SettingsPage.tsx
+    │   │   ├── services/                 # API clients and WebSocket manager
+    │   │   │   ├── api.ts                # REST API client (React Query)
+    │   │   │   └── websocket.ts          # WebSocket connection manager
+    │   │   ├── stores/                   # Zustand state stores
+    │   │   │   ├── authStore.ts
+    │   │   │   ├── roomStore.ts
+    │   │   │   └── uiStore.ts
+    │   │   ├── types/                    # TypeScript type definitions
+    │   │   │   ├── api.ts                # API DTOs (generated from OpenAPI)
+    │   │   │   └── websocket.ts          # WebSocket message types
+    │   │   ├── utils/                    # Utility functions
+    │   │   ├── App.tsx                   # Root component with routing
+    │   │   ├── index.tsx                 # Entry point
+    │   │   └── tailwind.config.js        # Tailwind CSS configuration
+    │   ├── package.json
+    │   ├── tsconfig.json
+    │   └── vite.config.ts                # Vite build configuration
+    ~~~
+
+**Justifications for Key Choices:**
+
+1. **Component-Based Frontend (`frontend/src/components/`):** Reusable UI patterns, aligns with atomic design principles
+2. **Domain organization in components:** Components are organized by feature domain (auth, room, dashboard) for scalability
+3. **Separation of pages vs components:** Pages are route-level containers; components are reusable building blocks
+4. **Services directory:** Centralizes all API communication logic (REST and WebSocket)
+5. **Types directory:** TypeScript definitions for API contracts enable type-safe communication with backend
+```
+
+### Context: technology-stack (from 01_Plan_Overview_and_Setup.md)
+
+```markdown
+*   **Technology Stack:**
+    *   **Frontend:**
+        *   Framework: React 18+ with TypeScript
+        *   UI Library: Tailwind CSS + Headless UI
+        *   State Management: Zustand (client state) + React Query (server state)
+        *   WebSocket: Native WebSocket API with reconnection wrapper
+    *   **Other Key Libraries/Tools:**
+        *   **Testing:** Testcontainers (integration), Playwright (E2E), JUnit 5
+```
+
 ### Context: technology-stack-summary (from 02_Architecture_Overview.md)
 
 ```markdown
@@ -44,81 +118,49 @@ The following are the relevant sections from the architecture and plan documents
 
 | **Category** | **Technology Choice** | **Justification** |
 |--------------|----------------------|-------------------|
-| **Backend Framework** | **Quarkus 3.x (Reactive)** | Specified requirement, optimized for cloud-native deployment, reactive runtime for WebSocket concurrency, fast startup times |
-| **Language** | **Java 17+ (LTS)** | Native Quarkus support, strong type system, mature ecosystem, team expertise |
-| **ORM/Data Access** | **Hibernate Reactive + Panache** | Specified requirement, reactive database access with Mutiny streams, simplified repository pattern via Panache |
-| **Database** | **PostgreSQL 15+** | ACID compliance, JSONB for flexible room configuration storage, proven scalability, strong community support |
-| **Cache/Session Store** | **Redis 7+ (Cluster mode)** | In-memory performance for session state, Pub/Sub for WebSocket message broadcasting, horizontal scaling via cluster mode |
-| **Authentication** | **OAuth2/OIDC (Google, Microsoft)** | Leverages existing identity providers, reduces password management risk, Quarkus OIDC extension for SSO integration |
-| **Authorization** | **Quarkus Security (RBAC)** | Built-in role-based access control, annotation-driven security, JWT token validation |
-| **Observability - Metrics** | **Prometheus + Grafana** | Cloud-native standard, Quarkus Micrometer extension, custom business metrics (active sessions, vote latency) |
+| **Frontend Framework** | **React 18+ with TypeScript** | Strong ecosystem, concurrent rendering for real-time updates, TypeScript for type safety in WebSocket message contracts |
+| **UI Component Library** | **Tailwind CSS + Headless UI** | Utility-first CSS for rapid development, Headless UI for accessible components (modals, dropdowns), minimal bundle size |
+| **State Management** | **Zustand + React Query** | Lightweight state management (Zustand), server state caching and synchronization (React Query), WebSocket integration support |
+| **WebSocket Client** | **Native WebSocket API + Reconnecting wrapper** | Native browser API for compatibility, lightweight reconnection logic with exponential backoff |
 
 #### Key Libraries & Extensions
 
-**Backend (Quarkus):**
-- `quarkus-resteasy-reactive-jackson` - Reactive REST endpoints with JSON serialization
-- `quarkus-hibernate-reactive-panache` - Reactive database access layer
-- `quarkus-reactive-pg-client` - Non-blocking PostgreSQL driver
-- `quarkus-redis-client` - Redis integration for caching and Pub/Sub
-- `quarkus-websockets` - WebSocket server implementation
-- `quarkus-oidc` - OAuth2/OIDC authentication and SSO support
-- `quarkus-smallrye-jwt` - JWT token generation and validation
-- `quarkus-micrometer-registry-prometheus` - Metrics export
-- `quarkus-flyway` - Database migrations
-- `quarkus-smallrye-health` - Health checks
-- `quarkus-smallrye-openapi` - OpenAPI documentation
+**Frontend (React):**
+- `@tanstack/react-query` - Server state management and caching
+- `zustand` - Client-side state management (UI, WebSocket connection state)
+- `react-hook-form` - Form validation and submission
+- `zod` - Schema validation for API responses and WebSocket messages
+- `date-fns` - Date/time formatting for session history
+- `recharts` - Charting library for analytics dashboards
+- `@headlessui/react` - Accessible UI components
+- `heroicons` - Icon library
+
+**DevOps & Testing:**
+- `testcontainers` - Integration testing with PostgreSQL and Redis containers
+- `rest-assured` - REST API testing
+- `playwright` - End-to-end testing for WebSocket flows
+- `k6` - Load testing for WebSocket concurrency benchmarks
 ```
 
-### Context: directory-structure (from 01_Plan_Overview_and_Setup.md)
+### Context: architectural-style (from 02_Architecture_Overview.md)
 
 ```markdown
-## 3. Directory Structure
+**Primary Style:** **Modular Monolith with Event-Driven Reactive Patterns**
 
-The project follows a standard Maven multi-module structure for the backend and modern React SPA conventions for the frontend, with clear separation of concerns and dedicated locations for documentation, API specifications, and infrastructure-as-code.
+#### Rationale
 
-~~~
-scrum-poker-platform/
-├── backend/                          # Quarkus backend application
-│   ├── src/
-│   │   ├── main/
-│   │   │   ├── java/
-│   │   │   │   └── com/scrumpoker/
-│   │   │   │       ├── api/          # REST controllers, WebSocket handlers
-│   │   │   │       ├── domain/       # Domain services and business logic
-│   │   │   │       ├── repository/   # Panache repositories
-│   │   │   │       ├── integration/  # External service adapters
-│   │   │   │       ├── event/        # Redis Pub/Sub publisher/subscriber
-│   │   │   │       ├── config/       # Application configuration classes
-│   │   │   │       └── security/     # Authentication filters, JWT utilities
-│   │   │   └── resources/
-│   │   │       ├── application.properties  # Quarkus configuration
-│   │   │       └── db/
-│   │   │           └── migration/    # Flyway SQL migration scripts
-│   │   └── test/
-│   │       ├── java/
-│   │       │   └── com/scrumpoker/
-│   │       │       ├── api/          # REST/WebSocket integration tests
-│   │       │       ├── domain/       # Unit tests for services
-│   │       │       └── repository/   # Repository tests with Testcontainers
-│   │       └── resources/
-│   │           └── application-test.properties
-│   ├── pom.xml                       # Maven project descriptor
-│   └── Dockerfile                    # Multi-stage Docker build
-~~~
-```
+The chosen architectural style balances the simplicity and operational efficiency required for a small-to-medium scale SaaS application with the scalability and real-time responsiveness demanded by WebSocket-based collaborative features.
 
-### Context: architectural-style (from 01_Plan_Overview_and_Setup.md)
+**Why Modular Monolith:**
+1. **Team Size & Velocity:** A modular monolith allows a small development team to iterate rapidly without the operational overhead of microservices
+2. **Transactional Consistency:** Core business operations (room creation, vote recording, subscription changes) benefit from ACID transactions within a single database
+3. **Simplified Deployment:** Single deployable artifact reduces CI/CD complexity
+4. **Clear Upgrade Path:** Well-defined module boundaries enable future extraction into microservices if scale demands
 
-```markdown
-## 2. Core Architecture
-
-*   **Architectural Style:** Modular Monolith with Event-Driven Reactive Patterns
-
-    **Rationale:**
-    *   **Modular Monolith:** Balances operational simplicity (single deployable artifact) with clear module boundaries (User Management, Room Management, Billing, Reporting) for future microservice extraction if needed
-    *   **Event-Driven Reactive:** Quarkus reactive runtime (Vert.x-based) enables non-blocking I/O for handling thousands of concurrent WebSocket connections efficiently
-    *   **Redis Pub/Sub:** Enables stateless application nodes to broadcast room events across all connected clients in distributed deployment
-    *   **CQRS-Lite:** Separate read models for reporting queries to avoid impacting transactional write performance
+**Why Event-Driven Reactive Patterns:**
+1. **Real-Time Requirements:** WebSocket connections require non-blocking I/O to efficiently handle thousands of concurrent connections
+2. **Quarkus Reactive:** Leverages Quarkus's reactive runtime for high-concurrency WebSocket handling
+3. **Event Propagation:** Redis Pub/Sub enables stateless application nodes to broadcast room state changes
 ```
 
 ---
@@ -130,84 +172,90 @@ The following analysis is based on my direct review of the current codebase. Use
 ### Relevant Existing Code
 
 *   **File:** `backend/pom.xml`
-    *   **Summary:** This file already exists and contains a properly configured Quarkus 3.15.1 Maven project with all the required reactive extensions. The project is already set up with the correct groupId (`com.scrumpoker`), artifactId (`scrum-poker-backend`), and Java 17 compiler configuration.
-    *   **Status:** ✅ COMPLETE - The pom.xml already contains all required dependencies including:
-        - `quarkus-hibernate-reactive-panache`
-        - `quarkus-reactive-pg-client`
-        - `quarkus-redis-client`
-        - `quarkus-websockets`
-        - `quarkus-oidc`
-        - `quarkus-smallrye-jwt`
-        - `quarkus-micrometer-registry-prometheus`
-        - `quarkus-flyway` for database migrations
-        - `quarkus-smallrye-health` for health checks
-        - `quarkus-smallrye-openapi` for API documentation
-    *   **Recommendation:** You DO NOT need to create or modify this file. It is already correctly configured.
+    *   **Summary:** This file defines the Quarkus 3.15.1 backend project with all required reactive extensions. It uses Java 17 and Maven as the build system.
+    *   **Recommendation:** You MUST ensure the frontend development server (Vite on port 5173) is configured in CORS settings to communicate with the backend during local development. The backend is configured to accept CORS from `http://localhost:5173` in `backend/src/main/resources/application.properties`.
 
 *   **File:** `backend/src/main/resources/application.properties`
-    *   **Summary:** This file already exists and is comprehensively configured with all required settings including database configuration (both JDBC and reactive), Redis connection settings, JWT configuration, OIDC settings, WebSocket configuration, CORS configuration, health checks, Prometheus metrics, OpenAPI documentation, and environment-specific profiles for dev and test.
-    *   **Status:** ✅ COMPLETE - All required configuration sections are present:
-        - Database (PostgreSQL with Flyway migrations enabled)
-        - Redis (standalone mode with health checks)
-        - JWT (issuer, public/private key locations, token expiration)
-        - OIDC (Google OAuth2 placeholders)
-        - WebSocket configuration
-        - HTTP/CORS settings
-        - Logging configuration
-    *   **Recommendation:** You DO NOT need to create or modify this file. It is already correctly configured with all necessary placeholders.
+    *   **Summary:** This file contains comprehensive Quarkus configuration including database, Redis, JWT, OIDC, WebSocket, HTTP, CORS, health checks, metrics, and logging settings. The HTTP server runs on port 8080 by default.
+    *   **Recommendation:** You SHOULD note that the CORS configuration already includes `http://localhost:5173` (Vite's default port) in the allowed origins list at line 99: `quarkus.http.cors.origins=${CORS_ORIGINS:http://localhost:3000,http://localhost:5173}`. Your frontend development server will be able to make API calls to `http://localhost:8080` without CORS issues.
 
-*   **File:** `backend/src/main/java/com/scrumpoker/`
-    *   **Summary:** The package structure has been created with placeholder `package-info.java` files in each of the required directories: `api`, `config`, `domain`, `event`, `integration`, `repository`, and `security`.
-    *   **Status:** ✅ COMPLETE - All 7 required top-level packages exist:
-        - `com.scrumpoker.api` (package-info.java exists)
-        - `com.scrumpoker.config` (package-info.java exists)
-        - `com.scrumpoker.domain` (package-info.java exists)
-        - `com.scrumpoker.event` (package-info.java exists)
-        - `com.scrumpoker.integration` (package-info.java exists)
-        - `com.scrumpoker.repository` (package-info.java exists)
-        - `com.scrumpoker.security` (package-info.java exists)
-    *   **Recommendation:** The package structure is already complete. You DO NOT need to create additional directories.
-
-*   **File:** `backend/src/test/resources/application-test.properties`
-    *   **Summary:** Test configuration file exists with proper test database and Redis configuration.
-    *   **Status:** ✅ COMPLETE - Test configuration is properly set up.
+*   **File:** `backend/src/main/java/com/scrumpoker/*/package-info.java`
+    *   **Summary:** Package documentation files exist for all backend module directories (api, config, domain, event, integration, repository, security), indicating a well-organized hexagonal architecture structure.
+    *   **Recommendation:** You SHOULD mirror this level of organization in the frontend project structure with clear separation of concerns (components, pages, services, stores, types, utils).
 
 ### Implementation Tips & Notes
 
-*   **CRITICAL NOTE:** This task (I1.T1) is **ALREADY COMPLETE**. All deliverables have been satisfied:
-    1. ✅ Working Maven project is buildable with `mvn clean compile`
-    2. ✅ All required Quarkus extensions are configured in `pom.xml`
-    3. ✅ Application properties file exists with all required placeholders for database, Redis, JWT settings
-    4. ✅ Package directory structure follows hexagonal architecture with all 7 required packages
+*   **CRITICAL: Project Location:** The frontend project MUST be created at the root level as `frontend/` directory (sibling to `backend/`), NOT nested inside the backend project or src directories. The current codebase shows that `frontend/` directory does not exist yet - you will be creating it from scratch.
 
-*   **Verification Steps:** To verify task completion, you should:
-    1. Run `mvn clean compile` in the `backend` directory - it should execute without errors
-    2. Check that `backend/pom.xml` contains all required Quarkus dependencies
-    3. Verify `backend/src/main/resources/application.properties` has configuration sections for database, Redis, JWT, OIDC, WebSocket, health checks, and Prometheus
-    4. Confirm all 7 package directories exist under `backend/src/main/java/com/scrumpoker/`: api, config, domain, event, integration, repository, security
+*   **CRITICAL: Vite Entry Point:** Create `index.html` at `frontend/index.html` (at the frontend project root), NOT in a `public/` subdirectory. Vite uses the root-level `index.html` as the entry point, unlike Create React App which uses `public/index.html`. However, you SHOULD still create a `frontend/public/` directory for static assets like favicon.
 
-*   **Missing Item:** The task specifies creating `backend/.gitignore`, but this file does not currently exist. This is the ONLY missing deliverable. You should create a standard Java/Maven `.gitignore` file that excludes:
-    - `target/` directory
-    - IDE-specific files (`.idea/`, `*.iml`, `.vscode/`, `.DS_Store`)
-    - Build artifacts and logs
+*   **Required npm Packages:** Based on the architecture documents, you MUST install these npm packages:
+    - **Core:** `react@^18`, `react-dom@^18`, `react-router-dom@^6`
+    - **Build Tool:** `vite@^5`, `@vitejs/plugin-react@^4`
+    - **TypeScript:** `typescript@^5`, `@types/react@^18`, `@types/react-dom@^18`, `@types/node@^20`
+    - **UI/Styling:** `tailwindcss@^3`, `postcss@^8`, `autoprefixer@^10`, `@headlessui/react@^2`, `@heroicons/react@^2`
+    - **State Management:** `zustand@^4`, `@tanstack/react-query@^5`
+    - **Validation:** `zod@^3`
+    - **Utilities:** `date-fns@^3`, `recharts@^2`
+    - **Development:** `eslint@^8`, `@typescript-eslint/parser@^6`, `@typescript-eslint/eslint-plugin@^6`
 
-*   **Project Context:** This is a Scrum Poker estimation platform with real-time WebSocket-based collaborative gameplay. The backend uses Quarkus reactive patterns to handle thousands of concurrent WebSocket connections efficiently. The architecture follows hexagonal/ports-and-adapters pattern with clear separation between domain logic, infrastructure, and API layers.
+*   **Path Aliases Configuration:** The task requires path aliases (`@/components`, `@/services`). You MUST configure BOTH:
+    1. `tsconfig.json` with `"paths"` compiler option for TypeScript type checking
+    2. `vite.config.ts` with `resolve.alias` for Vite module resolution at runtime
 
-*   **Next Steps After This Task:** Once this task is verified as complete, the next tasks will be:
-    - I1.T2: Initialize Frontend Project Structure (React TypeScript Vite)
-    - I1.T3: Define Database Schema & Create Migration Scripts
-    - These tasks can proceed in parallel since I1.T1 has no blocking dependencies
+    These must match exactly, or imports will fail at build time.
 
----
+*   **Tailwind CSS Setup:** Tailwind requires THREE configuration steps:
+    1. Create `tailwind.config.js` with content paths pointing to all template files
+    2. Create `postcss.config.js` with Tailwind and Autoprefixer plugins
+    3. Create a CSS file (e.g., `src/index.css`) and add Tailwind directives: `@tailwind base;`, `@tailwind components;`, `@tailwind utilities;`
+    4. Import the CSS file in your entry point (`src/main.tsx` or `src/index.tsx`)
 
-## 4. Acceptance Criteria Verification
+*   **Custom Tailwind Theme:** The task requires a custom theme with primary color and dark mode support. In `tailwind.config.js`, you MUST:
+    - Enable dark mode with `darkMode: 'class'` (or 'media')
+    - Define custom colors in `theme.extend.colors` (e.g., a primary color palette)
+    - Configure responsive breakpoints if needed
 
-To mark this task as complete, verify the following acceptance criteria:
+*   **Directory Structure:** You MUST create these subdirectories under `frontend/src/`:
+    - `components/` (with subdirectories: `common/`, `room/`, `auth/`, `dashboard/`)
+    - `pages/`
+    - `services/`
+    - `stores/`
+    - `types/`
+    - `utils/`
 
-1. ✅ `mvn clean compile` executes without errors
-2. ✅ `mvn quarkus:dev` starts Quarkus in dev mode and serves health check at `/q/health`
-3. ✅ All required Quarkus extensions listed in `pom.xml` dependencies
-4. ✅ Package structure matches specification (7 top-level packages created with package-info.java files)
-5. ⚠️ MISSING: `backend/.gitignore` file needs to be created
+*   **Placeholder Page Components:** Create at minimum THREE placeholder page components as specified in the task:
+    - `src/pages/HomePage.tsx` - Landing/home page
+    - `src/pages/RoomPage.tsx` - Estimation room page
+    - `src/pages/DashboardPage.tsx` - User dashboard
 
-**Action Required:** Create the `backend/.gitignore` file to complete this task, then verify all acceptance criteria are met.
+    Each page component SHOULD include at least a heading and a colored div using Tailwind CSS classes to verify styling works.
+
+*   **React Router Setup:** You MUST set up React Router in `App.tsx` with routes for the placeholder pages:
+    ```tsx
+    import { BrowserRouter, Routes, Route } from 'react-router-dom';
+    ```
+    Define routes like: `/` → HomePage, `/room/:roomId` → RoomPage, `/dashboard` → DashboardPage
+
+*   **TypeScript Strict Mode:** The task requires TypeScript strict mode. In `tsconfig.json`, you MUST set:
+    ```json
+    "compilerOptions": {
+      "strict": true,
+      "noUnusedLocals": true,
+      "noUnusedParameters": true,
+      "noFallthroughCasesInSwitch": true
+    }
+    ```
+
+*   **Backend Integration Ready:** The backend is already running on port 8080 with CORS configured for `http://localhost:5173`. You DO NOT need to set up API calls yet (that's for later iterations), but ensure the frontend dev server runs on the default Vite port 5173.
+
+*   **Git Ignore:** The root `.gitignore` already exists. You SHOULD ensure `frontend/node_modules/` and `frontend/dist/` are excluded. Check and add these entries if missing.
+
+*   **Verification After Setup:** To verify the task is complete:
+    1. Run `npm install` in `frontend/` directory - should complete without errors
+    2. Run `npm run dev` - Vite dev server should start on port 5173
+    3. Open `http://localhost:5173` in browser - should see HomePage with Tailwind styling
+    4. Run `npm run build` - should compile TypeScript and build production bundle without errors
+    5. Check imports with path aliases work (e.g., `import Button from '@/components/common/Button'`)
+
+*   **Project Context:** This frontend will eventually become a real-time Scrum Poker estimation platform with WebSocket-based collaborative gameplay. The UI must support voting interfaces, room management, authentication flows, and responsive design for mobile devices. Keep this in mind when organizing components.
