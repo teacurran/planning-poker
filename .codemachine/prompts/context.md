@@ -10,25 +10,27 @@ This is the full specification of the task you must complete.
 
 ```json
 {
-  "task_id": "I2.T3",
+  "task_id": "I2.T4",
   "iteration_id": "I2",
   "iteration_goal": "Implement foundational domain services (Room Service, basic User Service), define REST API contracts (OpenAPI specification), and establish WebSocket protocol specification to enable frontend integration and parallel feature development.",
-  "description": "Create `RoomService` domain service implementing core room operations: create room (generate 6-character nanoid, validate privacy mode, initialize config JSONB), update room configuration (deck type, rules, title), delete room (soft delete with `deleted_at`), find room by ID, list rooms by owner. Use `RoomRepository` for database operations. Implement reactive methods returning `Uni<>` for single results, `Multi<>` for lists. Validate business rules (room title length, valid privacy modes, deck type enum). Handle JSONB serialization for room configuration. Add transaction boundaries with `@Transactional`.",
+  "description": "Create `UserService` domain service for user profile operations: create user (from OAuth profile), update profile (display name, avatar URL), get user by ID, find by email, update user preferences (default deck type, theme, notification settings). Use `UserRepository` and `UserPreferenceRepository`. Implement reactive methods. Handle JSONB serialization for UserPreference.notification_settings and default_room_config. Validate email format, display name length constraints. Implement soft delete for user accounts (GDPR compliance).",
   "agent_type_hint": "BackendAgent",
-  "inputs": "Room entity and repository from I1, Room management requirements from product spec, Nanoid generation pattern (6 characters, a-z0-9)",
+  "inputs": "User and UserPreference entities from I1, User repositories from I1, User management requirements",
   "input_files": [
-    "backend/src/main/java/com/scrumpoker/domain/room/Room.java",
-    "backend/src/main/java/com/scrumpoker/repository/RoomRepository.java"
+    "backend/src/main/java/com/scrumpoker/domain/user/User.java",
+    "backend/src/main/java/com/scrumpoker/domain/user/UserPreference.java",
+    "backend/src/main/java/com/scrumpoker/repository/UserRepository.java",
+    "backend/src/main/java/com/scrumpoker/repository/UserPreferenceRepository.java"
   ],
   "target_files": [
-    "backend/src/main/java/com/scrumpoker/domain/room/RoomService.java",
-    "backend/src/main/java/com/scrumpoker/domain/room/RoomConfig.java",
-    "backend/src/main/java/com/scrumpoker/domain/room/RoomNotFoundException.java"
+    "backend/src/main/java/com/scrumpoker/domain/user/UserService.java",
+    "backend/src/main/java/com/scrumpoker/domain/user/UserPreferenceConfig.java",
+    "backend/src/main/java/com/scrumpoker/domain/user/UserNotFoundException.java"
   ],
-  "deliverables": "RoomService class with methods: `createRoom()`, `updateRoomConfig()`, `deleteRoom()`, `findById()`, `findByOwnerId()`, Nanoid generation utility for unique room IDs, RoomConfig POJO with fields: deckType, timerEnabled, timerDurationSeconds, revealBehavior, Business validation (title max 200 chars, valid privacy enum), Reactive return types (Uni, Multi), Custom exception for room not found scenarios",
-  "acceptance_criteria": "Service methods compile and pass unit tests (mocked repository), Room creation generates unique 6-character IDs (test collision resistance with 1000 iterations), JSONB config serialization/deserialization works correctly, Soft delete sets `deleted_at` timestamp without removing database row, Business validation throws appropriate exceptions (e.g., `IllegalArgumentException` for invalid title), Service transactional boundaries configured correctly",
+  "deliverables": "UserService with methods: `createUser()`, `updateProfile()`, `getUserById()`, `findByEmail()`, `updatePreferences()`, `deleteUser()` (soft delete), UserPreferenceConfig POJO for JSONB fields, Email validation using regex or Bean Validation, Display name length validation (max 100 chars), Soft delete implementation (sets `deleted_at`, excludes from queries)",
+  "acceptance_criteria": "Service methods pass unit tests with mocked repositories, User creation from OAuth profile maps fields correctly (oauth_provider, oauth_subject, email), Preference updates persist JSONB fields correctly, Soft delete marks user as deleted without data loss, Email validation rejects invalid formats, Service methods return reactive types (Uni, Multi)",
   "dependencies": ["I1.T4", "I1.T7"],
-  "parallelizable": false,
+  "parallelizable": true,
   "done": false
 }
 ```
@@ -39,12 +41,36 @@ This is the full specification of the task you must complete.
 
 The following are the relevant sections from the architecture and plan documents, which I found by analyzing the task description.
 
+### Context: data-model-overview-erd (from 03_System_Structure_and_Data.md)
+
+```markdown
+### 3.6. Data Model Overview & ERD
+
+#### Description
+
+The data model follows a relational schema leveraging PostgreSQL's ACID properties for transactional consistency and JSONB columns for flexible configuration storage (room settings, deck definitions). The model is optimized for both transactional writes (vote casting, room creation) and analytical reads (session history, organizational reporting).
+
+**Design Principles:**
+1. **Normalized Core Entities:** Users, Rooms, Organizations follow 3NF to prevent update anomalies
+2. **Denormalized Read Models:** SessionSummary and VoteStatistics tables precompute aggregations for reporting performance
+3. **JSONB for Flexibility:** RoomConfig, DeckDefinition, UserPreferences stored as JSONB to support customization without schema migrations
+4. **Soft Deletes:** Critical entities (Users, Rooms) use `deleted_at` timestamp for audit trail and GDPR compliance
+5. **Partitioning Strategy:** SessionHistory and AuditLog partitioned by month for query performance and data lifecycle management
+
+#### Key Entities
+
+| Entity | Purpose | Key Attributes |
+|--------|---------|----------------|
+| **User** | Registered user account | `user_id` (PK), `email`, `oauth_provider`, `oauth_subject`, `display_name`, `avatar_url`, `subscription_tier`, `created_at` |
+| **UserPreference** | Saved user defaults | `user_id` (FK), `default_deck_type`, `default_room_config` (JSONB), `theme`, `notification_settings` (JSONB) |
+```
+
 ### Context: component-diagram (from 03_System_Structure_and_Data.md)
 
 ```markdown
-#### Component Diagram(s) (C4 Level 3 or UML)
+### 3.5. Component Diagram(s) (C4 Level 3 or UML)
 
-**Description**
+#### Description
 
 This Component Diagram zooms into the **Quarkus Application** container to reveal its internal modular structure. The application follows a hexagonal (ports and adapters) architecture with clear separation between domain logic, infrastructure, and API layers.
 
@@ -56,88 +82,56 @@ This Component Diagram zooms into the **Quarkus Application** container to revea
 - **Integration Adapters:** External service clients (OAuth2, Stripe, email) following the adapter pattern
 - **Event Publisher:** Redis Pub/Sub integration for broadcasting WebSocket messages across application nodes
 
-**Component Diagram Highlights:**
-- `room_service` ("Room Service", "Domain Logic"): "Room creation, join logic, deck configuration, privacy controls"
-- `room_repository` ("Room Repository", "Panache Repository"): "Room, RoomConfig, Vote entity persistence"
-- REST Controllers invoke domain services
-- Domain services use repositories for persistence
-- Reactive patterns throughout with `Uni<>` and `Multi<>` return types
+**Service Responsibilities:**
+- **User Service:** User registration, profile management, preference storage
+- **Room Service:** Room creation, join logic, deck configuration, privacy controls
+- **Voting Service:** Vote casting, reveal logic, consensus calculation, round lifecycle
 ```
 
-### Context: data-model-overview-erd (from 03_System_Structure_and_Data.md)
+### Context: rest-api-endpoints (from 04_Behavior_and_Communication.md)
 
 ```markdown
-#### Data Model Overview & ERD
+#### REST API Endpoints Overview
 
-**Key Entities**
-
-| Entity | Purpose | Key Attributes |
-|--------|---------|----------------|
-| **Room** | Estimation session | `room_id` (PK, nanoid 6-char), `owner_id` (FK nullable for anonymous), `org_id` (FK nullable), `title`, `privacy_mode` (PUBLIC/INVITE_ONLY/ORG_RESTRICTED), `config` (JSONB: deck, rules, timer), `created_at`, `last_active_at` |
-
-**Design Principles:**
-1. **Normalized Core Entities:** Users, Rooms, Organizations follow 3NF to prevent update anomalies
-2. **Denormalized Read Models:** SessionSummary and VoteStatistics tables precompute aggregations for reporting performance
-3. **JSONB for Flexibility:** RoomConfig, DeckDefinition, UserPreferences stored as JSONB to support customization without schema migrations
-4. **Soft Deletes:** Critical entities (Users, Rooms) use `deleted_at` timestamp for audit trail and GDPR compliance
-5. **Partitioning Strategy:** SessionHistory and AuditLog partitioned by month for query performance and data lifecycle management
-
-**Room Entity Details:**
-- Primary key: `room_id` VARCHAR(6) - 6-character nanoid (NOT UUID)
-- Owner: nullable FK to User (supports anonymous room creation)
-- Organization: nullable FK for org-restricted rooms
-- Privacy modes: PUBLIC, INVITE_ONLY, ORG_RESTRICTED (enum)
-- Config: JSONB column storing deck type, timer settings, reveal behavior
-- Soft delete: `deleted_at` timestamp (NULL = active, non-NULL = deleted)
-- Timestamps: `created_at` (immutable), `last_active_at` (updated on activity)
+**Authentication & User Management:**
+- `POST /api/v1/auth/oauth/callback` - Exchange OAuth2 code for JWT tokens
+- `POST /api/v1/auth/refresh` - Refresh expired access token
+- `POST /api/v1/auth/logout` - Revoke refresh token
+- `GET /api/v1/users/{userId}` - Retrieve user profile
+- `PUT /api/v1/users/{userId}` - Update profile (display name, avatar)
+- `GET /api/v1/users/{userId}/preferences` - Get user preferences
+- `PUT /api/v1/users/{userId}/preferences` - Update default room settings, theme
 ```
 
-### Context: synchronous-rest-pattern (from 04_Behavior_and_Communication.md)
+### Context: key-interaction-flow-oauth-login (from 04_Behavior_and_Communication.md)
 
 ```markdown
-##### Synchronous REST (Request/Response)
+#### Key Interaction Flow: OAuth2 Authentication (Google/Microsoft)
 
-**Use Cases:**
-- User authentication and registration
-- Room creation and configuration updates
-- Subscription management (upgrade, cancellation, payment method updates)
-- Report generation triggers and export downloads
-- Organization settings management
+##### Description
 
-**Pattern Characteristics:**
-- Client blocks waiting for server response (typically <500ms)
-- Transactional consistency guaranteed within single database transaction
-- Idempotency keys for payment operations to prevent duplicate charges
-- Error responses use standard HTTP status codes (4xx client errors, 5xx server errors)
+This sequence demonstrates the OAuth2 authorization code flow for user authentication via Google or Microsoft identity providers, JWT token generation, and session establishment.
 
-**Example Endpoints:**
-- `POST /api/v1/rooms` - Create new estimation room
-- `GET /api/v1/rooms/{roomId}` - Retrieve room configuration
-- `PUT /api/v1/users/{userId}/preferences` - Update user preferences
+**Flow highlights:**
+1. User clicks "Sign in with Google/Microsoft"
+2. SPA redirects to OAuth2 provider with PKCE code_challenge
+3. User grants permission, provider redirects with authorization code
+4. Backend exchanges code for access_token and id_token
+5. Backend validates id_token signature, extracts user info (sub, email, name, picture)
+6. Backend calls UserService.findOrCreateUser() to provision user
+7. If new user, creates User entity with oauth_provider='google', oauth_subject=sub, subscription_tier='FREE'
+8. If new user, creates default UserPreference record (theme='light', default_deck_type='fibonacci')
+9. Backend generates JWT access token and refresh token
+10. SPA stores tokens and redirects to dashboard
+
+**User JIT Provisioning Logic:**
+```sql
+SELECT * FROM user WHERE oauth_provider='google' AND oauth_subject='...'
+-- If NULL:
+INSERT INTO user (oauth_provider, oauth_subject, email, display_name, avatar_url, subscription_tier)
+VALUES ('google', '...', '...', '...', '...', 'FREE')
+INSERT INTO user_preference (user_id, default_deck_type, theme) VALUES (...)
 ```
-
-### Context: task-i2-t3 (from 02_Iteration_I2.md)
-
-```markdown
-**Task 2.3: Implement Room Service (CRUD Operations)**
-*   **Task ID:** `I2.T3`
-*   **Description:** Create `RoomService` domain service implementing core room operations: create room (generate 6-character nanoid, validate privacy mode, initialize config JSONB), update room configuration (deck type, rules, title), delete room (soft delete with `deleted_at`), find room by ID, list rooms by owner. Use `RoomRepository` for database operations. Implement reactive methods returning `Uni<>` for single results, `Multi<>` for lists. Validate business rules (room title length, valid privacy modes, deck type enum). Handle JSONB serialization for room configuration. Add transaction boundaries with `@Transactional`.
-
-**Deliverables:**
-- RoomService class with methods: `createRoom()`, `updateRoomConfig()`, `deleteRoom()`, `findById()`, `findByOwnerId()`
-- Nanoid generation utility for unique room IDs
-- RoomConfig POJO with fields: deckType, timerEnabled, timerDurationSeconds, revealBehavior
-- Business validation (title max 200 chars, valid privacy enum)
-- Reactive return types (Uni, Multi)
-- Custom exception for room not found scenarios
-
-**Acceptance Criteria:**
-- Service methods compile and pass unit tests (mocked repository)
-- Room creation generates unique 6-character IDs (test collision resistance with 1000 iterations)
-- JSONB config serialization/deserialization works correctly
-- Soft delete sets `deleted_at` timestamp without removing database row
-- Business validation throws appropriate exceptions (e.g., `IllegalArgumentException` for invalid title)
-- Service transactional boundaries configured correctly
 ```
 
 ---
@@ -146,113 +140,206 @@ This Component Diagram zooms into the **Quarkus Application** container to revea
 
 The following analysis is based on my direct review of the current codebase. Use these notes and tips to guide your implementation.
 
-### CRITICAL FINDING: Task Already Completed ✅
-
-**The RoomService implementation is ALREADY COMPLETE and fully functional!**
-
-All required components have been implemented and tested:
-
-1. **RoomService.java** - Fully implemented with all required methods
-2. **RoomConfig.java** - Complete POJO with Jackson annotations for JSONB serialization
-3. **RoomNotFoundException.java** - Custom exception with proper error messages
-4. **RoomServiceTest.java** - Comprehensive test suite with 15+ test cases
-
 ### Relevant Existing Code
 
-*   **File:** `backend/src/main/java/com/scrumpoker/domain/room/Room.java`
-    *   **Summary:** JPA entity extending PanacheEntityBase with proper annotations for the Room table.
-    *   **Key Attributes:**
-        - `roomId` String (6 chars) - NOT UUID, this is the PK
-        - `owner` User (nullable for anonymous)
-        - `organization` Organization (nullable)
-        - `title` String (max 255)
-        - `privacyMode` enum (PUBLIC, INVITE_ONLY, ORG_RESTRICTED)
-        - `config` String (JSONB column)
-        - `createdAt`, `lastActiveAt`, `deletedAt` timestamps
-    *   **Recommendation:** DO NOT modify this entity - it's already correctly configured.
+#### File: `backend/src/main/java/com/scrumpoker/domain/user/User.java`
+*   **Summary:** This is the JPA entity for registered users with OAuth authentication. It uses Hibernate Reactive Panache for persistence, has UUID primary key auto-generated, includes `deleted_at` for soft deletes, and uses `@Cacheable` for second-level caching.
+*   **Recommendation:** You MUST import and reference this User class in your UserService. Note that all field properties are **public** (Panache pattern), not private with getters/setters.
+*   **Critical Pattern:** The entity uses `@CreationTimestamp` and `@UpdateTimestamp` from Hibernate, so you do NOT need to manually set `createdAt` or `updatedAt` - Hibernate handles these automatically.
+*   **JSONB Fields:** None on User entity - all JSONB storage is on UserPreference entity.
 
-*   **File:** `backend/src/main/java/com/scrumpoker/repository/RoomRepository.java`
-    *   **Summary:** Reactive Panache repository implementing `PanacheRepositoryBase<Room, String>` (String PK, not UUID).
-    *   **Custom Queries:**
-        - `findActiveByOwnerId(UUID)` - Excludes deleted rooms
-        - `findByOrgId(UUID)` - Org-restricted rooms
-        - `findPublicRooms()` - Public room discovery
-        - `findInactiveSince(Instant)` - For cleanup
-        - `countActiveByOwnerId(UUID)` - Room count queries
-    *   **Recommendation:** Inject via `@Inject RoomRepository roomRepository` and use the existing custom queries.
+#### File: `backend/src/main/java/com/scrumpoker/domain/user/UserPreference.java`
+*   **Summary:** This entity has a 1:1 relationship with User, using `@MapsId` to share the same primary key. It contains JSONB columns for flexible configuration: `default_room_config` and `notification_settings`.
+*   **Recommendation:** You MUST create UserPreference records when creating new users. The JSONB columns are stored as JSON **strings**, not objects - your service will need to serialize/deserialize.
+*   **Critical Pattern:** The `user` field is a `@OneToOne` relationship with `@MapsId`, meaning `userId` is both FK and PK. When creating UserPreference, you MUST set both `userId` and `user` fields.
+*   **Default Values:** `theme` defaults to "light" at database level. Your service should set sensible defaults for JSONB fields (e.g., empty JSON object `"{}"` or proper default config).
 
-*   **File:** `backend/src/main/java/com/scrumpoker/domain/room/RoomService.java`
-    *   **Summary:** Complete domain service implementing all room CRUD operations with reactive patterns, JSONB serialization, business validation, and transaction management.
-    *   **Implementation Details:**
-        - ✅ `createRoom()` - Generates 6-char nanoid, validates inputs, serializes JSONB config
-        - ✅ `updateRoomConfig()` - Updates JSONB configuration with validation
-        - ✅ `updateRoomTitle()` - Updates room title with max 255 char validation
-        - ✅ `deleteRoom()` - Soft delete implementation (sets `deleted_at` timestamp)
-        - ✅ `findById()` - Finds active rooms, throws `RoomNotFoundException` if deleted
-        - ✅ `findByOwnerId()` - Returns `Multi<Room>` stream ordered by `lastActiveAt`
-        - ✅ `getRoomConfig()` - Deserializes JSONB to RoomConfig POJO
-        - ✅ Nanoid generation: `generateNanoid()` using SecureRandom with charset `a-z0-9`
-        - ✅ JSONB serialization/deserialization using injected `ObjectMapper`
-        - ✅ Transaction boundaries with `@WithTransaction` and `@WithSession`
-        - ✅ Business validation for title length (max 255), privacy mode not null
-    *   **Recommendation:** **THIS TASK IS ALREADY COMPLETE!** All target files exist and pass tests.
+#### File: `backend/src/main/java/com/scrumpoker/repository/UserRepository.java`
+*   **Summary:** Reactive Panache repository with custom finder methods: `findByEmail()`, `findByOAuthProviderAndSubject()`, `findActiveByEmail()`, `countActive()`.
+*   **Recommendation:** You SHOULD use `findByOAuthProviderAndSubject()` for OAuth login flow. You SHOULD use `findActiveByEmail()` when you need to exclude soft-deleted users.
+*   **Pattern:** All methods return `Uni<>` (single result) or `Multi<>` (stream). For nullable results, the Uni will contain null - check with `.onItem().ifNull()`.
+*   **Soft Delete Queries:** Notice how `findActiveByEmail()` filters `deletedAt is null` - your service should follow this pattern when querying non-deleted users.
 
-*   **File:** `backend/src/main/java/com/scrumpoker/domain/room/RoomConfig.java`
-    *   **Summary:** Complete POJO for JSONB configuration with Jackson annotations and sensible defaults.
-    *   **Fields:** deckType, timerEnabled, timerDurationSeconds, revealBehavior, allowObservers
-    *   **Features:** Default constructor with sensible defaults (FIBONACCI deck, manual reveal, 60s timer)
+#### File: `backend/src/main/java/com/scrumpoker/repository/UserPreferenceRepository.java`
+*   **Summary:** Simple repository with `findByUserId()` (which just delegates to `findById()` since userId is the PK).
+*   **Recommendation:** You SHOULD use this repository to persist and retrieve UserPreference entities.
+*   **Pattern:** Since UserPreference shares PK with User, you can `findById(userId)` directly.
 
-*   **File:** `backend/src/main/java/com/scrumpoker/domain/room/RoomNotFoundException.java`
-    *   **Summary:** Custom exception for 404 responses with roomId tracking.
-    *   **Features:** Constructor with roomId parameter, proper error messages
+#### File: `backend/src/main/java/com/scrumpoker/domain/room/RoomService.java`
+*   **Summary:** This is THE reference implementation for domain services in this project. It demonstrates all key patterns you MUST follow.
+*   **Critical Patterns to Follow:**
+    1. **Service Annotations:** Use `@ApplicationScoped` for CDI bean, use `@Inject` for repository dependencies
+    2. **Transaction Management:** Use `@WithTransaction` on methods that modify data, `@WithSession` on read-only methods
+    3. **Reactive Patterns:** Return `Uni<>` for single results, `Multi<>` for streams. Chain operations with `.flatMap()` for async composition
+    4. **Validation:** Validate inputs early, return `Uni.createFrom().failure(new IllegalArgumentException(...))` for validation errors
+    5. **JSONB Handling:** Use injected `ObjectMapper` to serialize/deserialize JSONB columns (`objectMapper.writeValueAsString()` and `objectMapper.readValue()`)
+    6. **Custom Exceptions:** Throw domain exceptions (e.g., `UserNotFoundException`) for business errors, following the pattern from `RoomNotFoundException`
+    7. **Soft Deletes:** Set `deletedAt = Instant.now()` and persist, don't call `repository.delete()`
+*   **Recommendation:** You MUST follow the exact same patterns as RoomService - use it as your template. Pay special attention to:
+    - How `createRoom()` uses `@WithTransaction` and returns `roomRepository.persist(room)`
+    - How `deleteRoom()` sets `deletedAt` instead of deleting
+    - How `findById()` checks `if (room.deletedAt != null)` and throws exception
+    - How JSONB config is serialized/deserialized with try-catch wrapping JsonProcessingException
 
-*   **File:** `backend/src/test/java/com/scrumpoker/domain/room/RoomServiceTest.java`
-    *   **Summary:** Comprehensive test suite with 15+ tests covering all acceptance criteria.
-    *   **Test Coverage:**
-        - ✅ Nanoid generation (6-char alphanumeric)
-        - ✅ Collision resistance (1000 iterations test)
-        - ✅ Title validation (null, empty, >255 chars)
-        - ✅ Privacy mode validation
-        - ✅ Default config application
-        - ✅ JSONB serialization/deserialization
-        - ✅ Config update operations
-        - ✅ Title update operations
-        - ✅ Soft delete behavior (deletedAt timestamp, excluded from queries)
-        - ✅ Find by ID (throws exception for deleted rooms)
-        - ✅ Find by owner ID
-        - ✅ Anonymous room creation (null owner)
-    *   **Testing Patterns:** Uses `@QuarkusTest`, `@RunOnVertxContext`, `UniAsserter` for reactive testing
+#### File: `backend/src/main/java/com/scrumpoker/domain/room/RoomNotFoundException.java`
+*   **Summary:** Custom RuntimeException with roomId field and two constructors (with and without cause).
+*   **Recommendation:** You MUST create `UserNotFoundException` following this **exact same pattern**. Replace "Room" with "User" and "roomId" with "userId" (UUID type).
+*   **Pattern:** Extends `RuntimeException`, has single field for entity ID, two constructors, getter for ID.
+
+#### File: `backend/pom.xml`
+*   **Summary:** Quarkus 3.15.1 project with Jackson already configured via `quarkus-rest-jackson` dependency.
+*   **Recommendation:** You DO NOT need to add any new dependencies. ObjectMapper is already available for injection. Bean Validation (`@Email`, `@Size`) is available via `quarkus-hibernate-validator`.
+*   **Pattern:** The project uses Quarkus conventions - no need for manual configuration classes.
+
+#### File: `backend/src/test/java/com/scrumpoker/repository/RoundRepositoryTest.java`
+*   **Summary:** Integration test using `@QuarkusTest`, `@RunOnVertxContext`, and `UniAsserter` for reactive testing. Uses AssertJ for assertions.
+*   **Critical Testing Patterns:**
+    1. **Test Class:** Annotate with `@QuarkusTest` (no Mockito for repositories)
+    2. **Test Methods:** Annotate with `@Test` and `@RunOnVertxContext`, add `UniAsserter asserter` parameter
+    3. **Setup:** Use `@BeforeEach` to clean database: `Panache.withTransaction(() -> repository.deleteAll())`
+    4. **Persistence:** Wrap in `Panache.withTransaction(() -> ...)`
+    5. **Assertions:** Use `asserter.assertThat(() -> Panache.withTransaction(() -> ...), result -> { assertThat(result)... })`
+    6. **Test Data:** Create helper methods like `createTestUser()` that do NOT set auto-generated IDs (userId, roundId, etc.)
+    7. **Chaining:** Use reactive `.flatMap()` to chain persist operations in correct order
+*   **Recommendation:** Since your task requires unit tests with **mocked repositories** (not integration tests like this), you will NOT follow this pattern exactly. However, you SHOULD follow the AssertJ assertion style and test organization.
 
 ### Implementation Tips & Notes
 
-*   **Tip:** All deliverables for task I2.T3 are ALREADY IMPLEMENTED and passing tests. The RoomService is production-ready.
-*   **Note:** The implementation follows Quarkus reactive patterns perfectly:
-    - Uses `Uni<>` for single results (create, update, delete, findById)
-    - Uses `Multi<>` for collections (findByOwnerId)
-    - Proper transaction boundaries with `@WithTransaction` for writes, `@WithSession` for reads
-*   **Note:** Nanoid generation uses `SecureRandom` for cryptographic security (2.1 billion possible combinations with 6 chars)
-*   **Note:** JSONB serialization uses Jackson `ObjectMapper` injected via CDI - this is the correct Quarkus pattern
-*   **Note:** Soft delete pattern is correctly implemented: `deletedAt` is set on delete, and service-level queries filter out deleted rooms while repository still has access to them for audit purposes
-*   **Note:** The test suite uses Quarkus Dev Services (Testcontainers) to automatically spin up PostgreSQL for integration testing - no manual DB setup needed
-*   **Warning:** Room entity uses **String** primary key (6-char nanoid), NOT UUID. This is intentional for shareable URLs like `app.com/room/abc123`
-*   **Best Practice:** The implementation correctly separates concerns:
-    - Domain validation in service layer (title length, privacy mode)
-    - Database constraints in entity layer (JPA validation annotations)
-    - Repository provides data access with custom queries
-    - Tests verify business logic without mocking unnecessarily
+#### Tip 1: Service Structure
+Your `UserService` should mirror `RoomService` structure exactly:
+- `@ApplicationScoped` class
+- `@Inject` for repositories and ObjectMapper
+- Private helper methods for JSONB serialization/deserialization
+- Public methods with `@WithTransaction` or `@WithSession` annotations
+- All public methods return reactive types (`Uni<>` or `Multi<>`)
 
-### Recommendation for Coder Agent
+#### Tip 2: Email Validation
+The task requires email format validation. You have two options:
+1. **Bean Validation:** Use `@Email` annotation from Jakarta Validation (already available). Import from `jakarta.validation.constraints.Email`.
+2. **Manual Regex:** Use a pattern like `^[A-Za-z0-9+_.-]+@(.+)$` and check with `Pattern.matches()`.
+**Recommendation:** Use Bean Validation since it's already configured and the User entity already has `@Email` annotation on the field.
 
-**DO NOT MODIFY EXISTING CODE.** The RoomService implementation is complete, tested, and meets all acceptance criteria. The task I2.T3 should be marked as `done: true`.
+#### Tip 3: Display Name Validation
+The task requires max 100 chars validation. The User entity already has `@Size(max = 100)` on displayName field, so database-level validation is covered. Your service should add runtime validation:
+```java
+if (displayName == null || displayName.trim().isEmpty()) {
+    return Uni.createFrom().failure(new IllegalArgumentException("Display name cannot be null or empty"));
+}
+if (displayName.length() > 100) {
+    return Uni.createFrom().failure(new IllegalArgumentException("Display name cannot exceed 100 characters"));
+}
+```
 
-**Verification Steps:**
-1. Run `mvn test -Dtest=RoomServiceTest` to verify all 15+ tests pass
-2. Confirm test coverage >90% for RoomService
-3. Validate JSONB serialization works correctly
-4. Confirm soft delete behavior (deletedAt timestamp)
-5. Verify nanoid collision resistance (1000 iteration test)
+#### Tip 4: JSONB Field Handling
+UserPreference has two JSONB fields: `default_room_config` and `notification_settings`. You MUST:
+1. Create a `UserPreferenceConfig` POJO class with fields matching the JSON structure
+2. Add Jackson serialization/deserialization methods in UserService (copy pattern from RoomService)
+3. Store JSON strings in the entity fields (not Java objects)
+4. Provide sensible defaults (e.g., `"{}"` or a properly initialized config object)
 
-**If asked to "implement" this task:** Inform the user that the implementation is already complete and all acceptance criteria are satisfied. Offer to:
-- Run the test suite to demonstrate completion
-- Review the implementation for any improvements
-- Proceed to the next task (I2.T4: Implement User Service)
+**Example structure for UserPreferenceConfig:**
+```java
+public class UserPreferenceConfig {
+    public String deckType;
+    public Boolean timerEnabled;
+    public Integer timerDurationSeconds;
+    public String revealBehavior;
+    // Constructor, toString, etc.
+}
+```
+
+#### Tip 5: Soft Delete Implementation
+For `deleteUser()` method:
+1. Use `@WithTransaction` annotation
+2. Find user by ID (handle not found)
+3. Check if already deleted (if `deletedAt != null`, throw exception or return)
+4. Set `user.deletedAt = Instant.now()`
+5. Persist and return: `return userRepository.persist(user)`
+6. When querying users in other methods, filter out soft-deleted users: `find("deletedAt is null")`
+
+#### Tip 6: User Creation from OAuth Profile
+The `createUser()` method should:
+1. Take parameters: `oauthProvider`, `oauthSubject`, `email`, `displayName`, `avatarUrl`
+2. Create User entity, set all fields including `subscriptionTier = SubscriptionTier.FREE`
+3. Do NOT set `userId` (auto-generated), `createdAt`, or `updatedAt` (auto-timestamps)
+4. Persist User first
+5. Create UserPreference entity with `userId = user.userId` and `user = user`
+6. Set default JSONB values for `default_room_config` and `notification_settings`
+7. Persist UserPreference
+8. Return the User in a Uni
+
+**Critical:** You must use `.flatMap()` to chain the operations:
+```java
+return userRepository.persist(user)
+    .flatMap(savedUser -> {
+        UserPreference pref = new UserPreference();
+        pref.userId = savedUser.userId;
+        pref.user = savedUser;
+        pref.defaultRoomConfig = "{}"; // or serialize default config
+        pref.notificationSettings = "{}";
+        return userPreferenceRepository.persist(pref)
+            .replaceWith(savedUser); // Return user, not preference
+    });
+```
+
+#### Tip 7: Update Methods
+For `updateProfile()` and `updatePreferences()`:
+1. Both should use `@WithTransaction`
+2. Fetch entity first with `.flatMap()`
+3. Update fields
+4. Persist and return
+5. For preferences, deserialize JSONB, update Java object, serialize back to JSON string
+
+#### Warning: Reactive Chain Gotchas
+Common mistakes with reactive Mutiny code:
+- **DON'T** call `.await().indefinitely()` - keep everything reactive with `.flatMap()` chains
+- **DON'T** use blocking operations inside reactive chains
+- **DO** use `.replaceWith()` to return a different value after an operation
+- **DO** use `.onItem().transform()` for simple transformations
+- **DO** use `.onItem().ifNull().failWith()` to handle null results with custom exceptions
+
+#### Note: Method Signatures
+Based on the task deliverables, you need these exact methods:
+1. `createUser(String oauthProvider, String oauthSubject, String email, String displayName, String avatarUrl)` → `Uni<User>`
+2. `updateProfile(UUID userId, String displayName, String avatarUrl)` → `Uni<User>`
+3. `getUserById(UUID userId)` → `Uni<User>` (throws UserNotFoundException if not found or deleted)
+4. `findByEmail(String email)` → `Uni<User>` (returns null if not found)
+5. `updatePreferences(UUID userId, UserPreferenceConfig config)` → `Uni<UserPreference>`
+6. `deleteUser(UUID userId)` → `Uni<User>` (soft delete)
+
+Additionally, you may want helper methods like:
+- `findOrCreateUser(...)` for OAuth flow (combines findByOAuthProviderAndSubject + createUser)
+- Private JSONB serialization/deserialization helpers
+
+#### Note: File Organization
+You must create these three files in the exact paths specified in target_files:
+1. `backend/src/main/java/com/scrumpoker/domain/user/UserService.java` - main service class
+2. `backend/src/main/java/com/scrumpoker/domain/user/UserPreferenceConfig.java` - POJO for JSONB
+3. `backend/src/main/java/com/scrumpoker/domain/user/UserNotFoundException.java` - custom exception
+
+All files should be in the `com.scrumpoker.domain.user` package.
+
+---
+
+## Final Checklist for Implementation
+
+Before you complete this task, verify:
+
+- [ ] UserService class created with `@ApplicationScoped` annotation
+- [ ] All six main methods implemented with correct signatures and return types
+- [ ] All methods use `@WithTransaction` or `@WithSession` appropriately
+- [ ] UserRepository and UserPreferenceRepository injected with `@Inject`
+- [ ] ObjectMapper injected for JSONB serialization/deserialization
+- [ ] UserPreferenceConfig POJO created with sensible structure
+- [ ] UserNotFoundException created following RoomNotFoundException pattern
+- [ ] Email validation implemented (Bean Validation or manual)
+- [ ] Display name length validation implemented (max 100 chars)
+- [ ] Soft delete implementation (sets `deletedAt`, doesn't physically delete)
+- [ ] JSONB fields handled correctly (serialize to/from JSON strings)
+- [ ] User creation creates both User and UserPreference entities
+- [ ] Default values set for JSONB fields (empty objects or sensible defaults)
+- [ ] Reactive chains use `.flatMap()` for async composition, no blocking calls
+- [ ] All methods return `Uni<>` (no `Multi<>` needed for this service)
+- [ ] Code follows exact patterns from RoomService (transaction handling, validation, error handling)
+- [ ] Import statements correct (Jakarta, Quarkus, Mutiny, Jackson)
+- [ ] No compilation errors, all required classes imported
