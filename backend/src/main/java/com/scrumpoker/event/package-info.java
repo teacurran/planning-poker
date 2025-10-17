@@ -1,6 +1,7 @@
 /**
  * Event-driven messaging components using Redis Pub/Sub.
- * This package contains publishers and subscribers for asynchronous event handling.
+ * This package contains publishers and subscribers for asynchronous
+ * event handling.
  *
  * <p>Event types include:</p>
  * <ul>

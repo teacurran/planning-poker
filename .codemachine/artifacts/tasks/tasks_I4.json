@@ -27,7 +27,7 @@
     "acceptance_criteria": "Publishing event to Redis channel succeeds, Subscriber receives event from Redis, Event forwarded to all connected WebSocket clients in target room, Events not sent to clients in other rooms, Multiple application nodes can publish/subscribe (test with 2 backend instances), Subscription cleaned up when no clients in room",
     "dependencies": ["I4.T1"],
     "parallelizable": false,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I4.T3",

@@ -2,6 +2,7 @@ package com.scrumpoker.api.websocket;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.scrumpoker.event.RoomEventSubscriber;
 import io.quarkus.logging.Log;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -46,6 +47,9 @@ public class ConnectionRegistry {
     @Inject
     ObjectMapper objectMapper;
 
+    @Inject
+    RoomEventSubscriber eventSubscriber;
+
     public ConnectionRegistry() {
         this.roomConnections = new ConcurrentHashMap<>();
         this.lastPongReceived = new ConcurrentHashMap<>();
@@ -64,14 +68,19 @@ public class ConnectionRegistry {
      */
     public void addConnection(String roomId, Session session) {
         // Create thread-safe set if room doesn't exist
-        roomConnections.computeIfAbsent(roomId, k -> ConcurrentHashMap.newKeySet())
-                .add(session);
+        Set<Session> sessions = roomConnections.computeIfAbsent(roomId, k -> ConcurrentHashMap.newKeySet());
+        sessions.add(session);
 
         // Track session to room mapping for reverse lookup
         sessionToRoom.put(session, roomId);
 
         // Initialize heartbeat timestamp
         lastPongReceived.put(session, Instant.now());
+
+        // Subscribe to Redis Pub/Sub channel if this is the first connection to this room
+        if (sessions.size() == 1) {
+            eventSubscriber.subscribeToRoom(roomId);
+        }
 
         Log.infof("Connection added to room %s: session %s (total in room: %d)",
                 roomId, session.getId(), getConnectionCount(roomId));
@@ -96,10 +105,11 @@ public class ConnectionRegistry {
             if (sessions != null) {
                 sessions.remove(session);
 
-                // Clean up empty room sets
+                // Clean up empty room sets and unsubscribe from Redis
                 if (sessions.isEmpty()) {
                     roomConnections.remove(roomId);
-                    Log.infof("Room %s has no more connections, removed from registry", roomId);
+                    eventSubscriber.unsubscribeFromRoom(roomId);
+                    Log.infof("Room %s has no more connections, removed from registry and unsubscribed from Redis", roomId);
                 } else {
                     Log.infof("Connection removed from room %s: session %s (remaining: %d)",
                             roomId, session.getId(), sessions.size());
