@@ -91,7 +91,7 @@
     "acceptance_criteria": "Maven compilation successful, Quarkus dev mode starts without JPA mapping errors, Entities can be persisted and retrieved via Panache repository methods, JSONB columns serialize/deserialize correctly (test with sample data), Foreign key relationships navigable in code (e.g., `room.getOwner()`)",
     "dependencies": ["I1.T3"],
     "parallelizable": false,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I1.T5",
