@@ -288,6 +288,21 @@ public class UserService {
     }
 
     /**
+     * Retrieves user preference configuration as a deserialized object.
+     * This method is useful for frontend to get structured preference data.
+     *
+     * @param userId User ID
+     * @return Uni containing the UserPreferenceConfig object
+     * @throws UserNotFoundException if user not found
+     * @throws RuntimeException if deserialization fails
+     */
+    @WithSession
+    public Uni<UserPreferenceConfig> getPreferenceConfig(final UUID userId) {
+        return getPreferences(userId)
+                .onItem().transform(pref -> deserializeConfig(pref.defaultRoomConfig));
+    }
+
+    /**
      * Updates user preferences including default room configuration
      * and notification settings.
      *

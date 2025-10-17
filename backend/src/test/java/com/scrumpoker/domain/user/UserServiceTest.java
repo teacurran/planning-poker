@@ -637,6 +637,28 @@ class UserServiceTest {
         verify(userRepository).findByOAuthProviderAndSubject(provider, subject);
     }
 
+    @Test
+    void testFindOrCreateUser_ExistingUserWithNullEmail_SkipsEmailUpdate() {
+        // Given
+        String provider = "google";
+        String subject = "google-null-email";
+        String originalEmail = "original@example.com";
+        User existingUser = createTestUser(originalEmail, "Test Name");
+        existingUser.oauthProvider = provider;
+        existingUser.oauthSubject = subject;
+
+        when(userRepository.findByOAuthProviderAndSubject(provider, subject))
+                .thenReturn(Uni.createFrom().item(existingUser));
+
+        // When
+        User result = userService.findOrCreateUser(provider, subject, null, "Test Name", null)
+                .await().indefinitely();
+
+        // Then
+        assertThat(result.email).isEqualTo(originalEmail); // Email unchanged
+        verify(userRepository).findByOAuthProviderAndSubject(provider, subject);
+    }
+
     // ===== Get Preferences Tests =====
 
     @Test
@@ -700,6 +722,134 @@ class UserServiceTest {
                 .isInstanceOf(UserNotFoundException.class);
 
         verify(userPreferenceRepository).findById(userId);
+    }
+
+    // ===== Get Preference Config Tests =====
+
+    @Test
+    void testGetPreferenceConfig_ValidUser_ReturnsConfig() throws JsonProcessingException {
+        // Given
+        UUID userId = UUID.randomUUID();
+        User existingUser = createTestUser("test@example.com", "Test Name");
+        existingUser.userId = userId;
+
+        UserPreference existingPref = new UserPreference();
+        existingPref.userId = userId;
+        existingPref.defaultRoomConfig = "{\"deckType\":\"FIBONACCI\",\"timerEnabled\":true}";
+
+        UserPreferenceConfig expectedConfig = new UserPreferenceConfig();
+        expectedConfig.deckType = "FIBONACCI";
+        expectedConfig.timerEnabled = true;
+
+        when(userRepository.findById(userId)).thenReturn(Uni.createFrom().item(existingUser));
+        when(userPreferenceRepository.findById(userId)).thenReturn(Uni.createFrom().item(existingPref));
+        when(objectMapper.readValue(existingPref.defaultRoomConfig, UserPreferenceConfig.class))
+                .thenReturn(expectedConfig);
+
+        // When
+        UserPreferenceConfig result = userService.getPreferenceConfig(userId)
+                .await().indefinitely();
+
+        // Then
+        assertThat(result).isNotNull();
+        assertThat(result.deckType).isEqualTo("FIBONACCI");
+        assertThat(result.timerEnabled).isTrue();
+        verify(userRepository).findById(userId);
+        verify(userPreferenceRepository).findById(userId);
+        verify(objectMapper).readValue(existingPref.defaultRoomConfig, UserPreferenceConfig.class);
+    }
+
+    @Test
+    void testGetPreferenceConfig_EmptyJson_ReturnsEmptyConfig() {
+        // Given
+        UUID userId = UUID.randomUUID();
+        User existingUser = createTestUser("test@example.com", "Test Name");
+        existingUser.userId = userId;
+
+        UserPreference existingPref = new UserPreference();
+        existingPref.userId = userId;
+        existingPref.defaultRoomConfig = "{}";
+
+        when(userRepository.findById(userId)).thenReturn(Uni.createFrom().item(existingUser));
+        when(userPreferenceRepository.findById(userId)).thenReturn(Uni.createFrom().item(existingPref));
+
+        // When
+        UserPreferenceConfig result = userService.getPreferenceConfig(userId)
+                .await().indefinitely();
+
+        // Then
+        assertThat(result).isNotNull();
+        verify(userRepository).findById(userId);
+        verify(userPreferenceRepository).findById(userId);
+    }
+
+    @Test
+    void testGetPreferenceConfig_NullJson_ReturnsEmptyConfig() {
+        // Given
+        UUID userId = UUID.randomUUID();
+        User existingUser = createTestUser("test@example.com", "Test Name");
+        existingUser.userId = userId;
+
+        UserPreference existingPref = new UserPreference();
+        existingPref.userId = userId;
+        existingPref.defaultRoomConfig = null;
+
+        when(userRepository.findById(userId)).thenReturn(Uni.createFrom().item(existingUser));
+        when(userPreferenceRepository.findById(userId)).thenReturn(Uni.createFrom().item(existingPref));
+
+        // When
+        UserPreferenceConfig result = userService.getPreferenceConfig(userId)
+                .await().indefinitely();
+
+        // Then
+        assertThat(result).isNotNull();
+        verify(userRepository).findById(userId);
+        verify(userPreferenceRepository).findById(userId);
+    }
+
+    @Test
+    void testGetPreferenceConfig_InvalidJson_ThrowsException() throws JsonProcessingException {
+        // Given
+        UUID userId = UUID.randomUUID();
+        User existingUser = createTestUser("test@example.com", "Test Name");
+        existingUser.userId = userId;
+
+        UserPreference existingPref = new UserPreference();
+        existingPref.userId = userId;
+        existingPref.defaultRoomConfig = "{invalid json}";
+
+        when(userRepository.findById(userId)).thenReturn(Uni.createFrom().item(existingUser));
+        when(userPreferenceRepository.findById(userId)).thenReturn(Uni.createFrom().item(existingPref));
+        when(objectMapper.readValue(anyString(), any(Class.class)))
+                .thenThrow(new JsonProcessingException("Invalid JSON") {});
+
+        // When/Then
+        assertThatThrownBy(() ->
+                userService.getPreferenceConfig(userId)
+                        .await().indefinitely()
+        )
+                .isInstanceOf(RuntimeException.class)
+                .hasMessageContaining("Failed to deserialize user preference config");
+
+        verify(userRepository).findById(userId);
+        verify(userPreferenceRepository).findById(userId);
+    }
+
+    @Test
+    void testGetPreferenceConfig_UserNotFound_ThrowsException() {
+        // Given
+        UUID userId = UUID.randomUUID();
+        when(userRepository.findById(userId)).thenReturn(Uni.createFrom().nullItem());
+
+        // When/Then
+        assertThatThrownBy(() ->
+                userService.getPreferenceConfig(userId)
+                        .await().indefinitely()
+        )
+                .isInstanceOf(UserNotFoundException.class);
+
+        verify(userRepository).findById(userId);
+        verify(userPreferenceRepository, never()).findById(any());
     }
 
     // ===== Update Preferences Tests =====

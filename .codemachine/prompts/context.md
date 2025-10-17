@@ -26,7 +26,10 @@ This is the full specification of the task you must complete.
   ],
   "deliverables": "RoomServiceTest with 10+ test methods covering create, update, delete, find operations, UserServiceTest with 10+ test methods covering profile, preferences, soft delete, Mocked repository interactions using Mockito, Exception scenario tests (assertThrows for custom exceptions), AssertJ assertions for fluent readability",
   "acceptance_criteria": "`mvn test` runs all unit tests successfully, Test coverage >90% for RoomService and UserService, All business validation scenarios tested (invalid input → exception), Happy path tests verify correct repository method calls, Exception tests verify custom exceptions thrown with correct messages",
-  "dependencies": ["I2.T3", "I2.T4"],
+  "dependencies": [
+    "I2.T3",
+    "I2.T4"
+  ],
   "parallelizable": false,
   "done": false
 }
@@ -38,83 +41,55 @@ This is the full specification of the task you must complete.
 
 The following are the relevant sections from the architecture and plan documents, which I found by analyzing the task description.
 
-### Context: unit-testing (from 03_Verification_and_Glossary.md)
+### Context: api-design-and-communication (from 04_Behavior_and_Communication.md)
 
 ```markdown
-#### Unit Testing
+### 3.7. API Design & Communication
 
-**Scope:** Individual classes and methods in isolation (services, utilities, validators)
+#### API Style
 
-**Framework:** JUnit 5 (backend), Jest/Vitest (frontend)
+**Primary API Style:** **RESTful JSON API (OpenAPI 3.1 Specification)**
 
-**Coverage Target:** >90% code coverage for service layer, >80% for overall codebase
+**Rationale:**
+- **Simplicity & Familiarity:** REST over HTTPS provides a well-understood contract for CRUD operations on resources (users, rooms, subscriptions)
+- **Tooling Ecosystem:** OpenAPI specification enables automatic client SDK generation (TypeScript for React frontend), API documentation (Swagger UI), and contract testing
+- **Caching Support:** HTTP semantics (ETags, Cache-Control headers) enable browser and CDN caching for read-heavy endpoints (room configurations, user profiles)
+- **Versioning Strategy:** URL-based versioning (`/api/v1/`) for backward compatibility during iterative releases
 
-**Approach:**
-- Mock external dependencies (repositories, adapters, external services) using Mockito
-- Test business logic thoroughly (happy paths, edge cases, error scenarios)
-- Fast execution (<5 minutes for entire unit test suite)
-- Run on every developer commit and in CI pipeline
+**WebSocket Protocol:** **Custom JSON-RPC Style Over WebSocket**
 
-**Examples:**
-- `RoomServiceTest`: Tests room creation with unique ID generation, config validation, soft delete
-- `VotingServiceTest`: Tests vote casting, consensus calculation with known inputs
-- `BillingServiceTest`: Tests subscription tier transitions, Stripe integration mocking
-
-**Acceptance Criteria:**
-- All unit tests pass (`mvn test`, `npm run test:unit`)
-- Coverage reports meet targets (verify with JaCoCo, Istanbul)
-- No flaky tests (consistent results across runs)
+**Rationale:**
+- **Real-Time Bidirectional Communication:** WebSocket connections maintained for duration of estimation session, enabling sub-100ms latency for vote events and reveals
+- **Message Format:** JSON envelopes with `type`, `requestId`, and `payload` fields for request/response correlation
+- **Versioned Message Types:** Each message type (e.g., `vote.cast.v1`, `room.reveal.v1`) versioned independently for protocol evolution
+- **Fallback Strategy:** Graceful degradation to HTTP long-polling for environments with WebSocket restrictions (corporate proxies)
 ```
 
-### Context: code-quality-gates (from 03_Verification_and_Glossary.md)
+### Context: synchronous-rest-pattern (from 04_Behavior_and_Communication.md)
 
 ```markdown
-### 5.3. Code Quality Gates
+##### Synchronous REST (Request/Response)
 
-**Automated Quality Checks:**
+**Use Cases:**
+- User authentication and registration
+- Room creation and configuration updates
+- Subscription management (upgrade, cancellation, payment method updates)
+- Report generation triggers and export downloads
+- Organization settings management
 
-1. **Code Coverage:**
-   - Backend: JaCoCo reports, threshold 80% line coverage
-   - Frontend: Istanbul/c8 reports, threshold 75% statement coverage
-   - Fail CI build if below threshold
+**Pattern Characteristics:**
+- Client blocks waiting for server response (typically <500ms)
+- Transactional consistency guaranteed within single database transaction
+- Idempotency keys for payment operations to prevent duplicate charges
+- Error responses use standard HTTP status codes (4xx client errors, 5xx server errors)
 
-2. **Static Analysis (SonarQube):**
-   - Code smells: <5 per 1000 lines of code
-   - Duplications: <3% duplicated lines
-   - Maintainability rating: A or B
-   - Reliability rating: A or B
-   - Security rating: A or B
-
-3. **Linting:**
-   - Backend: Checkstyle or SpotBugs for Java code style
-   - Frontend: ESLint with recommended rules, Prettier for formatting
-   - Zero errors allowed (warnings are flagged but don't fail build)
-```
-
-### Context: ci-cd-pipeline (from 03_Verification_and_Glossary.md)
-
-```markdown
-### 5.2. CI/CD Pipeline Integration
-
-**Continuous Integration (CI):**
-
-Every push to `main` branch or pull request triggers:
-
-1. **Backend CI Pipeline:**
-   - Compile Java code (`mvn clean compile`)
-   - Run unit tests (`mvn test`)
-   - Run integration tests (`mvn verify` with Testcontainers)
-   - SonarQube code quality analysis
-   - Dependency vulnerability scan (Snyk)
-   - Build Docker image
-   - Container security scan (Trivy)
-   - Publish test results and coverage reports
-
-**Quality Gates:**
-- Unit test coverage >80% (fail build if below threshold)
-- SonarQube quality gate passed (no blocker/critical issues)
-- No HIGH/CRITICAL vulnerabilities in dependencies
-- Linter passes with no errors (warnings acceptable)
+**Example Endpoints:**
+- `POST /api/v1/auth/oauth/callback` - Exchange OAuth2 code for JWT token
+- `POST /api/v1/rooms` - Create new estimation room
+- `GET /api/v1/rooms/{roomId}` - Retrieve room configuration
+- `PUT /api/v1/users/{userId}/preferences` - Update user preferences
+- `POST /api/v1/subscriptions/{subscriptionId}/upgrade` - Upgrade subscription tier
+- `GET /api/v1/reports/sessions?from=2025-01-01&to=2025-01-31` - Query session history
 ```
 
 ---
@@ -125,138 +100,153 @@ The following analysis is based on my direct review of the current codebase. Use
 
 ### Relevant Existing Code
 
-*   **File:** `backend/src/test/java/com/scrumpoker/domain/room/RoomServiceTest.java`
-    *   **Summary:** This file already exists and contains integration tests for RoomService using `@QuarkusTest`. These are NOT unit tests with mocked dependencies, but integration tests running against real database (Testcontainers).
-    *   **Recommendation:** You MUST create TRUE UNIT TESTS with Mockito mocks. The existing tests use `@QuarkusTest` and inject real dependencies - your task is to create isolated unit tests that mock `RoomRepository` and `ObjectMapper`.
-    *   **Action Required:** You will REPLACE the existing RoomServiceTest.java file completely with proper unit tests using Mockito mocks.
-
-*   **File:** `backend/src/test/java/com/scrumpoker/domain/user/UserServiceTest.java`
-    *   **Summary:** This file already exists and contains integration tests for UserService using `@QuarkusTest`. These are NOT unit tests with mocked dependencies.
-    *   **Recommendation:** Similar to RoomServiceTest, you MUST create TRUE UNIT TESTS with Mockito mocks. The existing tests use `@QuarkusTest` and inject real dependencies.
-    *   **Action Required:** You will REPLACE the existing UserServiceTest.java file completely with proper unit tests using Mockito mocks.
-
 *   **File:** `backend/src/main/java/com/scrumpoker/domain/room/RoomService.java`
-    *   **Summary:** Service class with methods for room CRUD operations. Uses `@Inject` for RoomRepository and ObjectMapper dependencies. Returns reactive types (Uni, Multi).
-    *   **Key Methods to Test:**
-        - `createRoom()` - validates title length, privacy mode, generates nanoid, serializes config
-        - `updateRoomConfig()` - validates config not null, serializes to JSONB
-        - `updateRoomTitle()` - validates title constraints
-        - `updatePrivacyMode()` - validates privacy mode not null
-        - `deleteRoom()` - soft delete sets deletedAt timestamp
-        - `findById()` - throws RoomNotFoundException if not found or deleted
-        - `findByOwnerId()` - returns Multi of rooms
-        - `getRoomConfig()` - deserializes JSONB config
-    *   **Private Methods to Cover:** `generateNanoid()`, `serializeConfig()`, `deserializeConfig()`
-    *   **Recommendation:** You MUST mock `RoomRepository` and `ObjectMapper`. Test reactive return types using Mutiny test helpers (AssertSubscriber or UniAssertSubscriber).
+    *   **Summary:** This file implements the complete RoomService domain service with 11 public methods for room CRUD operations. It uses reactive Uni/Multi return types, Mockito-injectable @Inject dependencies (RoomRepository, ObjectMapper), and comprehensive input validation. The service includes nanoid generation (6 chars, a-z0-9), JSONB serialization/deserialization, and soft delete functionality.
+    *   **Recommendation:** You MUST import and mock the RoomRepository and ObjectMapper dependencies in your tests. Focus on testing all 11 public methods, particularly the edge cases around validation (null/empty/too-long titles max 255 chars, null privacy modes), JSONB serialization failures, and soft delete behavior.
+    *   **Key Methods:** createRoom(), updateRoomConfig(), updateRoomTitle(), updatePrivacyMode(), deleteRoom(), findById(), findByOwnerId(), getRoomConfig()
+    *   **Validation Rules:** title max 255 chars, privacy mode required, config JSONB serialization
 
 *   **File:** `backend/src/main/java/com/scrumpoker/domain/user/UserService.java`
-    *   **Summary:** Service class for user management. Uses `@Inject` for UserRepository, UserPreferenceRepository, and ObjectMapper. Returns reactive types (Uni).
-    *   **Key Methods to Test:**
-        - `createUser()` - validates OAuth fields, email format, display name length, creates preferences
-        - `updateProfile()` - validates display name, updates fields selectively
-        - `getUserById()` - throws UserNotFoundException if not found or deleted
-        - `findByEmail()` - returns null for empty/deleted users
-        - `findOrCreateUser()` - JIT provisioning, finds existing or creates new
-        - `getPreferences()` - retrieves user preferences
-        - `updatePreferences()` - validates config not null, serializes JSONB
-        - `deleteUser()` - soft delete, prevents double delete
-    *   **Private Methods to Cover:** `isValidEmail()`, `isValidDisplayName()`, `serializeConfig()`, `deserializeConfig()`, `createDefaultPreferences()`
-    *   **Recommendation:** You MUST mock `UserRepository`, `UserPreferenceRepository`, and `ObjectMapper`. Test validation logic thoroughly (email regex, display name length).
+    *   **Summary:** This file implements the UserService with 9 public methods handling OAuth user provisioning, profile updates, preference management, and soft deletes. It uses regex-based email validation (EMAIL_PATTERN: `^[A-Za-z0-9+_.-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$`), display name length validation (MAX_DISPLAY_NAME_LENGTH = 100), and JSONB config serialization. The service includes sophisticated logic like findOrCreateUser for JIT provisioning.
+    *   **Recommendation:** You MUST import and mock UserRepository, UserPreferenceRepository, and ObjectMapper. Test all validation patterns (email regex, display name length), the findOrCreateUser flow (both existing user and new user paths), preference JSONB serialization, and soft delete behavior with deletedAt timestamps.
+    *   **Key Methods:** createUser(), updateProfile(), getUserById(), findByEmail(), findOrCreateUser(), getPreferences(), updatePreferences(), deleteUser(), createDefaultPreferences() (private)
+    *   **Validation Rules:** email regex pattern, displayName max 100 chars, OAuth provider/subject required
 
-*   **File:** `backend/pom.xml`
-    *   **Summary:** Contains all necessary testing dependencies: JUnit 5 (`quarkus-junit5`), AssertJ (`assertj-core` version 3.24.2), Mockito (included via `quarkus-test-vertx`).
-    *   **Recommendation:** You do NOT need to add any additional dependencies. Mockito is available through Quarkus testing framework.
+*   **File:** `backend/src/test/java/com/scrumpoker/domain/room/RoomServiceTest.java`
+    *   **Summary:** This is an EXCELLENT reference test file demonstrating the exact testing patterns you should follow. It uses @ExtendWith(MockitoExtension.class), @Mock/@InjectMocks annotations, comprehensive test coverage with 40+ test methods organized into logical sections (Create Room, Update Config, Update Title, etc.), AssertJ assertions, and proper Mockito verification patterns.
+    *   **Recommendation:** You MUST follow this exact pattern for UserServiceTest. Key patterns to replicate: (1) Use @BeforeEach setUp() to initialize test data, (2) Organize tests into sections with comments like `// ===== Create User Tests =====`, (3) Name tests descriptively: `testMethodName_Scenario_ExpectedOutcome()`, (4) Use `.await().indefinitely()` to unwrap Uni reactive types, (5) Verify repository method calls with `verify()`, (6) Use `assertThatThrownBy()` for exception tests.
+    *   **Pattern Example:** See lines 31-50 for setUp(), lines 61-82 for createRoom happy path test, lines 105-115 for null validation test with assertThatThrownBy()
 
-*   **File:** `backend/src/test/java/com/scrumpoker/repository/UserRepositoryTest.java`
-    *   **Summary:** Example of integration test using `@QuarkusTest`, `@RunOnVertxContext`, and `UniAsserter` for reactive testing.
-    *   **Recommendation:** DO NOT follow this pattern for unit tests. This is for integration tests with real database. Your unit tests should NOT use `@QuarkusTest` or `@RunOnVertxContext`.
+*   **File:** `backend/src/main/java/com/scrumpoker/domain/user/User.java` (entity class)
+    *   **Summary:** Entity class defining User fields including userId (UUID), email, displayName, oauthProvider, oauthSubject, subscriptionTier (enum), deletedAt (Instant), createdAt, updatedAt.
+    *   **Recommendation:** You SHOULD create helper methods in your test class to instantiate User entities with test data, similar to the `createTestRoom()` helper in RoomServiceTest at line 650.
 
 ### Implementation Tips & Notes
 
-*   **Tip:** This project uses Quarkus reactive patterns with Mutiny. Services return `Uni<>` and `Multi<>`. You MUST mock these reactive returns correctly in your tests.
-*   **Tip:** Use `Uni.createFrom().item()` to mock successful reactive returns, and `Uni.createFrom().failure()` to mock exceptions.
-*   **Tip:** For testing Uni/Multi, you can use `.await().indefinitely()` to block and get the result in unit tests, or use Mutiny test helpers like `UniAssertSubscriber`.
-*   **Note:** The existing test files are INTEGRATION TESTS, not UNIT TESTS. The task explicitly requires UNIT TESTS with Mockito mocks. You will completely replace the existing files.
-*   **Note:** DO NOT use `@QuarkusTest` annotation for unit tests. Unit tests should be plain JUnit 5 tests with `@ExtendWith(MockitoExtension.class)` to enable Mockito.
-*   **Warning:** The services use `@WithTransaction` and `@WithSession` annotations. These are Quarkus-specific and will NOT work in unit tests. Mock the repository methods to return Uni results directly.
-*   **Pattern for Mocking:** Use `@Mock` for dependencies, `@InjectMocks` for the service under test, and `@ExtendWith(MockitoExtension.class)` on the test class.
-*   **AssertJ Usage:** Use AssertJ's fluent assertions: `assertThat(result).isNotNull()`, `assertThat(exception).isInstanceOf(IllegalArgumentException.class)`, `assertThat(list).hasSize(5)`.
-*   **Coverage Target:** You need >90% coverage. Make sure to test all public methods, validation paths, exception scenarios, and edge cases. Use private method testing through public method paths.
-*   **Mockito Verification:** Use `verify(repository).persist(any())` to verify repository methods were called with correct arguments.
-*   **Exception Testing:** Use `assertThatThrownBy(() -> service.method().await().indefinitely()).isInstanceOf(...)` pattern for testing exceptions from reactive types.
+*   **Tip:** I confirmed that RoomServiceTest already has comprehensive coverage (40+ test methods covering all public methods). Your UserServiceTest MUST achieve similar comprehensiveness. Target at least 15-20 test methods to cover all UserService methods and their edge cases.
 
-### Key Differences from Existing Tests
+*   **Tip:** The project uses reactive Mutiny types (Uni, Multi). All service methods return Uni<> or Multi<>. In tests, you MUST call `.await().indefinitely()` to unwrap the reactive result for synchronous assertion. Example: `User result = userService.getUserById(userId).await().indefinitely();`
 
-| Aspect | Existing Tests (Integration) | Required Tests (Unit) |
-|--------|----------------------------|----------------------|
-| Annotation | `@QuarkusTest` | `@ExtendWith(MockitoExtension.class)` |
-| Dependencies | `@Inject` real beans | `@Mock` mocked dependencies |
-| Service | `@Inject` real service | `@InjectMocks` service under test |
-| Database | Testcontainers PostgreSQL | No database, fully mocked |
-| Execution | Async with `UniAsserter` | Synchronous with `.await().indefinitely()` |
-| Setup | `@BeforeEach` with cleanup | `@BeforeEach` for mock setup only |
-| Focus | End-to-end integration | Isolated business logic |
+*   **Tip:** When mocking repository persist methods, use the pattern from RoomServiceTest line 89-92: `when(repository.persist(any(Entity.class))).thenAnswer(invocation -> { Entity entity = invocation.getArgument(0); return Uni.createFrom().item(entity); });` This returns the exact entity that was passed in, allowing you to verify field values.
 
-### Example Test Structure
+*   **Tip:** For testing JSONB serialization failures, throw JsonProcessingException from mocked ObjectMapper methods: `when(objectMapper.writeValueAsString(any())).thenThrow(new JsonProcessingException("error") {});` This is demonstrated in RoomServiceTest line 215.
 
+*   **Warning:** The UserService has a complex `findOrCreateUser` method (lines 243-271 in UserService.java) that conditionally creates a new user OR updates an existing one. You MUST test BOTH paths: (1) User exists → updates profile fields (lines 251-264), (2) User doesn't exist → creates new user with default preferences (lines 266-269). Mock `userRepository.findByOAuthProviderAndSubject()` to return `Uni.createFrom().item(existingUser)` for path 1, and `Uni.createFrom().nullItem()` for path 2.
+
+*   **Warning:** The `createDefaultPreferences` private method in UserService (lines 127-155) creates a UserPreference entity with default JSONB fields. When testing user creation, you MUST mock `userPreferenceRepository.persist()` to handle the chained preference creation. Use: `when(userPreferenceRepository.persist(any())).thenAnswer(invocation -> Uni.createFrom().item(invocation.getArgument(0)));`
+
+*   **Critical Pattern:** Soft delete tests MUST verify that the `deletedAt` timestamp is set correctly. Use: `assertThat(result.deletedAt).isNotNull();` and verify that subsequent calls to find methods throw UserNotFoundException when the entity is soft-deleted. See RoomServiceTest lines 432-451 for deleteRoom soft delete test pattern.
+
+*   **Coverage Target:** The acceptance criteria requires >90% coverage for RoomService and UserService. Given that RoomServiceTest already exists with excellent coverage, you only need to complete UserServiceTest. Ensure every public method has at least 2-3 test cases (happy path + edge cases).
+
+### Testing Checklist for UserServiceTest
+
+Based on the service methods, you MUST include tests for:
+
+1. **createUser() (lines 72-119)**: Valid input returns user, null/empty oauthProvider throws exception, null/empty oauthSubject throws exception, invalid email format throws exception, invalid displayName (null/empty/too long >100 chars) throws exception, JSONB serialization success, default preferences created and persisted
+2. **updateProfile() (lines 168-195)**: Valid update (displayName + avatarUrl), null displayName (should not update field), invalid displayName (too long >100 chars) throws exception, user not found throws UserNotFoundException, soft-deleted user throws UserNotFoundException
+3. **getUserById() (lines 204-215)**: Existing user returns correctly, non-existent user (null from repo) throws UserNotFoundException, soft-deleted user (deletedAt not null) throws UserNotFoundException
+4. **findByEmail() (lines 224-230)**: Valid email returns user, null/empty email returns null, non-existent email returns null
+5. **findOrCreateUser() (lines 243-271)**: Existing user path updates profile fields (email, displayName, avatarUrl), new user path creates user + preferences, profile fields updated correctly on existing user
+6. **getPreferences() (lines 280-288)**: Existing preferences returns correctly, user not found throws UserNotFoundException, preferences not found throws UserNotFoundException
+7. **updatePreferences() (lines 299-337)**: Valid update with JSONB serialization, null config throws IllegalArgumentException, user not found throws UserNotFoundException, JSONB serialization failure throws exception
+8. **deleteUser() (lines 347-362)**: Valid user soft delete sets deletedAt, user not found throws UserNotFoundException, already deleted user throws IllegalArgumentException
+9. **Helper methods**: isValidEmail() tested via createUser validation failures, isValidDisplayName() tested via validation failures
+
+### Code Style Requirements
+
+*   Use Mockito's `@ExtendWith(MockitoExtension.class)` at class level
+*   Use `@Mock` for repository dependencies, `@InjectMocks` for the service under test
+*   Group tests logically with comment separators: `// ===== Method Name Tests =====`
+*   Name tests: `testMethodName_Scenario_ExpectedOutcome()`
+*   Use AssertJ's `assertThat()` for fluent assertions (never use JUnit's assertEquals)
+*   Use `assertThatThrownBy()` for exception testing with `.isInstanceOf()` and `.hasMessageContaining()`
+*   Verify mock interactions with `verify(repository, times(n)).method()` or `verify(repository).method()` for once
+*   Use `never()` to verify methods NOT called in failure scenarios: `verify(repository, never()).persist(any())`
+*   Import static methods: `import static org.assertj.core.api.Assertions.*; import static org.mockito.Mockito.*;`
+*   Follow line reference from RoomServiceTest for exact patterns
+
+### Specific Test Patterns from RoomServiceTest
+
+**Pattern 1: Happy Path Test (lines 61-82)**
 ```java
-@ExtendWith(MockitoExtension.class)
-class RoomServiceTest {
+@Test
+void testCreateRoom_ValidInput_ReturnsRoom() throws JsonProcessingException {
+    // Given
+    String title = "Test Room";
+    String configJson = "{\"deckType\":\"FIBONACCI\"}";
+    Room expectedRoom = new Room();
+    expectedRoom.roomId = "abc123";
+    expectedRoom.title = title;
 
-    @Mock
-    RoomRepository roomRepository;
+    when(objectMapper.writeValueAsString(any(RoomConfig.class))).thenReturn(configJson);
+    when(roomRepository.persist(any(Room.class))).thenReturn(Uni.createFrom().item(expectedRoom));
 
-    @Mock
-    ObjectMapper objectMapper;
+    // When
+    Room result = roomService.createRoom(title, PrivacyMode.PUBLIC, null, testConfig)
+            .await().indefinitely();
 
-    @InjectMocks
-    RoomService roomService;
+    // Then
+    assertThat(result).isNotNull();
+    assertThat(result.roomId).isEqualTo("abc123");
+    assertThat(result.title).isEqualTo(title);
+    verify(roomRepository).persist(any(Room.class));
+    verify(objectMapper).writeValueAsString(testConfig);
+}
+```
 
-    @Test
-    void testCreateRoom_ValidInput_ReturnsRoom() {
-        // Given
-        String title = "Test Room";
-        RoomConfig config = new RoomConfig();
-        Room room = new Room();
-        room.roomId = "abc123";
+**Pattern 2: Null Validation Test (lines 105-115)**
+```java
+@Test
+void testCreateRoom_NullTitle_ThrowsException() {
+    // When/Then
+    assertThatThrownBy(() ->
+            roomService.createRoom(null, PrivacyMode.PUBLIC, null, testConfig)
+                    .await().indefinitely()
+    )
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("title cannot be null");
 
-        when(objectMapper.writeValueAsString(any())).thenReturn("{}");
-        when(roomRepository.persist(any(Room.class))).thenReturn(Uni.createFrom().item(room));
+    verify(roomRepository, never()).persist(any(Room.class));
+}
+```
 
-        // When
-        Room result = roomService.createRoom(title, PrivacyMode.PUBLIC, null, config)
-                                  .await().indefinitely();
+**Pattern 3: Soft Delete Test (lines 432-451)**
+```java
+@Test
+void testDeleteRoom_ValidRoom_SoftDeletes() {
+    // Given
+    String roomId = "room123";
+    Room existingRoom = createTestRoom(roomId, "Test Room");
 
-        // Then
-        assertThat(result).isNotNull();
-        assertThat(result.roomId).isEqualTo("abc123");
-        verify(roomRepository).persist(any(Room.class));
-    }
+    when(roomRepository.findById(roomId)).thenReturn(Uni.createFrom().item(existingRoom));
+    when(roomRepository.persist(any(Room.class))).thenAnswer(invocation -> {
+        Room room = invocation.getArgument(0);
+        return Uni.createFrom().item(room);
+    });
 
-    @Test
-    void testCreateRoom_NullTitle_ThrowsException() {
-        // When/Then
-        assertThatThrownBy(() ->
-            roomService.createRoom(null, PrivacyMode.PUBLIC, null, new RoomConfig())
-                       .await().indefinitely()
-        )
-        .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("title cannot be null");
-    }
+    // When
+    Room result = roomService.deleteRoom(roomId)
+            .await().indefinitely();
+
+    // Then
+    assertThat(result.deletedAt).isNotNull();
+    verify(roomRepository).findById(roomId);
+    verify(roomRepository).persist(any(Room.class));
 }
 ```
 
 ---
 
-**CRITICAL INSTRUCTIONS:**
+**EXECUTION CHECKLIST:**
 
-1. **DO NOT** use `@QuarkusTest` - these are unit tests, not integration tests
-2. **DO** use `@ExtendWith(MockitoExtension.class)` for Mockito support
-3. **DO** mock `RoomRepository`, `UserRepository`, `UserPreferenceRepository`, and `ObjectMapper`
-4. **DO** use `.await().indefinitely()` to block on Uni results in tests
-5. **DO** aim for >90% code coverage on both services
-6. **DO** test all validation scenarios, happy paths, and exception cases
-7. **DO** use AssertJ for all assertions
-8. **DO** verify repository method calls with Mockito's `verify()`
-9. **REPLACE** the existing test files completely - they are integration tests, not unit tests
-10. **TEST** private methods indirectly through their public method callers
+1. ✓ RoomServiceTest already complete with 40+ tests
+2. **TODO:** Create comprehensive UserServiceTest with 15-20 tests
+3. **TODO:** Test all 9 public methods in UserService
+4. **TODO:** Test email validation with various formats (valid, invalid, null)
+5. **TODO:** Test display name validation (null, empty, too long >100)
+6. **TODO:** Test findOrCreateUser both paths (existing user, new user)
+7. **TODO:** Test createDefaultPreferences chain via createUser
+8. **TODO:** Test soft delete behavior (deletedAt timestamp)
+9. **TODO:** Test JSONB serialization success and failure scenarios
+10. **TODO:** Run `mvn test` and verify >90% coverage for UserService
