@@ -358,11 +358,16 @@ public class JwtTokenService {
 
     /**
      * Invalidates a refresh token by deleting it from Redis.
+     * This method is used for logout operations.
      *
      * @param refreshToken The refresh token to invalidate
      * @return Uni<Void> that completes when the token is deleted
      */
-    private Uni<Void> invalidateRefreshToken(String refreshToken) {
+    public Uni<Void> invalidateRefreshToken(String refreshToken) {
+        if (refreshToken == null || refreshToken.isBlank()) {
+            throw new IllegalArgumentException("Refresh token cannot be null or blank");
+        }
+
         String key = REFRESH_TOKEN_KEY_PREFIX + refreshToken;
         ValueCommands<String, String> commands = redisDataSource.value(String.class);
 
@@ -372,5 +377,41 @@ public class JwtTokenService {
                        refreshToken.substring(0, 8));
             return null;
         });
+    }
+
+    /**
+     * Gets the user ID associated with a refresh token from Redis.
+     * This method is used during token refresh to retrieve the user.
+     *
+     * @param refreshToken The refresh token to look up
+     * @return Uni containing the user ID, or null if token not found
+     */
+    public Uni<UUID> getUserIdFromRefreshToken(String refreshToken) {
+        if (refreshToken == null || refreshToken.isBlank()) {
+            throw new IllegalArgumentException("Refresh token cannot be null or blank");
+        }
+
+        String key = REFRESH_TOKEN_KEY_PREFIX + refreshToken;
+        ValueCommands<String, String> commands = redisDataSource.value(String.class);
+
+        return Uni.createFrom().item(() -> {
+            String storedUserId = commands.get(key);
+            if (storedUserId == null) {
+                LOG.debugf("Refresh token not found in Redis: %s...",
+                           refreshToken.substring(0, 8));
+                return null;
+            }
+            return UUID.fromString(storedUserId);
+        });
+    }
+
+    /**
+     * Gets the access token expiration duration in seconds.
+     * This value is used in TokenResponse to inform clients of token TTL.
+     *
+     * @return Access token expiration in seconds (typically 900 = 15 minutes)
+     */
+    public int getAccessTokenExpirationSeconds() {
+        return accessTokenExpirationSeconds.intValue();
     }
 }
