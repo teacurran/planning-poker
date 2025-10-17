@@ -54,13 +54,6 @@ test.describe('OAuth Authentication Flow', () => {
     // Wait for redirect to dashboard after successful authentication
     await expect(page).toHaveURL('/dashboard', { timeout: 10000 });
 
-    // Log page content for debugging
-    const bodyText = await page.evaluate(() => document.body.innerText);
-    console.log('[DEBUG] Dashboard page content:', bodyText.substring(0, 200));
-
-    // Wait for network to be idle to ensure all API calls complete
-    await page.waitForLoadState('networkidle');
-
     // Verify tokens are stored in localStorage
     const authState = await page.evaluate(() => {
       const stored = localStorage.getItem('auth_state');
@@ -119,11 +112,8 @@ test.describe('OAuth Authentication Flow', () => {
     // Now navigate to dashboard
     await page.goto('/dashboard');
 
-    // Wait for network idle and dashboard to fully load
-    await page.waitForLoadState('networkidle');
-    await expect(page).toHaveURL('/dashboard');
-
     // Wait for dashboard to load
+    await expect(page).toHaveURL('/dashboard');
     await expect(page.locator('h1')).toHaveText('Dashboard', { timeout: 10000 });
 
     // Manually clear auth (simulating logout since no button exists yet)

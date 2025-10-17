@@ -180,6 +180,6 @@
     "acceptance_criteria": "`npm run test:e2e` executes Playwright tests successfully, OAuth login test completes without real OAuth provider (mocked), Dashboard displays after successful authentication, Logout test clears tokens and redirects correctly, Unauthorized access test verifies PrivateRoute behavior, Tests run in CI pipeline (headless mode)",
     "dependencies": ["I3.T5", "I3.T7"],
     "parallelizable": false,
-    "done": false
+    "done": true
   }
 ]
