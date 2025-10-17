@@ -1,0 +1,58 @@
+# Prometheus Configuration for Planning Poker Application
+# This configuration scrapes metrics from the Quarkus application running on the host machine
+
+global:
+  scrape_interval: 15s # Set the scrape interval to every 15 seconds. Default is every 1 minute.
+  evaluation_interval: 15s # Evaluate rules every 15 seconds. The default is every 1 minute.
+  # scrape_timeout is set to the global default (10s).
+
+  # Attach these labels to any time series or alerts when communicating with
+  # external systems (federation, remote storage, Alertmanager).
+  external_labels:
+    monitor: 'planning-poker-monitor'
+    environment: 'local'
+
+# Alertmanager configuration (optional - can be added later)
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets:
+#           # - alertmanager:9093
+
+# Load rules once and periodically evaluate them according to the global 'evaluation_interval'.
+# rule_files:
+#   - "alerts/*.yml"
+
+# A scrape configuration containing exactly one endpoint to scrape:
+scrape_configs:
+  # The job name is added as a label `job=<job_name>` to any timeseries scraped from this config.
+  - job_name: 'prometheus'
+    # Override the global default and scrape targets from this job every 5 seconds.
+    scrape_interval: 5s
+    static_configs:
+      - targets: ['localhost:9090']
+        labels:
+          application: 'prometheus'
+
+  # Scrape Quarkus application metrics
+  - job_name: 'quarkus-application'
+    scrape_interval: 10s
+    scrape_timeout: 5s
+    metrics_path: '/q/metrics'
+    static_configs:
+      - targets: ['host.docker.internal:8080']
+        labels:
+          application: 'planning-poker'
+          service: 'backend'
+          environment: 'local'
+
+  # Scrape Quarkus health endpoints (optional - provides additional health metrics)
+  - job_name: 'quarkus-health'
+    scrape_interval: 30s
+    metrics_path: '/q/health'
+    static_configs:
+      - targets: ['host.docker.internal:8080']
+        labels:
+          application: 'planning-poker'
+          service: 'backend-health'
+          environment: 'local'

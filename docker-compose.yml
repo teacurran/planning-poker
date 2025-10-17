@@ -1,23 +1,188 @@
-version: '3.8'
-
 services:
   postgres:
     image: postgres:15-alpine
     container_name: planning-poker-db
     restart: always
     environment:
-      POSTGRES_USER: dockercompose
-      POSTGRES_PASSWORD: dockercompose
-      POSTGRES_DB: planningpoker
+      POSTGRES_USER: ${POSTGRES_USER:-scrumpoker}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-scrumpoker}
+      POSTGRES_DB: ${POSTGRES_DB:-scrumpoker}
     volumes:
       - postgres_db:/var/lib/postgresql/data
     ports:
-      - "5445:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U dockercompose -d planningpoker"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-scrumpoker} -d ${POSTGRES_DB:-scrumpoker}"]
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - planning-poker-network
+
+  # Redis cluster setup with 3 nodes (1 master + 2 replicas for local dev)
+  redis-node-1:
+    image: redis:7-alpine
+    container_name: planning-poker-redis-1
+    restart: always
+    command: >
+      redis-server
+      --port 6379
+      --cluster-enabled yes
+      --cluster-config-file nodes.conf
+      --cluster-node-timeout 5000
+      --appendonly yes
+      --appendfilename "appendonly.aof"
+      --requirepass ${REDIS_PASSWORD:-redispassword}
+      --masterauth ${REDIS_PASSWORD:-redispassword}
+    volumes:
+      - redis_data_1:/data
+    ports:
+      - "6379:6379"
+      - "16379:16379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-redispassword}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - planning-poker-network
+
+  redis-node-2:
+    image: redis:7-alpine
+    container_name: planning-poker-redis-2
+    restart: always
+    command: >
+      redis-server
+      --port 6380
+      --cluster-enabled yes
+      --cluster-config-file nodes.conf
+      --cluster-node-timeout 5000
+      --appendonly yes
+      --appendfilename "appendonly.aof"
+      --requirepass ${REDIS_PASSWORD:-redispassword}
+      --masterauth ${REDIS_PASSWORD:-redispassword}
+    volumes:
+      - redis_data_2:/data
+    ports:
+      - "6380:6380"
+      - "16380:16380"
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "6380", "-a", "${REDIS_PASSWORD:-redispassword}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - planning-poker-network
+
+  redis-node-3:
+    image: redis:7-alpine
+    container_name: planning-poker-redis-3
+    restart: always
+    command: >
+      redis-server
+      --port 6381
+      --cluster-enabled yes
+      --cluster-config-file nodes.conf
+      --cluster-node-timeout 5000
+      --appendonly yes
+      --appendfilename "appendonly.aof"
+      --requirepass ${REDIS_PASSWORD:-redispassword}
+      --masterauth ${REDIS_PASSWORD:-redispassword}
+    volumes:
+      - redis_data_3:/data
+    ports:
+      - "6381:6381"
+      - "16381:16381"
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "6381", "-a", "${REDIS_PASSWORD:-redispassword}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - planning-poker-network
+
+  # Redis cluster initialization (runs once to create cluster)
+  redis-cluster-init:
+    image: redis:7-alpine
+    container_name: planning-poker-redis-cluster-init
+    depends_on:
+      redis-node-1:
+        condition: service_healthy
+      redis-node-2:
+        condition: service_healthy
+      redis-node-3:
+        condition: service_healthy
+    command: >
+      sh -c "
+      redis-cli -a ${REDIS_PASSWORD:-redispassword} --cluster create
+      redis-node-1:6379
+      redis-node-2:6380
+      redis-node-3:6381
+      --cluster-replicas 0 --cluster-yes
+      "
+    networks:
+      - planning-poker-network
+    restart: "no"
+
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: planning-poker-prometheus
+    restart: always
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    volumes:
+      - ./infra/local/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - planning-poker-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  grafana:
+    image: grafana/grafana:10.2.2
+    container_name: planning-poker-grafana
+    restart: always
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_ROOT_URL=http://localhost:3000
+      - GF_INSTALL_PLUGINS=
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./infra/local/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/local/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - planning-poker-network
+
+networks:
+  planning-poker-network:
+    driver: bridge
 
 volumes:
   postgres_db:
+  redis_data_1:
+  redis_data_2:
+  redis_data_3:
+  prometheus_data:
+  grafana_data:

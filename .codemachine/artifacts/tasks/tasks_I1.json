@@ -114,7 +114,7 @@
     "acceptance_criteria": "`docker-compose up` starts all services without errors, PostgreSQL accessible at `localhost:5432` with credentials from `.env`, Redis cluster accessible at `localhost:6379-6381`, Prometheus UI at `http://localhost:9090` shows Quarkus target, Grafana UI at `http://localhost:3000` displays preconfigured dashboard, Flyway migrations execute automatically when PostgreSQL container starts",
     "dependencies": ["I1.T3"],
     "parallelizable": false,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I1.T6",
