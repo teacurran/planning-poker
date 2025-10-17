@@ -58,3 +58,7 @@ Thumbs.db
 # CodeMachine
 .codemachine/memory
 node_modules
+
+# Test artifacts
+frontend/test-results/
+frontend/playwright-report/

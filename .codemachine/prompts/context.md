@@ -10,25 +10,27 @@ This is the full specification of the task you must complete.
 
 ```json
 {
-  "task_id": "I3.T7",
+  "task_id": "I3.T8",
   "iteration_id": "I3",
   "iteration_goal": "Implement OAuth2 authentication (Google, Microsoft), JWT token generation/validation, user registration/login flows, and frontend authentication UI to enable secured access to the application.",
-  "description": "Implement `DashboardPage` component displaying user profile, list of owned rooms, recent session history, and quick actions (create new room, view preferences). Use `useUser` and `useRooms` hooks to fetch data. Display loading skeleton while fetching, error message on failure. Show user avatar, display name, email. List rooms in card grid with room title, privacy mode badge, last active timestamp, \"Open Room\" button. Add \"Create New Room\" button navigating to room creation form. Style with Tailwind CSS, responsive for mobile/tablet/desktop.",
-  "agent_type_hint": "FrontendAgent",
-  "inputs": "Dashboard requirements from product spec, API hooks from I3.T6, Design system (Tailwind, Headless UI)",
+  "description": "Create Playwright end-to-end tests for complete authentication flow: user visits /login, clicks \"Sign in with Google\", OAuth redirect to Google (mock in test), consent granted, redirect to callback, tokens received, dashboard displayed. Test scenarios: successful login, token refresh on expiration, logout, unauthorized access redirects to login. Use Playwright to intercept OAuth redirect, mock OAuth provider responses, verify token storage in localStorage, assert dashboard elements rendered.",
+  "agent_type_hint": "BackendAgent",
+  "inputs": "Authentication flow from architecture blueprint, Playwright testing patterns for OAuth mocking, Frontend authentication components",
   "input_files": [
-    "frontend/src/services/apiHooks.ts",
-    "frontend/src/stores/authStore.ts"
+    "frontend/src/pages/LoginPage.tsx",
+    "frontend/src/pages/OAuthCallbackPage.tsx",
+    "frontend/src/pages/DashboardPage.tsx"
   ],
   "target_files": [
-    "frontend/src/pages/DashboardPage.tsx",
-    "frontend/src/components/dashboard/UserProfileCard.tsx",
-    "frontend/src/components/dashboard/RoomListCard.tsx",
-    "frontend/src/components/dashboard/CreateRoomButton.tsx"
+    "frontend/e2e/auth.spec.ts",
+    "frontend/e2e/fixtures/mockOAuthResponse.ts"
   ],
-  "deliverables": "DashboardPage with user profile section (avatar, name, email, tier badge), Room list grid (responsive, 1 col mobile, 2 col tablet, 3 col desktop), Room card component showing title, privacy mode, last active date, Create room button with prominent styling, Loading skeleton using Tailwind animate-pulse, Error state UI (retry button, error message)",
-  "acceptance_criteria": "Dashboard loads user data from API on mount, User profile displays correct information (avatar, name, subscription tier), Room list shows user's owned rooms from API, Clicking room card navigates to /room/{roomId}, Create room button navigates to /rooms/new, Loading state displayed while fetching data, Error state shows message if API call fails, Responsive layout works on mobile, tablet, desktop",
-  "dependencies": ["I3.T6"],
+  "deliverables": "Playwright test: successful OAuth login flow end-to-end, Mock OAuth provider responses (intercept network requests), Assertions: tokens in localStorage, user redirected to /dashboard, profile displayed, Test: logout clears tokens and redirects to /login, Test: accessing /dashboard without auth redirects to /login, Test: expired token triggers refresh (mock 401 response)",
+  "acceptance_criteria": "`npm run test:e2e` executes Playwright tests successfully, OAuth login test completes without real OAuth provider (mocked), Dashboard displays after successful authentication, Logout test clears tokens and redirects correctly, Unauthorized access test verifies PrivateRoute behavior, Tests run in CI pipeline (headless mode)",
+  "dependencies": [
+    "I3.T5",
+    "I3.T7"
+  ],
   "parallelizable": false,
   "done": false
 }
@@ -40,99 +42,42 @@ This is the full specification of the task you must complete.
 
 The following are the relevant sections from the architecture and plan documents, which I found by analyzing the task description.
 
-### Context: technology-stack-summary (from 02_Architecture_Overview.md)
+### Context: OAuth2 Authentication Flow (from 04_Behavior_and_Communication.md)
 
-```markdown
-### 3.2. Technology Stack Summary
+The complete OAuth2 authorization code flow with PKCE for Google/Microsoft authentication. Key steps:
+1. User clicks "Sign in with Google" on LoginPage
+2. PKCE code_verifier and code_challenge generated
+3. User redirected to OAuth provider (Google/Microsoft)
+4. User grants permission
+5. Provider redirects back to callback URL with authorization code
+6. Frontend calls `/api/v1/auth/oauth/callback` with code and codeVerifier
+7. Backend exchanges code for tokens, performs JIT user provisioning
+8. Backend returns JWT access token and refresh token
+9. Frontend stores tokens in localStorage and redirects to dashboard
 
-| **Category** | **Technology Choice** | **Justification** |
-|--------------|----------------------|-------------------|
-| **Frontend Framework** | **React 18+ with TypeScript** | Strong ecosystem, concurrent rendering for real-time updates, TypeScript for type safety in WebSocket message contracts |
-| **UI Component Library** | **Tailwind CSS + Headless UI** | Utility-first CSS for rapid development, Headless UI for accessible components (modals, dropdowns), minimal bundle size |
-| **State Management** | **Zustand + React Query** | Lightweight state management (Zustand), server state caching and synchronization (React Query), WebSocket integration support |
-| **WebSocket Client** | **Native WebSocket API + Reconnecting wrapper** | Native browser API for compatibility, lightweight reconnection logic with exponential backoff |
+### Context: End-to-End Testing Strategy (from 03_Verification_and_Glossary.md)
 
-#### Key Libraries & Extensions
+**Framework:** Playwright (browser automation)
 
-**Frontend (React):**
-- `@tanstack/react-query` - Server state management and caching
-- `zustand` - Client-side state management (UI, WebSocket connection state)
-- `react-hook-form` - Form validation and submission
-- `zod` - Schema validation for API responses and WebSocket messages
-- `date-fns` - Date/time formatting for session history
-- `recharts` - Charting library for analytics dashboards
-- `@headlessui/react` - Accessible UI components
-- `heroicons` - Icon library
-```
+**Approach:**
+- Simulate real user interactions (clicks, form submissions, navigation)
+- Mock external services where necessary (OAuth providers, Stripe)
+- Tests run headless in CI pipeline
+- Screenshots captured on failure for debugging
 
-### Context: usability-nfrs (from 01_Context_and_Drivers.md)
+**Acceptance Criteria:**
+- All E2E tests pass (`npm run test:e2e`)
+- Tests run headless in CI (no UI required)
+- Screenshots captured on failure
+- Test execution time <10 minutes for full suite
 
-```markdown
-#### Usability
-- **Responsive Design:** Mobile-first Tailwind CSS with breakpoints for tablet/desktop
-- **Accessibility:** WCAG 2.1 Level AA compliance for keyboard navigation and screen readers
-- **Browser Support:** Last 2 versions of Chrome, Firefox, Safari, Edge
-- **Internationalization:** English language in initial release, i18n framework for future localization
-```
+### Context: REST API Endpoints (from 04_Behavior_and_Communication.md)
 
-### Context: user-account-requirements (from 01_Context_and_Drivers.md)
-
-```markdown
-#### User Account Requirements
-- **OAuth2 Authentication:** Google and Microsoft social login integration
-- **Profile Management:** Display name, avatar, theme preferences, default room settings
-- **Session History:** Persistent storage of past sessions with tier-based access controls
-- **Preference Persistence:** User-specific defaults for deck type, room rules, reveal behavior
-```
-
-### Context: core-gameplay-requirements (from 01_Context_and_Drivers.md)
-
-```markdown
-#### Core Gameplay Requirements
-- **Real-time Estimation:** WebSocket-based blind card selection with configurable deck types (Fibonacci, T-shirt, custom)
-- **Session Management:** Host controls for round lifecycle (start, lock, reveal, reset), participant management (kick, mute)
-- **Calculation Engine:** Automatic computation of average, median, and consensus indicators upon reveal
-- **Room Controls:** Unique room ID generation (6-character nanoid), shareable links, privacy modes
-```
-
-### Context: task-i3-t7 (from 02_Iteration_I3.md)
-
-```markdown
-*   **Task 3.7: Create User Dashboard Page (Frontend)**
-    *   **Task ID:** `I3.T7`
-    *   **Description:** Implement `DashboardPage` component displaying user profile, list of owned rooms, recent session history, and quick actions (create new room, view preferences). Use `useUser` and `useRooms` hooks to fetch data. Display loading skeleton while fetching, error message on failure. Show user avatar, display name, email. List rooms in card grid with room title, privacy mode badge, last active timestamp, "Open Room" button. Add "Create New Room" button navigating to room creation form. Style with Tailwind CSS, responsive for mobile/tablet/desktop.
-    *   **Agent Type Hint:** `FrontendAgent`
-    *   **Inputs:**
-        *   Dashboard requirements from product spec
-        *   API hooks from I3.T6
-        *   Design system (Tailwind, Headless UI)
-    *   **Input Files:**
-        *   `frontend/src/services/apiHooks.ts`
-        *   `frontend/src/stores/authStore.ts`
-    *   **Target Files:**
-        *   `frontend/src/pages/DashboardPage.tsx`
-        *   `frontend/src/components/dashboard/UserProfileCard.tsx`
-        *   `frontend/src/components/dashboard/RoomListCard.tsx`
-        *   `frontend/src/components/dashboard/CreateRoomButton.tsx`
-    *   **Deliverables:**
-        *   DashboardPage with user profile section (avatar, name, email, tier badge)
-        *   Room list grid (responsive, 1 col mobile, 2 col tablet, 3 col desktop)
-        *   Room card component showing title, privacy mode, last active date
-        *   Create room button with prominent styling
-        *   Loading skeleton using Tailwind animate-pulse
-        *   Error state UI (retry button, error message)
-    *   **Acceptance Criteria:**
-        *   Dashboard loads user data from API on mount
-        *   User profile displays correct information (avatar, name, subscription tier)
-        *   Room list shows user's owned rooms from API
-        *   Clicking room card navigates to /room/{roomId}
-        *   Create room button navigates to /rooms/new
-        *   Loading state displayed while fetching data
-        *   Error state shows message if API call fails
-        *   Responsive layout works on mobile, tablet, desktop
-    *   **Dependencies:** [I3.T6]
-    *   **Parallelizable:** No (depends on API client hooks)
-```
+**Authentication & User Management:**
+- `POST /api/v1/auth/oauth/callback` - Exchange OAuth2 code for JWT tokens
+- `POST /api/v1/auth/refresh` - Refresh expired access token
+- `POST /api/v1/auth/logout` - Revoke refresh token
+- `GET /api/v1/users/{userId}` - Retrieve user profile
 
 ---
 
@@ -142,169 +87,88 @@ The following analysis is based on my direct review of the current codebase. Use
 
 ### Relevant Existing Code
 
-*   **File:** `frontend/src/services/apiHooks.ts`
-    *   **Summary:** This file contains comprehensive React Query hooks for API data fetching. It includes `useUser(userId)` for fetching user profiles, `useRooms()` for fetching the current user's owned rooms (automatically uses `authStore.user.userId`), and `useCreateRoom()` mutation hook for creating new rooms. All hooks automatically handle loading states, error states, data caching, and cache invalidation.
-    *   **Recommendation:** You MUST import and use the following hooks in your DashboardPage component:
-        - `useUser(userId)` - Pass the current authenticated user's ID from `authStore.user.userId`
-        - `useRooms()` - No parameters needed, automatically fetches current user's rooms
-        - Import `queryKeys` if you need to manually invalidate cache
-    *   **Important Details:**
-        - `useUser()` has `staleTime: 5 * 60 * 1000` (5 minutes cache)
-        - `useRooms()` has `staleTime: 2 * 60 * 1000` (2 minutes cache, rooms change frequently)
-        - Both hooks return React Query standard result: `{ data, isLoading, error, refetch }`
-        - `useRooms()` is automatically disabled if user is not authenticated (`enabled: !!user?.userId`)
-        - `useCreateRoom()` automatically invalidates the rooms list cache on success
+*   **File:** `frontend/src/pages/LoginPage.tsx`
+    *   **Summary:** This file implements the OAuth login page with "Sign in with Google" and "Sign in with Microsoft" buttons. It handles PKCE code generation, stores session data in sessionStorage, and redirects users to the OAuth provider authorization URL.
+    *   **Recommendation:** Your E2E test MUST mock the OAuth provider redirect (Google/Microsoft authorization endpoints) since tests cannot interact with real OAuth providers. You'll need to intercept the `window.location.href` assignment or use Playwright's route interception to catch redirects to `accounts.google.com` and `login.microsoftonline.com`.
+    *   **Critical Detail:** The PKCE session data is stored in `sessionStorage` with key `oauth_pkce_session`. Your test fixtures will need to simulate this storage for the callback page to work correctly.
+
+*   **File:** `frontend/src/pages/OAuthCallbackPage.tsx`
+    *   **Summary:** This page handles the OAuth callback after user grants consent. It extracts the authorization code from URL query parameters, retrieves PKCE session data from sessionStorage, calls the backend `/api/v1/auth/oauth/callback` endpoint, stores tokens in localStorage via the auth store, and redirects to dashboard.
+    *   **Recommendation:** You MUST mock the backend API endpoint `/api/v1/auth/oauth/callback` in your tests. Use Playwright's `page.route()` to intercept this POST request and return a mock TokenResponse. The mock response structure must match the `TokenResponse` type from `frontend/src/types/auth.ts`.
+    *   **Critical Detail:** The callback page expects three query parameters: `code` (authorization code), and potentially `error` and `error_description` for error scenarios. Your test should navigate to `/auth/callback?code=MOCK_AUTH_CODE` after setting up PKCE session data.
+
+*   **File:** `frontend/src/pages/DashboardPage.tsx`
+    *   **Summary:** This is the protected dashboard page that displays user profile and room list. It uses the `useAuth` hook to access authentication state and makes API calls via React Query hooks (`useUser`, `useRooms`).
+    *   **Recommendation:** Your test assertions should verify that the dashboard renders successfully after login. You should check for specific UI elements like the user's display name, email, and the "Your Rooms" section. You'll need to mock the `/api/v1/users/{userId}` and `/api/v1/rooms` API endpoints to provide test data.
+    *   **Implementation Tip:** The dashboard shows loading skeletons while fetching data. Your test should wait for these loading states to complete before asserting on the actual content. Use Playwright's `waitFor()` or locate elements with `has-text` selectors.
 
 *   **File:** `frontend/src/stores/authStore.ts`
-    *   **Summary:** This file defines the Zustand authentication store with automatic localStorage persistence. It manages user authentication state including user profile data, access/refresh tokens, and isAuthenticated boolean. The store automatically loads state from localStorage on initialization.
-    *   **Recommendation:** You MUST import and use `useAuthStore` hook to access the current authenticated user:
-        - `const { user, isAuthenticated } = useAuthStore();`
-        - The `user` object contains: `userId, email, displayName, avatarUrl, subscriptionTier, createdAt`
-        - Always check `isAuthenticated` before rendering authenticated content
-    *   **Important Details:**
-        - User data is automatically persisted to localStorage
-        - The store includes methods `setAuth()`, `clearAuth()`, and `loadAuthFromStorage()`
-        - User type is `UserDTO` from `@/types/auth`
+    *   **Summary:** Zustand store managing authentication state. It persists tokens and user data to localStorage using the key `auth_state`. The store provides `setAuth()` to update state after login and `clearAuth()` to remove tokens on logout.
+    *   **Recommendation:** Your tests MUST verify that tokens are correctly stored in localStorage after successful login. Use `page.evaluate(() => localStorage.getItem('auth_state'))` to read the stored value and assert its structure. For logout tests, verify that this key is removed from localStorage.
+    *   **Critical Detail:** The stored value is a JSON string containing `{user, accessToken, refreshToken, isAuthenticated}`. Your test fixtures should use this exact structure when setting up authenticated states.
+
+*   **File:** `frontend/src/utils/pkce.ts`
+    *   **Summary:** Contains PKCE utility functions for generating code verifier/challenge and managing session storage. The `storePKCESession()` function saves to `sessionStorage` with key `oauth_pkce_session`.
+    *   **Recommendation:** Since you're mocking the OAuth flow, you don't need to test the actual PKCE cryptographic functions. However, you MUST ensure your test properly sets up the PKCE session data in sessionStorage before navigating to the callback page. This simulates what would happen after the LoginPage redirects to OAuth provider.
+
+*   **File:** `backend/src/main/java/com/scrumpoker/api/rest/AuthController.java`
+    *   **Summary:** Backend REST controller handling OAuth callback, token refresh, and logout. The `/oauth/callback` endpoint validates the code and codeVerifier, calls the OAuth2Adapter to exchange the code for user info, performs JIT user provisioning, and generates JWT tokens.
+    *   **Recommendation:** You do NOT need to modify this file. However, you should understand the expected request/response format when mocking the API. The endpoint expects `OAuthCallbackRequest` with fields: `code`, `provider`, `redirectUri`, `codeVerifier`. It returns `TokenResponse` with `accessToken`, `refreshToken`, `expiresIn`, and `user` (UserDTO).
 
 *   **File:** `frontend/src/types/auth.ts`
-    *   **Summary:** TypeScript type definitions for authentication-related data structures matching the OpenAPI specification. Includes `UserDTO`, `TokenResponse`, `OAuthProvider`, and `SubscriptionTier` types.
-    *   **Recommendation:** You SHOULD import and use these types for type safety:
-        - `UserDTO` - For user profile data
-        - `SubscriptionTier` - For displaying subscription tier badges (values: 'FREE', 'PRO', 'PRO_PLUS', 'ENTERPRISE')
-    *   **Important Details:**
-        - `avatarUrl` is optional and can be null
-        - `SubscriptionTier` is always present and has 4 possible values
-        - All date fields are ISO 8601 strings (e.g., `createdAt`, `updatedAt`)
-
-*   **File:** `frontend/src/types/room.ts`
-    *   **Summary:** TypeScript type definitions for room-related data structures. Includes `RoomDTO`, `RoomListResponse`, `PrivacyMode`, and `VotingSystem` types.
-    *   **Recommendation:** You MUST import and use these types:
-        - `RoomDTO` - For individual room data in room cards
-        - `RoomListResponse` - For the paginated response from `useRooms()` hook (contains `rooms: RoomDTO[]` array plus pagination metadata)
-        - `PrivacyMode` - For displaying privacy badge (values: 'PUBLIC', 'PRIVATE')
-    *   **Important Details:**
-        - `RoomListResponse` includes pagination fields: `page, size, totalElements, totalPages`
-        - Each `RoomDTO` has `lastActiveAt` timestamp (ISO 8601 string) - use this for "last active" display
-        - `deletedAt` field indicates soft-deleted rooms (should be filtered out by API, but check defensively)
-
-*   **File:** `frontend/src/components/common/Button.tsx`
-    *   **Summary:** Reusable Button component with variant support ('primary', 'secondary'). Uses Tailwind CSS classes for styling with consistent dark mode support.
-    *   **Recommendation:** You SHOULD reuse this Button component for the "Create New Room" button and any action buttons. Pass `variant="primary"` for prominent CTAs.
-    *   **Important Details:**
-        - Primary variant uses `bg-primary-600 hover:bg-primary-700` (defined in tailwind.config.js)
-        - Button accepts `onClick`, `variant`, `className` props
-        - Button already includes transition animations and dark mode support
-
-*   **File:** `frontend/tailwind.config.js`
-    *   **Summary:** Tailwind CSS configuration with custom color palette. Primary color is blue-based (sky blue theme from #0ea5e9 to #082f49).
-    *   **Recommendation:** You MUST use the following Tailwind utilities for consistency with the existing design:
-        - Primary colors: `bg-primary-600`, `text-primary-600`, `border-primary-500`
-        - Dark mode: Use `dark:` prefix for all color classes (e.g., `bg-white dark:bg-gray-800`)
-        - Responsive: Use `md:` for tablet (768px+) and `lg:` for desktop (1024px+)
-        - Grid layout: `grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6`
-    *   **Important Details:**
-        - Dark mode is configured as 'class' mode (toggle via className on root element)
-        - Primary color has full palette from 50-950
-        - Loading skeleton animation: Use `animate-pulse` utility class
-
-*   **File:** `frontend/src/pages/DashboardPage.tsx` (current state)
-    *   **Summary:** This is the current placeholder implementation with static mock data. It has the correct page structure with responsive grid layout, but needs to be replaced with real data fetching using API hooks.
-    *   **Recommendation:** You SHOULD preserve the overall page structure and styling approach (min-h-screen, container layout, grid system), but MUST replace all static content with dynamic data from API hooks. Keep the visual styling intact as it follows the design system correctly.
-
-*   **File:** `frontend/src/App.tsx`
-    *   **Summary:** React Router configuration with route definitions. Dashboard is protected by `PrivateRoute` wrapper, which redirects unauthenticated users to /login.
-    *   **Recommendation:** For navigation from DashboardPage components, use `react-router-dom`'s `useNavigate()` hook:
-        - Import: `import { useNavigate } from 'react-router-dom';`
-        - Usage: `const navigate = useNavigate(); navigate('/rooms/new');`
-        - Room detail navigation: `navigate(\`/room/${roomId}\`);`
+    *   **Summary:** TypeScript type definitions for authentication-related DTOs. Defines `TokenResponse`, `OAuthCallbackRequest`, `UserDTO`, and `ErrorResponse`.
+    *   **Recommendation:** Your mock responses in Playwright test fixtures MUST conform to these types to ensure type safety and prevent runtime errors. Reference these types when creating mock data.
 
 ### Implementation Tips & Notes
 
-*   **Tip:** For the loading skeleton, I confirmed that Tailwind's `animate-pulse` utility is already configured and working in the project. Use it on placeholder divs with gray backgrounds:
-    ```tsx
-    <div className="animate-pulse bg-gray-300 dark:bg-gray-700 h-6 w-32 rounded"></div>
-    ```
+*   **Tip: Playwright Setup Required:** The `frontend/package.json` currently shows `"test": "echo \"No tests implemented yet\""`, which means Playwright is not yet installed. You MUST first install Playwright as a dev dependency with `npm install -D @playwright/test`. Then create a `playwright.config.ts` file in the frontend directory with basic configuration (test directory, browser settings, base URL).
 
-*   **Tip:** The `useRooms()` hook returns `RoomListResponse` which has the structure:
-    ```typescript
-    {
-      rooms: RoomDTO[],
-      page: number,
-      size: number,
-      totalElements: number,
-      totalPages: number
-    }
-    ```
-    Access the rooms array with `data?.rooms || []` for safe iteration.
+*   **Tip: Mock Strategy for OAuth Redirect:** The LoginPage redirects to external OAuth providers via `window.location.href`. In Playwright, you can intercept this using `page.route()` to catch requests to `accounts.google.com` or `login.microsoftonline.com`. Alternatively, you can use `page.waitForNavigation()` followed by programmatic navigation back to the callback URL with a mock authorization code. The second approach is simpler and recommended.
 
-*   **Tip:** Date formatting for "last active" timestamps - you should use `date-fns` library (already listed in the tech stack). Import `formatDistanceToNow` for relative timestamps:
-    ```tsx
-    import { formatDistanceToNow } from 'date-fns';
-    formatDistanceToNow(new Date(room.lastActiveAt), { addSuffix: true })
-    // Outputs: "2 hours ago"
-    ```
+*   **Tip: Setting Up Test Fixtures:** Create a `frontend/e2e/fixtures/mockOAuthResponse.ts` file containing reusable mock data:
+    - A mock `TokenResponse` with valid structure
+    - A mock `UserDTO` with test user data
+    - Helper functions to set up sessionStorage with PKCE session data
 
-*   **Note:** Subscription tier badges should use color-coded styling to differentiate tiers visually:
-    - FREE: Gray (`bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300`)
-    - PRO: Blue (`bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300`)
-    - PRO_PLUS: Purple (`bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-300`)
-    - ENTERPRISE: Gold (`bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300`)
+    This keeps your test code clean and DRY.
 
-*   **Note:** Privacy mode badges for rooms should also be color-coded:
-    - PUBLIC: Green (`bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300`)
-    - PRIVATE: Red (`bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300`)
+*   **Tip: Headless Mode Configuration:** Your Playwright config should enable headless mode by default for CI compatibility. However, during development, you may want to run with `headless: false` to see the browser interactions. Consider using environment variables to toggle this.
 
-*   **Warning:** The `useRooms()` hook is automatically disabled when user is not authenticated. However, since DashboardPage is protected by `PrivateRoute`, the user will always be authenticated when this page renders. No additional auth checks are needed within the component itself.
+*   **Tip: Handling Async Storage Operations:** When verifying localStorage contents, wrap your assertions in `page.waitForFunction()` or use Playwright's auto-wait mechanism to ensure the storage has been updated before reading. The authStore saves to localStorage asynchronously.
 
-*   **Warning:** Avatar images may be null or invalid URLs. Always provide fallback rendering:
-    ```tsx
-    {user.avatarUrl ? (
-      <img src={user.avatarUrl} alt={user.displayName} onError={(e) => { e.currentTarget.style.display = 'none'; }} />
-    ) : (
-      <div className="avatar-fallback">
-        {user.displayName?.charAt(0).toUpperCase()}
-      </div>
-    )}
-    ```
+*   **Tip: PrivateRoute Testing:** The task mentions testing unauthorized access redirects. Look for the `PrivateRoute` component referenced in the architecture. Your test should navigate to `/dashboard` without setting up authentication state and verify that the user is redirected to `/login`. You may need to clear localStorage first to simulate an unauthenticated state.
 
-*   **Performance Note:** The current DashboardPage placeholder uses static data. When implementing real data fetching, React Query's automatic caching will prevent unnecessary re-fetches. The stale time settings (5 minutes for user, 2 minutes for rooms) are already optimized for this use case.
+*   **Note: No Backend Required for E2E Tests:** Since you're mocking all API responses using Playwright's route interception, you don't need a running backend for these tests. This makes the tests faster and more reliable for CI environments. However, ensure your mocks accurately reflect the actual API contract defined in the OpenAPI spec.
 
-*   **Accessibility Note:** All interactive elements (room cards, buttons) must be keyboard accessible. Use semantic HTML (`<button>`, `<nav>`) and proper ARIA labels for screen readers. Room cards should have `role="button"` or be wrapped in `<button>` tags, not just divs with onClick handlers.
+*   **Note: Test Organization:** Follow the pattern from the testing strategy document. Your test file should have clearly named test scenarios (describe blocks): "successful OAuth login", "logout clears tokens", "unauthorized access redirects", etc. Each test should be independent and not rely on state from previous tests.
 
-*   **Error Handling:** The API hooks return an `error` object when requests fail. Display user-friendly error messages with retry functionality:
-    ```tsx
-    {error && (
-      <div className="error-state">
-        <p>Failed to load rooms: {error.message}</p>
-        <button onClick={() => refetch()}>Retry</button>
-      </div>
-    )}
-    ```
+*   **Warning: Token Expiration Testing:** The acceptance criteria mentions testing "expired token triggers refresh". This is complex for an E2E test because the frontend API client (mentioned in I3.T6) handles token refresh automatically on 401 responses. You'll need to mock a 401 response from a protected endpoint, then verify that the client calls `/api/v1/auth/refresh`, and finally succeeds with the refreshed token. This requires careful orchestration of multiple mock responses.
 
-### Component Architecture Recommendations
+*   **Critical: CI Pipeline Integration:** The acceptance criteria requires tests to run in CI with `npm run test:e2e`. You MUST add this script to `frontend/package.json` and configure it to run Playwright in headless mode. Ensure the script exits with a non-zero code on test failure so CI can detect failures.
 
-Based on the task requirements and existing codebase patterns, here's the recommended component breakdown:
+*   **Critical: Screenshot on Failure:** Playwright automatically captures screenshots on test failure if configured. Enable this in your `playwright.config.ts` with `screenshot: 'only-on-failure'` to help with debugging failed CI runs.
 
-1. **DashboardPage.tsx** (Main container)
-   - Orchestrates layout and data fetching
-   - Uses `useUser()` and `useRooms()` hooks
-   - Manages loading and error states
-   - Renders child components with data
+---
 
-2. **UserProfileCard.tsx** (Presentational component)
-   - Props: `user: UserDTO`
-   - Displays avatar, name, email, subscription tier badge
-   - Compact card layout with dark mode support
+## Implementation Checklist
 
-3. **RoomListCard.tsx** (Presentational component)
-   - Props: `room: RoomDTO`, `onClick: () => void`
-   - Displays room title, privacy badge, last active time
-   - "Open Room" button or entire card clickable
-   - Card hover effects for interactivity
+Before you begin coding, ensure you understand:
 
-4. **CreateRoomButton.tsx** (Interactive component)
-   - Prominent CTA button
-   - Uses `useNavigate()` to go to `/rooms/new`
-   - Primary variant styling (blue background)
+1. ✅ The complete OAuth flow from LoginPage → OAuth Provider → Callback → Dashboard
+2. ✅ How PKCE session data flows through sessionStorage
+3. ✅ The structure of TokenResponse and how it's stored in localStorage
+4. ✅ The difference between mocking OAuth providers (external redirect) vs. mocking backend API (network intercept)
+5. ✅ The acceptance criteria requiring all 6 test scenarios to pass
 
-This component structure follows React best practices: container/presentational pattern, single responsibility principle, and makes components highly testable.
+Your implementation should:
+
+1. Install Playwright and create configuration file
+2. Create mock fixture file with reusable test data
+3. Implement successful login test (main happy path)
+4. Implement logout test
+5. Implement unauthorized access redirect test
+6. Implement token refresh test (advanced scenario)
+7. Add `test:e2e` npm script
+8. Verify tests run in headless mode
+
+Good luck! Remember to follow the defensive coding guidelines and ensure your tests are deterministic and fast.
