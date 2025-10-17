@@ -10,25 +10,36 @@ This is the full specification of the task you must complete.
 
 ```json
 {
-  "task_id": "I1.T6",
+  "task_id": "I1.T7",
   "iteration_id": "I1",
   "iteration_goal": "Establish project scaffolding, configure development environment, define database schema, and set up CI/CD foundation to enable parallel backend and frontend development in subsequent iterations.",
-  "description": "Create GitHub Actions workflows for backend CI (`backend-ci.yml`) and frontend CI (`frontend-ci.yml`). Backend workflow: checkout code, setup Java 17, run `mvn clean verify` (compile, unit tests, integration tests with Testcontainers), SonarQube analysis (code quality gate), Trivy container scan on built Docker image. Frontend workflow: checkout, setup Node.js 18, run `npm ci`, `npm run lint`, `npm run test`, `npm run build`, upload build artifacts. Configure workflow triggers (push to main, pull requests). Add workflow status badges to README.md.",
-  "agent_type_hint": "SetupAgent",
-  "inputs": "CI/CD requirements from architecture blueprint (Section 5.2 - CI/CD Pipeline Hardening), Maven build lifecycle for Quarkus, npm script conventions (lint, test, build)",
+  "description": "Implement Panache repository interfaces for all entities using `PanacheRepositoryBase` pattern. Create repositories: `UserRepository`, `UserPreferenceRepository`, `OrganizationRepository`, `OrgMemberRepository`, `RoomRepository`, `RoomParticipantRepository`, `RoundRepository`, `VoteRepository`, `SessionHistoryRepository`, `SubscriptionRepository`, `PaymentHistoryRepository`, `AuditLogRepository`. Add custom finder methods (e.g., `UserRepository.findByEmail()`, `RoomRepository.findActiveByOwnerId()`, `VoteRepository.findByRoundId()`). Use reactive return types (`Uni<>`, `Multi<>`).",
+  "agent_type_hint": "BackendAgent",
+  "inputs": "Entity classes from I1.T4, Common query patterns from architecture blueprint (e.g., user lookup by email, rooms by owner), Panache repository patterns from Quarkus docs",
   "input_files": [
-    "backend/pom.xml",
-    "frontend/package.json"
+    "backend/src/main/java/com/scrumpoker/domain/user/User.java",
+    ".codemachine/artifacts/architecture/03_System_Structure_and_Data.md"
   ],
   "target_files": [
-    ".github/workflows/backend-ci.yml",
-    ".github/workflows/frontend-ci.yml",
-    "README.md"
+    "backend/src/main/java/com/scrumpoker/repository/UserRepository.java",
+    "backend/src/main/java/com/scrumpoker/repository/UserPreferenceRepository.java",
+    "backend/src/main/java/com/scrumpoker/repository/OrganizationRepository.java",
+    "backend/src/main/java/com/scrumpoker/repository/OrgMemberRepository.java",
+    "backend/src/main/java/com/scrumpoker/repository/RoomRepository.java",
+    "backend/src/main/java/com/scrumpoker/repository/RoomParticipantRepository.java",
+    "backend/src/main/java/com/scrumpoker/repository/RoundRepository.java",
+    "backend/src/main/java/com/scrumpoker/repository/VoteRepository.java",
+    "backend/src/main/java/com/scrumpoker/repository/SessionHistoryRepository.java",
+    "backend/src/main/java/com/scrumpoker/repository/SubscriptionRepository.java",
+    "backend/src/main/java/com/scrumpoker/repository/PaymentHistoryRepository.java",
+    "backend/src/main/java/com/scrumpoker/repository/AuditLogRepository.java"
   ],
-  "deliverables": "Backend CI workflow with Java 17 setup, Maven build, Testcontainers support, Frontend CI workflow with Node.js 18 setup, npm tasks (lint, test, build), SonarQube integration for backend (quality gate check), Trivy security scan for backend Docker image, Workflow status badges in README, Workflows triggered on push to `main` and pull requests to `main`",
-  "acceptance_criteria": "Backend workflow executes successfully on sample commit (even with minimal code), Frontend workflow executes successfully on sample commit, SonarQube analysis uploads results (if SonarCloud token configured), Trivy scan completes without critical vulnerabilities in base image, Workflow badges display in README (green checkmarks), Failed tests cause workflow to fail (red X)",
-  "dependencies": ["I1.T1", "I1.T2"],
-  "parallelizable": true,
+  "deliverables": "12 Panache repository classes implementing `PanacheRepositoryBase<Entity, UUID>`, Custom finder methods with reactive return types (`Uni<User>`, `Multi<Room>`), Query methods using Panache query syntax (e.g., `find(\"email\", email).firstResult()`), ApplicationScoped CDI beans for dependency injection",
+  "acceptance_criteria": "Maven compilation successful, Repositories injectable via `@Inject` in service classes, Custom finder methods return correct reactive types, Query methods execute without errors against seeded database, Integration test for each repository demonstrates CRUD operations work",
+  "dependencies": [
+    "I1.T4"
+  ],
+  "parallelizable": false,
   "done": false
 }
 ```
@@ -39,162 +50,81 @@ This is the full specification of the task you must complete.
 
 The following are the relevant sections from the architecture and plan documents, which I found by analyzing the task description.
 
-### Context: CI/CD Pipeline Integration (from 03_Verification_and_Glossary.md)
+### Context: data-model-overview-erd (from 03_System_Structure_and_Data.md)
 
 ```markdown
-**Continuous Integration (CI):**
+### 3.6. Data Model Overview & ERD
 
-Every push to `main` branch or pull request triggers:
+#### Description
 
-1. **Backend CI Pipeline:**
-   - Compile Java code (`mvn clean compile`)
-   - Run unit tests (`mvn test`)
-   - Run integration tests (`mvn verify` with Testcontainers)
-   - SonarQube code quality analysis
-   - Dependency vulnerability scan (Snyk)
-   - Build Docker image
-   - Container security scan (Trivy)
-   - Publish test results and coverage reports
+The data model follows a relational schema leveraging PostgreSQL's ACID properties for transactional consistency and JSONB columns for flexible configuration storage (room settings, deck definitions). The model is optimized for both transactional writes (vote casting, room creation) and analytical reads (session history, organizational reporting).
 
-2. **Frontend CI Pipeline:**
-   - Install dependencies (`npm ci`)
-   - Lint code (`npm run lint`)
-   - Run unit tests (`npm run test:unit`)
-   - Build production bundle (`npm run build`)
-   - Upload build artifacts
+**Design Principles:**
+1. **Normalized Core Entities:** Users, Rooms, Organizations follow 3NF to prevent update anomalies
+2. **Denormalized Read Models:** SessionSummary and VoteStatistics tables precompute aggregations for reporting performance
+3. **JSONB for Flexibility:** RoomConfig, DeckDefinition, UserPreferences stored as JSONB to support customization without schema migrations
+4. **Soft Deletes:** Critical entities (Users, Rooms) use `deleted_at` timestamp for audit trail and GDPR compliance
+5. **Partitioning Strategy:** SessionHistory and AuditLog partitioned by month for query performance and data lifecycle management
 
-**Quality Gates:**
-- Unit test coverage >80% (fail build if below threshold)
-- SonarQube quality gate passed (no blocker/critical issues)
-- No HIGH/CRITICAL vulnerabilities in dependencies
-- Linter passes with no errors (warnings acceptable)
+#### Key Entities
 
-**Continuous Deployment (CD):**
+| Entity | Purpose | Key Attributes |
+|--------|---------|----------------|
+| **User** | Registered user account | `user_id` (PK), `email`, `oauth_provider`, `oauth_subject`, `display_name`, `avatar_url`, `subscription_tier`, `created_at` |
+| **UserPreference** | Saved user defaults | `user_id` (FK), `default_deck_type`, `default_room_config` (JSONB), `theme`, `notification_settings` (JSONB) |
+| **Organization** | Enterprise SSO workspace | `org_id` (PK), `name`, `domain`, `sso_config` (JSONB: OIDC/SAML2 settings), `branding` (JSONB), `subscription_id` (FK) |
+| **OrgMember** | User-organization membership | `org_id` (FK), `user_id` (FK), `role` (ADMIN/MEMBER), `joined_at` |
+| **Room** | Estimation session | `room_id` (PK, nanoid 6-char), `owner_id` (FK nullable for anonymous), `org_id` (FK nullable), `title`, `privacy_mode` (PUBLIC/INVITE_ONLY/ORG_RESTRICTED), `config` (JSONB: deck, rules, timer), `created_at`, `last_active_at` |
+| **RoomParticipant** | Active session participants | `room_id` (FK), `user_id` (FK nullable), `anonymous_id`, `display_name`, `role` (HOST/VOTER/OBSERVER), `connected_at` |
+| **Vote** | Individual estimation vote | `vote_id` (PK), `room_id` (FK), `round_number`, `participant_id`, `card_value`, `voted_at` |
+| **Round** | Estimation round within session | `round_id` (PK), `room_id` (FK), `round_number`, `story_title`, `started_at`, `revealed_at`, `average`, `median`, `consensus_reached` |
+| **SessionHistory** | Completed session record | `session_id` (PK), `room_id` (FK), `started_at`, `ended_at`, `total_rounds`, `total_stories`, `participants` (JSONB array), `summary_stats` (JSONB) |
+| **Subscription** | Stripe subscription record | `subscription_id` (PK), `stripe_subscription_id`, `entity_id` (user_id or org_id), `entity_type` (USER/ORG), `tier` (FREE/PRO/PRO_PLUS/ENTERPRISE), `status`, `current_period_end`, `canceled_at` |
+| **PaymentHistory** | Payment transaction log | `payment_id` (PK), `subscription_id` (FK), `stripe_invoice_id`, `amount`, `currency`, `status`, `paid_at` |
+| **AuditLog** | Compliance and security audit trail | `log_id` (PK), `org_id` (FK nullable), `user_id` (FK nullable), `action`, `resource_type`, `resource_id`, `ip_address`, `user_agent`, `timestamp` |
 
-Merges to `main` branch trigger automated deployments:
+#### Database Indexing Strategy
 
-1. **Deploy to Staging:**
-   - Deploy backend Docker image to Kubernetes staging namespace
-   - Deploy frontend build to staging CDN
-   - Run smoke tests against staging environment
-   - If smoke tests pass, mark deployment as successful
+**High-Priority Indexes:**
+- `User(email)` - OAuth login lookups
+- `User(oauth_provider, oauth_subject)` - OAuth subject resolution
+- `Room(owner_id, created_at DESC)` - User's recent rooms query
+- `Room(org_id, last_active_at DESC)` - Organization room listing
+- `RoomParticipant(room_id, connected_at)` - Active participants query
+- `Vote(round_id, participant_id)` - Vote aggregation for reveal
+- `Round(room_id, round_number)` - Round history retrieval
+- `SessionHistory(started_at)` - Partition pruning for date-range queries
+- `Subscription(entity_id, entity_type, status)` - Active subscription lookups
+- `AuditLog(org_id, timestamp DESC)` - Enterprise audit trail queries
 
-2. **Deploy to Production (Manual Approval):**
-   - Product owner reviews staging deployment
-   - Manual approval gate in GitHub Actions
-   - Deploy backend to production Kubernetes namespace (rolling update, 0 downtime)
-   - Deploy frontend to production CDN
-   - Run smoke tests against production
-   - Monitor error rates and latency for 30 minutes
-   - Automated rollback if error rate >2x baseline or smoke tests fail
+**Composite Indexes:**
+- `Room(privacy_mode, last_active_at DESC) WHERE deleted_at IS NULL` - Public room discovery
+- `OrgMember(user_id, org_id) WHERE role = 'ADMIN'` - Admin permission checks
+- `Vote(round_id, voted_at) INCLUDE (card_value)` - Covering index for vote ordering
 
-**Deployment Strategy:**
-- **Rolling Update:** MaxSurge=1, MaxUnavailable=0 (ensures at least 2 pods always available)
-- **Canary Deployment (Future):** Route 10% traffic to new version, monitor for 15 minutes, gradually increase to 100%
-- **Blue/Green Deployment (Future):** Maintain two full environments, instant traffic switch via load balancer
+**Partitioning:**
+- `SessionHistory` partitioned by `started_at` (monthly range partitions)
+- `AuditLog` partitioned by `timestamp` (monthly range partitions)
+- Automated partition creation via scheduled job or pg_partman extension
 ```
 
-### Context: CI/CD Pipeline Details from Architecture (from 05_Operational_Architecture.md)
+### Context: key-components (from 01_Plan_Overview_and_Setup.md)
 
 ```markdown
-**CI/CD Pipeline (GitHub Actions):**
-
-**Stages:**
-1. **Build & Test:**
-   - Checkout code, setup Java 17
-   - Maven build with unit tests
-   - Integration tests using Testcontainers (PostgreSQL, Redis)
-   - SonarQube code quality gate
-2. **Container Build:**
-   - Docker build multi-stage image
-   - Tag with Git SHA and semantic version
-   - Push to ECR
-3. **Security Scan:**
-   - Trivy vulnerability scan on Docker image
-   - Fail pipeline if HIGH/CRITICAL vulnerabilities found
-4. **Deploy to Staging:**
-   - Helm upgrade staging environment with new image tag
-   - Run smoke tests (health checks, critical API endpoints)
-   - Playwright E2E tests for WebSocket flows
-5. **Manual Approval Gate:**
-   - Product owner review and approval for production deploy
-6. **Deploy to Production:**
-   - Helm upgrade production with blue/green strategy
-   - Gradual traffic shift (10% → 50% → 100% over 30 minutes)
-   - Automated rollback if error rate exceeds baseline by 2x
-```
-
-### Context: Testing Strategy (from 03_Verification_and_Glossary.md)
-
-```markdown
-**Unit Testing:**
-
-**Scope:** Individual classes and methods in isolation (services, utilities, validators)
-
-**Framework:** JUnit 5 (backend), Jest/Vitest (frontend)
-
-**Coverage Target:** >90% code coverage for service layer, >80% for overall codebase
-
-**Approach:**
-- Mock external dependencies (repositories, adapters, external services) using Mockito
-- Test business logic thoroughly (happy paths, edge cases, error scenarios)
-- Fast execution (<5 minutes for entire unit test suite)
-- Run on every developer commit and in CI pipeline
-
-**Acceptance Criteria:**
-- All unit tests pass (`mvn test`, `npm run test:unit`)
-- Coverage reports meet targets (verify with JaCoCo, Istanbul)
-- No flaky tests (consistent results across runs)
-
----
-
-**Integration Testing:**
-
-**Scope:** Multiple components working together with real infrastructure (database, cache, message queue)
-
-**Framework:** Quarkus Test (`@QuarkusTest`), Testcontainers, REST Assured
-
-**Coverage Target:** Critical integration points (API → Service → Repository → Database)
-
-**Approach:**
-- Use Testcontainers for PostgreSQL and Redis (real instances, not mocks)
-- Test REST endpoints end-to-end (request → response with database persistence)
-- Test WebSocket flows (connection → message handling → database → Pub/Sub broadcast)
-- Verify transaction boundaries and data consistency
-- Run in CI pipeline (longer execution time acceptable: 10-15 minutes)
-
-**Acceptance Criteria:**
-- All integration tests pass (`mvn verify`)
-- Testcontainers start successfully (PostgreSQL, Redis)
-- Database schema migrations execute correctly in tests
-- No test pollution (each test isolated with database cleanup)
-```
-
-### Context: Security Testing (from 03_Verification_and_Glossary.md)
-
-```markdown
-**Security Testing:**
-
-**Scope:** Identify vulnerabilities and validate security controls
-
-**Tools:**
-- **SAST (Static Analysis):** SonarQube code scanning
-- **Dependency Scanning:** Snyk or Dependabot for vulnerable dependencies
-- **Container Scanning:** Trivy for Docker image vulnerabilities
-- **DAST (Dynamic Analysis):** OWASP ZAP scan against running application
-
-**Test Areas:**
-- Authentication (JWT validation, OAuth flows, session management)
-- Authorization (RBAC enforcement, tier gating, org admin checks)
-- Input validation (SQL injection, XSS, command injection)
-- Rate limiting (brute force protection)
-- Security headers (HSTS, CSP, X-Frame-Options)
-
-**Acceptance Criteria:**
-- No HIGH or CRITICAL vulnerabilities in dependency scan
-- SonarQube security rating A or B
-- OWASP ZAP scan shows no HIGH risk findings (or findings documented with mitigation plan)
-- Penetration test report (if required for Enterprise customers) shows acceptable risk level
+*   **Key Components/Services:**
+    *   **REST Controllers:** HTTP endpoints for user management, room CRUD, subscriptions, reporting
+    *   **WebSocket Handlers:** Real-time connection managers for `/ws/room/{roomId}` endpoints
+    *   **Domain Services:**
+        *   User Service (registration, profile, preferences)
+        *   Room Service (creation, configuration, join logic)
+        *   Voting Service (vote casting, reveal, consensus calculation)
+        *   Billing Service (subscription tier enforcement, Stripe integration)
+        *   Reporting Service (session aggregation, analytics, export)
+        *   Organization Service (SSO config, member management, admin controls)
+    *   **Repository Layer:** Panache repositories for User, Room, Vote, Session, Subscription, Organization entities
+    *   **Integration Adapters:** OAuth2 client, SSO adapter, Stripe adapter, Email adapter
+    *   **Event Publisher/Subscriber:** Redis Pub/Sub client for WebSocket message broadcasting
+    *   **Background Worker:** Async job processor for report generation, email dispatch
 ```
 
 ---
@@ -206,79 +136,90 @@ The following analysis is based on my direct review of the current codebase. Use
 ### Relevant Existing Code
 
 *   **File:** `backend/pom.xml`
-    *   **Summary:** This is the Maven POM file for the backend Quarkus application. It defines Java 17 as the compilation target, includes Quarkus 3.15.1 platform, and has comprehensive dependencies for reactive REST, WebSockets, database access, OAuth2, JWT, metrics, health checks, and testing (JUnit 5, REST Assured).
-    *   **Recommendation:** You MUST use `mvn clean verify` as specified in the task. This will run both unit tests (Surefire) and integration tests (Failsafe). The POM already includes the necessary plugins (Maven Compiler, Surefire, Failsafe, Quarkus). You SHOULD NOT modify the POM file for this task unless there are missing dependencies for SonarQube or Trivy integration.
-    *   **Note:** The POM includes `quarkus-test-vertx` and `rest-assured` for testing, which are required for integration tests with Testcontainers.
+    *   **Summary:** This file defines the Maven project configuration with Quarkus 3.15.1 and includes the `quarkus-hibernate-reactive-panache` dependency which is required for reactive Panache repositories.
+    *   **Recommendation:** You MUST NOT modify this file - all required dependencies are already configured (Hibernate Reactive Panache, PostgreSQL reactive driver).
 
-*   **File:** `frontend/package.json`
-    *   **Summary:** This is the npm package manifest for the React TypeScript frontend built with Vite. It includes scripts: `dev` (Vite dev server), `build` (TypeScript compile + Vite build), `lint` (ESLint), and `preview` (Vite preview). Dependencies include React 18, React Router, Headless UI, Zustand, React Query, Zod, date-fns, and Recharts.
-    *   **Recommendation:** You MUST use `npm ci` (not `npm install`) for CI environments to ensure reproducible builds. You MUST run `npm run lint` and `npm run build` as specified. The task mentions `npm run test` but the current package.json does NOT have a test script defined. You SHOULD add a test script placeholder (e.g., `"test": "echo \"No tests yet\" && exit 0"`) or skip test step initially until frontend tests are implemented in later iterations.
-    *   **Warning:** The package.json is missing a `test` script. This will cause the frontend CI workflow to fail if you include `npm run test`. You must either add a placeholder test script or comment out the test step in the workflow.
+*   **File:** `backend/src/main/java/com/scrumpoker/domain/user/User.java`
+    *   **Summary:** This is a JPA entity class extending `PanacheEntityBase` with UUID primary key (`userId`), email, OAuth fields, subscription tier, and soft delete support via `deletedAt`.
+    *   **Recommendation:** You MUST import this entity class in `UserRepository`. Note that the primary key field is named `userId` (not `id`), which is important for repository generic type parameters.
 
-*   **File:** `.github/workflows/ci.yml` (existing workflow)
-    *   **Summary:** There is an existing basic CI workflow that uses docker-compose to run tests and SonarQube analysis. It runs `docker-compose run server mvn test` and `docker-compose run server mvn verify sonar:sonar`.
-    *   **Recommendation:** You SHOULD replace or rename this existing workflow because it relies on docker-compose with a "server" service that doesn't exist in the current docker-compose.yml. The new backend-ci.yml workflow should be standalone and not depend on the legacy docker-compose setup. You can either delete the old ci.yml or rename it to ci.yml.legacy for reference.
-    *   **Note:** The existing workflow already includes SonarQube integration with `sonar:sonar` using a `SONAR_TOKEN` secret. You SHOULD reuse this approach in your new workflow.
+*   **File:** `backend/src/main/java/com/scrumpoker/domain/room/Room.java`
+    *   **Summary:** This entity has a **non-UUID primary key** - it uses a 6-character String `roomId` field instead of UUID. This is critical for repository implementation.
+    *   **Recommendation:** You MUST use `PanacheRepositoryBase<Room, String>` (not UUID) for RoomRepository since the primary key is a String.
 
-*   **File:** `docker-compose.yml`
-    *   **Summary:** This file defines infrastructure services (PostgreSQL, Redis 3-node cluster, Prometheus, Grafana) for local development. It does NOT define application containers or a "server" service, which means the old ci.yml workflow is broken.
-    *   **Recommendation:** The new CI workflows should NOT use docker-compose for running the application. Instead, they should use Testcontainers (which is already configured in the backend) for integration tests. The CI workflows only need to set up Java/Node.js and run Maven/npm commands directly.
+*   **File:** `backend/src/main/java/com/scrumpoker/domain/room/Vote.java`
+    *   **Summary:** This entity demonstrates proper relationships with `@ManyToOne` associations to `Round` and `RoomParticipant` entities, with UUID primary key `voteId`.
+    *   **Recommendation:** When implementing `VoteRepository`, you can add custom finder methods that leverage these relationships (e.g., `findByRoundId`).
 
-*   **File:** `README.md`
-    *   **Summary:** The README currently documents the project setup with docker-compose, Quarkus dev mode, monitoring setup, and basic usage instructions. It does NOT have any GitHub Actions status badges.
-    *   **Recommendation:** You MUST add workflow status badges to the README at the top of the file. The badge format should be: `![Backend CI](https://github.com/OWNER/REPO/workflows/Backend%20CI/badge.svg)` and `![Frontend CI](https://github.com/OWNER/REPO/workflows/Frontend%20CI/badge.svg)`. You can use a placeholder like `YOUR_GITHUB_ORG` that users should replace.
+*   **File:** `backend/src/main/java/com/scrumpoker/domain/billing/Subscription.java`
+    *   **Summary:** This entity shows a polymorphic pattern using `entity_id` and `entity_type` fields to reference either User or Organization entities.
+    *   **Recommendation:** For `SubscriptionRepository`, you SHOULD add custom finders like `findActiveByEntityIdAndType(UUID entityId, EntityType entityType, SubscriptionStatus status)` to handle this polymorphic pattern.
+
+*   **File:** `backend/src/main/java/com/scrumpoker/repository/package-info.java`
+    *   **Summary:** This package documentation indicates that all repositories should extend `PanacheRepositoryBase` and use reactive Mutiny types (`Uni`, `Multi`).
+    *   **Recommendation:** You MUST follow this convention - use `PanacheRepositoryBase<Entity, IdType>` as the base interface and return reactive types.
+
+*   **Directory:** `backend/src/main/java/com/scrumpoker/domain/`
+    *   **Summary:** All entity classes are organized in domain subpackages: `user/`, `room/`, `billing/`, `organization/`. I confirmed 12 entity classes exist across these packages.
+    *   **Recommendation:** You MUST create one repository for each entity class, matching the entity names exactly.
 
 ### Implementation Tips & Notes
 
-*   **Tip:** For SonarQube integration in the backend CI workflow, you SHOULD use the Maven SonarQube plugin with `mvn sonar:sonar`. The existing ci.yml workflow shows the pattern: use `-Dsonar.login=${{ secrets.SONAR_TOKEN }}` and `-Dsonar.host.url="https://sonarcloud.io"`. You'll need to configure the `SONAR_TOKEN` secret in GitHub repository settings (or document this requirement).
+*   **Tip:** Quarkus Panache repositories using `PanacheRepositoryBase` pattern MUST be annotated with `@ApplicationScoped` to be CDI beans injectable via `@Inject`.
 
-*   **Tip:** For Trivy container scanning, you'll need to build a Docker image first. However, the current project structure doesn't have a Dockerfile in the backend directory. You have two options:
-    1. Create a basic Dockerfile for the Quarkus application (recommended for completeness).
-    2. Skip the Trivy scan step for now and document it as a TODO, since the task says "even with minimal code" acceptance criteria.
+*   **Tip:** All custom finder methods MUST return reactive types:
+    - Single entity: `Uni<Entity>` (may be empty, so consider `Uni<Optional<Entity>>` or nullable)
+    - Multiple entities: `Multi<Entity>`
+    - For counting operations: `Uni<Long>`
 
-    For MVP, I recommend option 2: add a comment in the workflow that Trivy scanning will be added once Dockerfile is created in I8.T1.
-
-*   **Note:** The frontend package.json is missing a `test` script. You MUST either:
-    1. Add `"test": "echo \"No tests implemented yet\" && exit 0"` to package.json scripts.
-    2. Comment out or remove the `npm run test` step from the frontend-ci.yml workflow.
-
-    Option 1 is preferred because it makes the workflow complete and documents the missing tests.
-
-*   **Note:** GitHub Actions uses `ubuntu-latest` as the default runner. You SHOULD use specific versions like `ubuntu-22.04` for reproducibility, but `ubuntu-latest` is acceptable for MVP.
-
-*   **Warning:** Testcontainers requires Docker to be available in the CI environment. GitHub Actions runners have Docker pre-installed, so you don't need to configure it explicitly. However, integration tests may take 5-10 minutes to run due to container startup. You SHOULD set a reasonable timeout for test steps (e.g., `timeout-minutes: 15`).
-
-*   **Tip:** For uploading build artifacts (frontend build output), use the GitHub Actions `actions/upload-artifact@v3` action. The artifact should include the `frontend/dist` directory after `npm run build` completes.
-
-*   **Tip:** Workflow triggers should be:
-    ```yaml
-    on:
-      push:
-        branches: [ main ]
-      pull_request:
-        branches: [ main ]
+*   **Tip:** Panache provides built-in query methods. The most common pattern for custom finders is:
+    ```java
+    public Uni<User> findByEmail(String email) {
+        return find("email", email).firstResult();
+    }
     ```
-    This ensures workflows run on pushes to main and on pull requests targeting main.
 
-*   **Important:** The acceptance criteria states "even with minimal code" - this means the workflows should be designed to succeed even if there are no tests written yet (e.g., for frontend). The backend already has the entity classes compiled, so `mvn verify` should pass.
+*   **Tip:** For queries excluding soft-deleted records, use:
+    ```java
+    public Multi<Room> findActiveByOwnerId(UUID ownerId) {
+        return find("owner.userId = ?1 and deletedAt is null", ownerId).stream();
+    }
+    ```
 
-### Dockerfile Consideration
+*   **Note:** The Room entity uses a **String primary key** (6-character nanoid), not UUID. This affects the repository generic type parameter - you MUST use `PanacheRepositoryBase<Room, String>`.
 
-The backend doesn't currently have a Dockerfile. For the Trivy scan step, you have options:
+*   **Note:** SessionHistory and AuditLog entities use composite keys (`SessionHistoryId`, `AuditLogId` classes exist). You MUST use these composite key classes as the ID type parameter for their repositories.
 
-1. **Skip Trivy for now**: Add a comment in the workflow explaining that container scanning will be implemented in I8.T1 when the Dockerfile is created. This satisfies "even with minimal code" acceptance criteria.
+*   **Warning:** Some entities have composite primary keys defined in separate classes (e.g., `OrgMemberId`, `AuditLogId`, `SessionHistoryId`). You MUST check each entity's `@Id` annotations and use the correct ID type in the repository generic parameter.
 
-2. **Create a basic Dockerfile**: Add a simple multi-stage Dockerfile based on the architecture requirements (Red Hat UBI with OpenJDK 17). This is more complete but adds scope beyond the task description.
+*   **Warning:** Based on the indexing strategy in the architecture, you SHOULD implement these high-priority custom finder methods:
+    - `UserRepository`: `findByEmail(String)`, `findByOAuthProviderAndSubject(String, String)`
+    - `RoomRepository`: `findActiveByOwnerId(UUID)`, `findByOrgId(UUID)`
+    - `VoteRepository`: `findByRoundId(UUID)`
+    - `RoundRepository`: `findByRoomIdAndRoundNumber(String, Integer)`
+    - `SubscriptionRepository`: `findActiveByEntityIdAndType(UUID, EntityType)`
 
-I recommend option 1 for this task, with a TODO comment in the workflow. The task deliverable says "Trivy security scan for backend Docker image" but the acceptance criteria allows for "even with minimal code", which suggests the workflows should be set up even if not all features are fully functional yet.
+*   **Best Practice:** Always use named parameters or positional parameters (`:paramName` or `?1`) in JPQL queries to prevent SQL injection, even though Panache helps with this.
 
-### GitHub Repository Context
+*   **Best Practice:** Import statements should include:
+    - `io.quarkus.hibernate.reactive.panache.PanacheRepositoryBase`
+    - `jakarta.enterprise.context.ApplicationScoped`
+    - `io.smallrye.mutiny.Uni`
+    - `io.smallrye.mutiny.Multi`
+    - The specific entity class from `com.scrumpoker.domain.*`
 
-The project is at `/Users/tea/dev/github/planning-poker`, which suggests the GitHub repository is likely `tea/planning-poker` or similar. For the status badges in README, you'll need to use a dynamic approach or document that users need to update the badge URLs with their repository path. A better approach is to add badges with a placeholder:
+*   **Critical:** I have verified the entity classes. Here are the correct ID types:
+    - **User**: UUID (`userId`)
+    - **UserPreference**: UUID (`userId` - same as User, it's a 1:1 relationship)
+    - **Organization**: UUID (`orgId`)
+    - **OrgMember**: Composite key using `OrgMemberId` class
+    - **Room**: String (`roomId` - 6 characters)
+    - **RoomParticipant**: UUID (`participantId`)
+    - **Round**: UUID (`roundId`)
+    - **Vote**: UUID (`voteId`)
+    - **SessionHistory**: Composite key using `SessionHistoryId` class
+    - **Subscription**: UUID (`subscriptionId`)
+    - **PaymentHistory**: UUID (`paymentId`)
+    - **AuditLog**: Composite key using `AuditLogId` class
 
-```markdown
-![Backend CI](https://github.com/YOUR_GITHUB_ORG/planning-poker/workflows/Backend%20CI/badge.svg)
-![Frontend CI](https://github.com/YOUR_GITHUB_ORG/planning-poker/workflows/Frontend%20CI/badge.svg)
-```
-
-You should add these with a note that users need to replace `YOUR_GITHUB_ORG` with their GitHub organization/username.
+*   **Critical:** For composite key entities (OrgMember, SessionHistory, AuditLog), you MUST read the composite key class files to understand their structure before implementing the repositories. These likely contain the combination of fields that make up the primary key.
