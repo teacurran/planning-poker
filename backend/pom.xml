@@ -55,6 +55,12 @@
             <artifactId>quarkus-websockets</artifactId>
         </dependency>
 
+        <!-- Scheduler for WebSocket heartbeat -->
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-scheduler</artifactId>
+        </dependency>
+
         <!-- Reactive Database (Hibernate Reactive + Panache) -->
         <dependency>
             <groupId>io.quarkus</groupId>
