@@ -13,57 +13,77 @@ package com.scrumpoker.integration.oauth;
  */
 public class OAuth2AuthenticationException extends RuntimeException {
 
+    /**
+     * OAuth provider name that failed authentication.
+     */
     private final String provider;
+
+    /**
+     * Provider-specific error code.
+     */
     private final String errorCode;
 
     /**
      * Creates a new OAuth2AuthenticationException with a message.
      *
-     * @param message Error message describing the authentication failure
+     * @param errorMessage Error message describing the failure
      */
-    public OAuth2AuthenticationException(String message) {
-        super(message);
+    public OAuth2AuthenticationException(final String errorMessage) {
+        super(errorMessage);
         this.provider = null;
         this.errorCode = null;
     }
 
     /**
-     * Creates a new OAuth2AuthenticationException with a message and cause.
+     * Creates a new OAuth2AuthenticationException
+     * with a message and cause.
      *
-     * @param message Error message describing the authentication failure
-     * @param cause The underlying exception that caused this authentication failure
+     * @param errorMessage Error message describing the failure
+     * @param cause The underlying exception that caused
+     *              this authentication failure
      */
-    public OAuth2AuthenticationException(String message, Throwable cause) {
-        super(message, cause);
+    public OAuth2AuthenticationException(
+            final String errorMessage,
+            final Throwable cause) {
+        super(errorMessage, cause);
         this.provider = null;
         this.errorCode = null;
     }
 
     /**
-     * Creates a new OAuth2AuthenticationException with provider context.
+     * Creates a new OAuth2AuthenticationException
+     * with provider context.
      *
-     * @param message Error message describing the authentication failure
-     * @param provider OAuth provider name (e.g., "google", "microsoft")
+     * @param errorMessage Error message describing the failure
+     * @param providerName OAuth provider name
+     *                     (e.g., "google", "microsoft")
      */
-    public OAuth2AuthenticationException(String message, String provider) {
-        super(message);
-        this.provider = provider;
+    public OAuth2AuthenticationException(
+            final String errorMessage,
+            final String providerName) {
+        super(errorMessage);
+        this.provider = providerName;
         this.errorCode = null;
     }
 
     /**
      * Creates a new OAuth2AuthenticationException with full context.
      *
-     * @param message Error message describing the authentication failure
-     * @param provider OAuth provider name (e.g., "google", "microsoft")
-     * @param errorCode Provider-specific error code
-     * @param cause The underlying exception that caused this authentication failure
+     * @param errorMessage Error message describing the failure
+     * @param providerName OAuth provider name
+     *                     (e.g., "google", "microsoft")
+     * @param providerErrorCode Provider-specific error code
+     * @param cause The underlying exception that caused
+     *              this authentication failure
      */
-    public OAuth2AuthenticationException(String message, String provider,
-                                          String errorCode, Throwable cause) {
-        super(message, cause);
-        this.provider = provider;
-        this.errorCode = errorCode;
+    public OAuth2AuthenticationException(
+            final String errorMessage,
+            final String providerName,
+            final String providerErrorCode,
+            final Throwable cause) {
+        super(errorMessage, cause);
+        this.provider = providerName;
+        this.errorCode = providerErrorCode;
     }
 
     /**
