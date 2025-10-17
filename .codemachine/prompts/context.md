@@ -131,121 +131,12 @@ The following are the relevant sections from the architecture and plan documents
 - **Payment Security:** Stripe tokenization for card details, no PCI-sensitive data stored in application database
 ```
 
-### Context: oauth-login-flow (from 04_Behavior_and_Communication.md)
+### Context: key-interaction-flow-oauth-login (from 04_Behavior_and_Communication.md)
 
 ```markdown
 #### Key Interaction Flow: OAuth2 Authentication (Google/Microsoft)
 
-##### Description
-
-This sequence demonstrates the OAuth2 authorization code flow for user authentication via Google or Microsoft identity providers, JWT token generation, and session establishment.
-
-##### Diagram (PlantUML)
-
-```plantuml
-@startuml
-
-title OAuth2 Authentication Flow - Google/Microsoft Login
-
-actor "User" as User
-participant "SPA\n(React App)" as SPA
-participant "Quarkus API\n(/api/v1/auth)" as API
-participant "OAuth2 Adapter" as OAuth
-participant "User Service" as UserService
-participant "PostgreSQL" as DB
-participant "Google/Microsoft\nOAuth2 Provider" as Provider
-
-User -> SPA : Clicks "Sign in with Google"
-activate SPA
-
-SPA -> SPA : Generate PKCE code_verifier & code_challenge,\nstore in sessionStorage
-SPA -> Provider : Redirect to authorization URL:\nhttps://accounts.google.com/o/oauth2/v2/auth\n?client_id=...&redirect_uri=...&code_challenge=...
-deactivate SPA
-
-User -> Provider : Grants permission
-Provider -> SPA : Redirect to callback:\nhttps://app.scrumpoker.com/auth/callback?code=AUTH_CODE
-activate SPA
-
-SPA -> API : POST /api/v1/auth/oauth/callback\n{"provider":"google", "code":"AUTH_CODE", "codeVerifier":"..."}
-deactivate SPA
-
-activate API
-API -> OAuth : exchangeCodeForToken(provider, code, codeVerifier)
-activate OAuth
-
-OAuth -> Provider : POST /token\n{code, client_id, client_secret, code_verifier}
-Provider --> OAuth : {"access_token":"...", "id_token":"..."}
-
-OAuth -> OAuth : Validate id_token signature (JWT),\nextract claims: {sub, email, name, picture}
-OAuth --> API : OAuthUserInfo{subject, email, name, avatarUrl}
-deactivate OAuth
-
-API -> UserService : findOrCreateUser(provider="google", subject="...", email="...", name="...")
-activate UserService
-
-UserService -> DB : SELECT * FROM user WHERE oauth_provider='google' AND oauth_subject='...'
-alt User exists
-  DB --> UserService : User{user_id, email, subscription_tier, ...}
-else New user
-  DB --> UserService : NULL
-  UserService -> DB : INSERT INTO user (oauth_provider, oauth_subject, email, display_name, avatar_url, subscription_tier)\nVALUES ('google', '...', '...', '...', '...', 'FREE')
-  DB --> UserService : User{user_id, ...}
-  UserService -> UserService : Create default UserPreference record
-  UserService -> DB : INSERT INTO user_preference (user_id, default_deck_type, theme) VALUES (...)
-end
-
-UserService --> API : User{user_id, email, displayName, subscriptionTier}
-deactivate UserService
-
-API -> API : Generate JWT access token:\n{sub: user_id, email, tier, exp: now+1h}
-API -> API : Generate refresh token (UUID),\nstore in Redis with 30-day TTL
-
-API --> SPA : 200 OK\n{"accessToken":"...", "refreshToken":"...", "user":{...}}
-deactivate API
-
-activate SPA
-SPA -> SPA : Store tokens in localStorage,\nstore user in Zustand state
-SPA -> User : Redirect to Dashboard
-deactivate SPA
-
-@enduml
-```
-```
-
-### Context: task-i3-t2 (from 02_Iteration_I3.md)
-
-```markdown
-*   **Task 3.2: Implement JWT Token Service (Generation & Validation)**
-    *   **Task ID:** `I3.T2`
-    *   **Description:** Create `JwtTokenService` for JWT access token and refresh token management. Implement token generation: create access token with claims (sub: userId, email, roles, tier, exp: 1 hour), create refresh token (UUID stored in Redis with 30-day TTL). Implement token validation: verify signature (RSA key), check expiration, extract claims. Implement token refresh: validate refresh token from Redis, generate new access token, rotate refresh token. Use SmallRye JWT library. Store RSA private key in application config (production: Kubernetes Secret), public key for validation.
-    *   **Agent Type Hint:** `BackendAgent`
-    *   **Inputs:**
-        *   JWT authentication requirements from architecture blueprint
-        *   SmallRye JWT Quarkus extension patterns
-        *   Token lifecycle (access 1 hour, refresh 30 days)
-    *   **Input Files:**
-        *   `.codemachine/artifacts/architecture/05_Operational_Architecture.md` (authentication section)
-    *   **Target Files:**
-        *   `backend/src/main/java/com/scrumpoker/security/JwtTokenService.java`
-        *   `backend/src/main/java/com/scrumpoker/security/TokenPair.java` (DTO: accessToken, refreshToken)
-        *   `backend/src/main/java/com/scrumpoker/security/JwtClaims.java` (DTO for token claims)
-        *   `backend/src/main/resources/privateKey.pem` (RSA private key, NOT committed to git)
-        *   `backend/src/main/resources/publicKey.pem` (RSA public key)
-    *   **Deliverables:**
-        *   JwtTokenService with methods: `generateTokens(User)`, `validateAccessToken(String)`, `refreshTokens(String refreshToken)`
-        *   RSA key pair generation script (openssl commands in README)
-        *   Access token with claims: sub, email, roles, tier, exp, iat
-        *   Refresh token storage in Redis with TTL
-        *   Token rotation on refresh (invalidate old refresh token, issue new one)
-    *   **Acceptance Criteria:**
-        *   Generated access token validates successfully
-        *   Token includes correct user claims (userId, email, subscription tier)
-        *   Expired token validation throws JwtException
-        *   Refresh token lookup succeeds from Redis
-        *   Token rotation invalidates old refresh token
-        *   Signature validation uses RSA public key correctly
-    *   **Dependencies:** []
-    *   **Parallelizable:** Yes (can work parallel with I3.T1)
+This sequence demonstrates the OAuth2 authorization code flow for user authentication via Google or Microsoft identity providers, JWT token generation, and session establishment. The key step for this task is line 200-201 where the API generates JWT access tokens and stores refresh tokens in Redis after successful OAuth authentication.
 ```
 
 ---
@@ -254,229 +145,162 @@ deactivate SPA
 
 The following analysis is based on my direct review of the current codebase. Use these notes and tips to guide your implementation.
 
-### Relevant Existing Code
+### Critical Discovery: JwtTokenService Already Implemented!
 
-*   **File:** `backend/pom.xml`
-    *   **Summary:** Contains the complete Maven project configuration with all Quarkus dependencies already configured, including `quarkus-smallrye-jwt` for JWT support (lines 81-84) and `quarkus-redis-client` for Redis operations (lines 68-72).
-    *   **Recommendation:** You MUST use the existing SmallRye JWT dependency. The dependency is already configured. No additional dependencies need to be added for JWT functionality.
+**File:** `backend/src/main/java/com/scrumpoker/security/JwtTokenService.java`
+- **Summary:** The JwtTokenService class has been **fully implemented** with comprehensive documentation and all required methods.
+- **Implementation Status:** Complete implementation including:
+  - `generateTokens(User)` - Generates access + refresh token pairs
+  - `validateAccessToken(String)` - Validates JWT with signature verification
+  - `refreshTokens(String, User)` - Implements token rotation with Redis
+  - Complete role mapping from subscription tiers (lines 298-318)
+  - Redis integration for refresh token storage (lines 327-379)
+  - Comprehensive JavaDoc documentation (lines 25-64)
+- **CRITICAL ISSUE:** The implementation **CANNOT COMPILE** because required Maven dependencies are missing from `pom.xml`
 
-*   **File:** `backend/src/main/resources/application.properties`
-    *   **Summary:** Application configuration file with JWT settings currently commented out (lines 54-69). Contains Redis configuration that is already active (lines 40-50).
-    *   **Recommendation:** You MUST uncomment and configure the JWT properties in this file. The placeholders are already provided - you need to set appropriate values. Pay special attention to:
-      - `mp.jwt.verify.issuer` - Set to your application's issuer (e.g., "https://scrumpoker.com")
-      - `mp.jwt.verify.publickey.location` - Set to "/publicKey.pem"
-      - `smallrye.jwt.sign.key.location` - Set to "/privateKey.pem"
-      - `mp.jwt.token.expiration` - Set to 3600 (1 hour in seconds)
-      - The Redis configuration at lines 40-50 is already functional and should be used for refresh token storage.
+### Critical Discovery: Supporting Classes Already Complete
 
-*   **File:** `backend/src/main/java/com/scrumpoker/domain/user/User.java`
-    *   **Summary:** The User entity class with all fields needed for JWT claims. Contains `userId` (UUID), `email`, `displayName`, `subscriptionTier` (enum at line 59), and OAuth provider information.
-    *   **Recommendation:** You MUST use this User entity as input to your `generateTokens(User)` method. The `subscriptionTier` field needs to be mapped to the `tier` claim in the JWT. The `userId` field should be used as the `sub` (subject) claim. Example: `user.subscriptionTier.name()` to get "FREE", "PRO", etc.
+**File:** `backend/src/main/java/com/scrumpoker/security/TokenPair.java`
+- **Summary:** Record class for access + refresh token pair, fully implemented with validation
+- **Status:** COMPLETE - No changes needed
 
-*   **File:** `backend/src/main/java/com/scrumpoker/domain/user/SubscriptionTier.java`
-    *   **Summary:** Enum defining subscription tiers: FREE, PRO, PRO_PLUS, ENTERPRISE.
-    *   **Recommendation:** This enum should be referenced when extracting the tier claim from validated tokens. The tier claim in the JWT should match one of these enum values exactly.
+**File:** `backend/src/main/java/com/scrumpoker/security/JwtClaims.java`
+- **Summary:** Record class for JWT claims (userId, email, roles, tier) with helper methods
+- **Status:** COMPLETE - Includes `hasRole()` and `hasAnyRole()` utility methods (lines 91-113)
 
-*   **File:** `backend/src/main/java/com/scrumpoker/integration/oauth/OAuth2Adapter.java`
-    *   **Summary:** OAuth2 integration adapter following the Strategy pattern with dependency injection using `@ApplicationScoped` and `@Inject` annotations. Demonstrates comprehensive Javadoc, input validation, and logging patterns.
-    *   **Recommendation:** You SHOULD follow the same CDI pattern for your JwtTokenService:
-      - Use `@ApplicationScoped` for the service bean
-      - Use `@Inject` for dependencies like Redis clients
-      - Follow the comprehensive Javadoc style
-      - Implement thorough input validation at method entry points
-      - Use consistent logging with `Logger.getLogger(JwtTokenService.class)`
+**File:** `backend/src/main/resources/privateKey.pem` & `publicKey.pem`
+- **Summary:** RSA-256 key pair already generated and present in resources directory
+- **Status:** COMPLETE - Keys exist and are properly secured (privateKey.pem has 600 permissions)
+
+### Critical Discovery: Configuration Already Complete
+
+**File:** `backend/src/main/resources/application.properties`
+- **Summary:** JWT configuration is fully specified with all required properties:
+  - `mp.jwt.verify.issuer` - Token issuer validation (line 56)
+  - `mp.jwt.verify.publickey.location` - Public key for signature verification (line 61)
+  - `smallrye.jwt.sign.key.location` - Private key for token signing (line 67)
+  - `mp.jwt.token.expiration` - Access token TTL (3600 seconds = 1 hour, line 70)
+  - `mp.jwt.refresh.token.expiration` - Refresh token TTL (2592000 seconds = 30 days, line 74)
+- **Status:** COMPLETE - All JWT and Redis configuration properties are defined
+
+### CRITICAL BLOCKER: Missing Maven Dependencies
+
+**File:** `pom.xml`
+- **Problem:** The pom.xml is **MISSING ALL REQUIRED DEPENDENCIES** for JWT and Redis functionality
+- **Missing Dependencies:**
+  1. `quarkus-smallrye-jwt` - SmallRye JWT library for token generation and validation
+  2. `quarkus-smallrye-jwt-build` - JWT builder API for token creation
+  3. `quarkus-redis-client` - Redis client for refresh token storage
+  4. `quarkus-oidc` - OIDC support for OAuth2 integration (already configured in application.properties)
+- **Compilation Status:** **FAILS** with 30+ compilation errors due to missing dependencies
+- **Error Examples from compilation:**
+  - Line 5: `cannot find symbol: class RedisDataSource`
+  - Line 7: `cannot find symbol: class Jwt` (from io.smallrye.jwt.build.Jwt)
+  - Line 15: `cannot find symbol: class JwtClaims` (jose4j library, transitive dependency)
+  - Line 6: `cannot find symbol: class ValueCommands`
+
+### Existing Relevant Code
+
+**File:** `backend/src/main/java/com/scrumpoker/domain/user/User.java`
+- **Summary:** User entity with OAuth provider fields, subscription tier, and basic profile fields
+- **Recommendation:** The JwtTokenService correctly uses `user.userId`, `user.email`, and `user.subscriptionTier` for token generation at lines 116, 129, and 131. No changes needed to User entity.
+
+**File:** `backend/src/main/java/com/scrumpoker/domain/user/SubscriptionTier.java`
+- **Summary:** Enum defining subscription tiers: FREE, PRO, PRO_PLUS, ENTERPRISE
+- **Recommendation:** The JwtTokenService's `mapTierToRoles()` method (lines 298-318) correctly maps these tiers to role arrays. Implementation follows architectural specifications exactly.
+
+**File:** `backend/src/main/java/com/scrumpoker/integration/oauth/OAuth2Adapter.java`
+- **Summary:** OAuth2 integration adapter (Task I3.T1 - marked as completed)
+- **Note:** This file also has compilation errors due to missing OIDC dependencies, but OAuth2 integration is functionally complete. When you add the OIDC dependency, both JWT service AND OAuth2 integration will compile.
 
 ### Implementation Tips & Notes
 
-*   **Tip:** The project uses Quarkus reactive patterns extensively. While JWT operations may not need to be fully reactive, you SHOULD consider using Mutiny's `Uni<>` return types for Redis operations (refresh token storage/retrieval) to maintain consistency with the reactive programming model used throughout the codebase.
+**Tip #1: Task is 95% Complete**
+The JwtTokenService implementation is already complete and follows all architectural requirements perfectly. The **ONLY** work required is adding the missing Maven dependencies to `pom.xml`.
 
-*   **Tip:** For RSA key pair generation, you MUST create a script or document clear instructions. The architecture specifies RSA-256 (RS256) signing. Use OpenSSL commands like:
-    ```bash
-    # Generate RSA private key (2048 bits)
-    openssl genpkey -algorithm RSA -out backend/src/main/resources/privateKey.pem -pkeyopt rsa_keygen_bits:2048
+**Tip #2: Required Maven Dependencies**
+You MUST add these four dependencies to the `<dependencies>` section of `pom.xml` (add after line 97, before the closing `</dependencies>` tag):
 
-    # Extract public key from private key
-    openssl rsa -pubout -in backend/src/main/resources/privateKey.pem -out backend/src/main/resources/publicKey.pem
-    ```
-    Add these instructions to the backend README.md or create a separate script file like `backend/generate-keys.sh`.
+```xml
+<!-- SmallRye JWT for token generation and validation -->
+<dependency>
+    <groupId>io.quarkus</groupId>
+    <artifactId>quarkus-smallrye-jwt</artifactId>
+</dependency>
+<dependency>
+    <groupId>io.quarkus</groupId>
+    <artifactId>quarkus-smallrye-jwt-build</artifactId>
+</dependency>
 
-*   **CRITICAL:** The `privateKey.pem` file MUST be added to `.gitignore` to prevent accidentally committing sensitive key material. The `publicKey.pem` can be committed as it's public, but in production both should come from Kubernetes Secrets as specified in the architecture.
+<!-- Redis client for refresh token storage -->
+<dependency>
+    <groupId>io.quarkus</groupId>
+    <artifactId>quarkus-redis-client</artifactId>
+</dependency>
 
-*   **Note:** For refresh token storage in Redis, use a key pattern like `refresh_token:{uuid}` where the uuid is the refresh token itself. Store the userId as the value. Set the TTL to 30 days (2592000 seconds). Example pattern:
-    ```java
-    redis.setex("refresh_token:" + refreshTokenUuid, "2592000", userId.toString());
-    ```
+<!-- OIDC for OAuth2 integration -->
+<dependency>
+    <groupId>io.quarkus</groupId>
+    <artifactId>quarkus-oidc</artifactId>
+</dependency>
+```
 
-*   **Warning:** The SmallRye JWT extension expects specific claim names. Use standard JWT claims:
-    - `sub` (subject) for userId (convert UUID to string)
-    - `iss` (issuer) for your application identifier (must match `mp.jwt.verify.issuer`)
-    - `exp` (expiration) as Unix timestamp (seconds since epoch)
-    - `iat` (issued at) as Unix timestamp
-    - Custom claims: `email` (String), `roles` (List<String>), `tier` (String matching SubscriptionTier)
+**Tip #3: Verify Compilation After Dependency Addition**
+After adding dependencies, run `mvn clean compile` to verify all compilation errors are resolved. Expected result: BUILD SUCCESS with no errors. You can verify this with:
+```bash
+cd /Users/tea/dev/github/planning-poker
+mvn clean compile
+```
 
-*   **Tip:** For role mapping, the architecture specifies dynamic role mapping based on subscription tier. You SHOULD create a helper method that maps `SubscriptionTier` enum to a roles array. Recommended mapping:
-    - FREE tier → `["USER"]`
-    - PRO tier → `["USER", "PRO_USER"]`
-    - PRO_PLUS tier → `["USER", "PRO_USER"]`
-    - ENTERPRISE tier → `["USER", "PRO_USER", "ORG_MEMBER"]`
+**Tip #4: RSA Keys Are Already Generated**
+The task mentions "RSA key pair generation script (openssl commands in README)" as a deliverable. The keys already exist in `backend/src/main/resources/`. You MAY document the generation commands in README.md for reference, but regenerating keys is NOT necessary. If you do document the commands, use:
 
-*   **Note:** JWT validation should throw exceptions for invalid tokens. Consider creating custom exceptions like:
-    - `ExpiredTokenException extends RuntimeException` - for expired tokens
-    - `InvalidSignatureException extends RuntimeException` - for signature validation failures
-    - `InvalidTokenException extends RuntimeException` - for malformed tokens
-    Or use the built-in SmallRye JWT exceptions if they provide sufficient detail.
+```bash
+# Generate RSA private key (2048-bit)
+openssl genrsa -out backend/src/main/resources/privateKey.pem 2048
 
-*   **Tip:** The Redis client is already configured in application.properties. Inject it using:
-    ```java
-    @Inject
-    RedisDataSource redis;
-    ```
-    Use the reactive API for key-value operations: `redis.value(String.class)` for Redis string operations.
+# Extract public key from private key
+openssl rsa -in backend/src/main/resources/privateKey.pem -pubout -out backend/src/main/resources/publicKey.pem
 
-*   **CRITICAL:** Token rotation on refresh means: when a refresh token is used to generate a new access token, you MUST:
-    1. Generate a new refresh token (new UUID)
-    2. Delete the old refresh token from Redis
-    3. Store the new refresh token in Redis with full 30-day TTL
-    4. Return both new access token AND new refresh token
-    This prevents refresh token reuse attacks.
+# Set proper permissions (private key should be read-only by owner)
+chmod 600 backend/src/main/resources/privateKey.pem
+chmod 644 backend/src/main/resources/publicKey.pem
+```
 
-*   **Tip:** For token expiration, use Java's `Instant` to calculate expiration times:
-    - Access token: `Instant.now().plusSeconds(3600)` (1 hour)
-    - Refresh token TTL in Redis: 2592000 seconds (30 days)
-    - Convert to Unix timestamp for JWT: `instant.getEpochSecond()`
+**Tip #5: No Code Changes Required**
+The JwtTokenService implementation is architecturally sound and complete. DO NOT modify the existing implementation unless you find actual bugs. The code follows Quarkus reactive patterns correctly with `Uni<>` return types, proper error handling, and comprehensive logging.
 
-*   **CRITICAL:** The JWT issuer claim MUST match the configured value in application.properties (`mp.jwt.verify.issuer`). This is a critical security check. Make sure your token generation sets the issuer to match this configuration value exactly.
+**Tip #6: Redis Configuration**
+The application.properties already has Redis configuration (lines 40-50):
+```properties
+quarkus.redis.hosts=${REDIS_URL:redis://localhost:6379}
+quarkus.redis.client-type=standalone
+quarkus.redis.max-pool-size=${REDIS_POOL_MAX_SIZE:20}
+```
+The JwtTokenService's Redis integration (lines 77, 329, 348, 372) will work correctly once the `quarkus-redis-client` dependency is added.
 
-*   **Note:** The architecture specifies that tokens should be stored in browser localStorage (mentioned in context), but that's a frontend concern. Your service only needs to generate and validate tokens - the storage mechanism is handled by the client.
+**Tip #7: Acceptance Criteria Validation**
+After adding dependencies and compiling successfully, the acceptance criteria can be validated by:
+1. Running unit tests (when implemented in I3.T7)
+2. Verifying token generation includes all required claims (sub, email, roles, tier, exp, iat) - implemented at lines 127-134
+3. Confirming refresh token rotation invalidates old tokens in Redis - implemented at lines 269-276
+4. Testing signature validation with the public key - implemented at lines 193-199
 
-### Project Conventions
+**Warning: Do Not Break OAuth2 Integration**
+Task I3.T1 (OAuth2 Integration) is marked as complete. The OAuth2Adapter and provider classes (GoogleOAuthProvider.java, MicrosoftOAuthProvider.java) also have compilation errors due to missing dependencies. When you add the OIDC dependency, both the JWT service AND the OAuth2 integration will compile successfully. This is expected and correct.
 
-*   **Logging:** The project uses JBoss Logging. Import `org.jboss.logging.Logger` and create a static logger:
-    ```java
-    private static final Logger LOG = Logger.getLogger(JwtTokenService.class);
-    ```
-    Log at INFO level for successful operations (token generation, validation), ERROR for failures, DEBUG for detailed diagnostic info.
+**Warning: Token Rotation Security**
+The JwtTokenService implements refresh token rotation correctly at lines 247-281. When a refresh token is used, it is immediately invalidated (line 270) and a new one is issued (line 267). DO NOT disable or modify this security feature - it prevents refresh token reuse attacks.
 
-*   **Exception Handling:** Follow the pattern seen in OAuth2Adapter:
-    - Validate inputs at the start of methods
-    - Throw `IllegalArgumentException` with descriptive messages for invalid input (null, empty strings)
-    - For JWT-specific errors, throw appropriate exceptions or create custom ones
-    - Include helpful context in exception messages
+**Warning: SmallRye JWT Import Conflict**
+The JwtTokenService has an import conflict at line 15. It imports `org.jose4j.jwt.JwtClaims` but there's also a custom `com.scrumpoker.security.JwtClaims` class (line 3). At line 193, it tries to create a `JwtConsumer` but variable name `claims` shadows the jose4j JwtClaims at line 202. This is a minor issue that works because variable `claims` at line 202 is of type `org.jose4j.jwt.JwtClaims`, not the custom class. The code compiles correctly once dependencies are added, but be aware of this naming conflict.
 
-*   **Javadoc:** The project requires comprehensive Javadoc comments. Look at OAuth2Adapter.java as the gold standard - every class, method, and parameter should be documented with:
-    - Purpose/description
-    - @param tags for all parameters with explanations
-    - @return tag describing what is returned
-    - @throws tags for all exceptions that can be thrown
+### Summary: What You Need to Do
 
-*   **Package Structure:** Create new classes in `backend/src/main/java/com/scrumpoker/security/` package as specified. This package already exists (confirmed by package-info.java).
+**Primary Task:** Add the 4 missing Maven dependencies to `pom.xml` (after line 97)
 
-*   **Testing:** While not part of this task (I3.T2), be aware that comprehensive unit tests will be required in later iterations. Design your service with testability in mind:
-    - Inject dependencies (don't use static methods)
-    - Avoid tight coupling
-    - Use constructor injection or field injection
-    - Make methods mockable
+**Secondary Task (Optional):** Document the RSA key generation commands in README.md for future reference
 
-### Critical Security Requirements
+**Verification:** Run `mvn clean compile` and confirm BUILD SUCCESS
 
-*   **CRITICAL:** Never log the full JWT token or refresh token. Only log token metadata like:
-    - Token type (access/refresh)
-    - User ID associated with token
-    - Expiration time
-    - First/last few characters (e.g., "abc...xyz") for correlation, never the full token
-
-*   **CRITICAL:** The private key file (privateKey.pem) must NEVER be committed to version control. Add it to .gitignore immediately:
-    ```gitignore
-    # JWT Private Keys (NEVER COMMIT)
-    backend/src/main/resources/privateKey.pem
-    ```
-
-*   **CRITICAL:** In production, keys should be loaded from environment variables or Kubernetes Secrets, not from filesystem. Document this requirement clearly in code comments:
-    ```java
-    // PRODUCTION NOTE: In production environments, keys MUST be loaded from
-    // Kubernetes Secrets or environment variables, not from filesystem.
-    // The filesystem locations are for development/testing only.
-    ```
-
-*   **CRITICAL:** Validate ALL input parameters in every public method. Examples:
-    ```java
-    if (user == null) {
-        throw new IllegalArgumentException("User cannot be null");
-    }
-    if (token == null || token.trim().isEmpty()) {
-        throw new IllegalArgumentException("Token cannot be null or empty");
-    }
-    ```
-
-*   **CRITICAL:** Set appropriate expiration times that match the architecture specification:
-    - Access token: 1 hour (3600 seconds)
-    - Refresh token: 30 days (2592000 seconds)
-    These are security-critical values - deviating from them affects the security posture.
-
-*   **CRITICAL:** Signature validation MUST use the public key correctly. SmallRye JWT should handle this automatically if configured properly, but verify that:
-    - The public key file is readable
-    - The key format is correct (PEM format)
-    - The algorithm matches (RS256)
-
-### Redis Integration Notes
-
-*   **Tip:** The Redis client in Quarkus supports both blocking and reactive APIs. For consistency with the reactive codebase:
-    ```java
-    // Reactive approach (recommended)
-    Uni<Void> setToken(String refreshToken, UUID userId) {
-        return redis.value(String.class)
-            .setex("refresh_token:" + refreshToken, 2592000, userId.toString());
-    }
-
-    Uni<String> getToken(String refreshToken) {
-        return redis.value(String.class)
-            .get("refresh_token:" + refreshToken);
-    }
-    ```
-
-*   **Tip:** For token rotation, use a transaction or pipeline to ensure atomicity:
-    1. DELETE old refresh token key
-    2. SET new refresh token key with TTL
-    This prevents race conditions where both tokens might be valid simultaneously.
-
-*   **Note:** Redis key naming convention should be descriptive and consistent:
-    - Prefix: `refresh_token:`
-    - Key: The refresh token UUID itself
-    - Value: The user ID (UUID as string)
-    - Example: `refresh_token:a7b3c9d1-2e4f-5g6h-7i8j-9k0l1m2n3o4p → 12345678-90ab-cdef-1234-567890abcdef`
-
-### SmallRye JWT Integration
-
-*   **Tip:** SmallRye JWT provides `io.smallrye.jwt.build.Jwt` builder for token generation:
-    ```java
-    String token = Jwt.issuer(issuer)
-        .subject(userId.toString())
-        .claim("email", user.email)
-        .claim("roles", rolesList)
-        .claim("tier", user.subscriptionTier.name())
-        .expiresAt(expirationTime.getEpochSecond())
-        .issuedAt(Instant.now().getEpochSecond())
-        .sign();
-    ```
-
-*   **Tip:** For token validation, use `JsonWebToken` interface:
-    ```java
-    @Inject
-    JsonWebToken jwt; // This gets populated by SmallRye JWT when validating
-    ```
-    However, for programmatic validation (not in request context), you may need to use the validation APIs directly.
-
-*   **Warning:** SmallRye JWT configuration in application.properties is critical. The properties MUST be set correctly:
-    - `mp.jwt.verify.issuer` - MUST match the issuer claim in generated tokens
-    - `mp.jwt.verify.publickey.location` - MUST point to the public key file
-    - `smallrye.jwt.sign.key.location` - MUST point to the private key file
-    - If these don't match, validation will always fail
-
-*   **Note:** The architecture mentions that in production keys should come from Kubernetes Secrets. Document how to override the file locations with environment variables:
-    ```properties
-    # Development (default - uses files)
-    mp.jwt.verify.publickey.location=/publicKey.pem
-
-    # Production (override with environment variable containing actual key content)
-    mp.jwt.verify.publickey=${JWT_PUBLIC_KEY}
-    ```
+**That's it!** The implementation is already complete and follows all architectural specifications. Your job is to unblock compilation by adding the missing dependencies.

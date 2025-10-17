@@ -12,9 +12,6 @@ import jakarta.inject.Inject;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.eclipse.microprofile.jwt.JsonWebToken;
 import org.jboss.logging.Logger;
-import org.jose4j.jwt.JwtClaims;
-import org.jose4j.jwt.consumer.JwtConsumer;
-import org.jose4j.jwt.consumer.JwtConsumerBuilder;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -168,8 +165,9 @@ public class JwtTokenService {
      * </ul>
      * </p>
      * <p>
-     * <strong>Note:</strong> This method uses blocking I/O wrapped in a Uni for async compatibility.
-     * The SmallRye JWT library handles signature verification and expiration checks automatically.
+     * <strong>Note:</strong> This method uses SmallRye JWT's DefaultJWTParser which automatically
+     * validates the signature using the RSA public key configured in application.properties
+     * (mp.jwt.verify.publickey.location). The parser also verifies expiration and issuer claims.
      * </p>
      *
      * @param token The JWT access token to validate (must not be null or blank)
@@ -187,26 +185,23 @@ public class JwtTokenService {
 
         return Uni.createFrom().item(() -> {
             try {
-                // Parse and validate JWT using jose4j (what SmallRye JWT uses internally)
-                // Note: Actual public key loading and signature verification is handled by
-                // the JwtConsumerBuilder based on the publicKey location configuration
-                JwtConsumer jwtConsumer = new JwtConsumerBuilder()
-                    .setRequireExpirationTime()
-                    .setRequireSubject()
-                    .setExpectedIssuer(issuer)
-                    // Public key verification will be automatic via SmallRye JWT config
-                    .setSkipSignatureVerification() // We'll validate signature via SmallRye separately
-                    .build();
+                // Use SmallRye JWT parser which automatically validates signature using public key
+                // from mp.jwt.verify.publickey.location config property
+                DefaultJWTParser parser = new DefaultJWTParser();
+                JsonWebToken jwt = parser.parse(token);
 
-                // Parse the token to extract claims
-                JwtClaims claims = jwtConsumer.processToClaims(token);
+                // Verify issuer matches expected value
+                if (!issuer.equals(jwt.getIssuer())) {
+                    throw new RuntimeException("Invalid token issuer: expected '" + issuer
+                        + "' but got '" + jwt.getIssuer() + "'");
+                }
 
-                // Extract user claims
-                UUID userId = UUID.fromString(claims.getSubject());
-                String email = claims.getStringClaimValue("email");
+                // Extract claims
+                UUID userId = UUID.fromString(jwt.getSubject());
+                String email = jwt.getClaim("email");
                 @SuppressWarnings("unchecked")
-                List<String> roles = claims.getStringListClaimValue("roles");
-                String tier = claims.getStringClaimValue("tier");
+                List<String> roles = jwt.getClaim("roles");
+                String tier = jwt.getClaim("tier");
 
                 LOG.infof("Access token validated successfully for user: %s", userId);
 

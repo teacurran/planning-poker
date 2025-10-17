@@ -43,7 +43,7 @@
     "acceptance_criteria": "Generated access token validates successfully, Token includes correct user claims (userId, email, subscription tier), Expired token validation throws JwtException, Refresh token lookup succeeds from Redis, Token rotation invalidates old refresh token, Signature validation uses RSA public key correctly",
     "dependencies": [],
     "parallelizable": true,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I3.T3",
