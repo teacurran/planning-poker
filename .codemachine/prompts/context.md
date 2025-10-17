@@ -10,28 +10,25 @@ This is the full specification of the task you must complete.
 
 ```json
 {
-  "task_id": "I3.T5",
+  "task_id": "I3.T6",
   "iteration_id": "I3",
   "iteration_goal": "Implement OAuth2 authentication (Google, Microsoft), JWT token generation/validation, user registration/login flows, and frontend authentication UI to enable secured access to the application.",
-  "description": "Implement React components for authentication flow: `LoginPage` with \"Sign in with Google\" and \"Sign in with Microsoft\" buttons (redirect to OAuth providers with PKCE), `OAuthCallbackPage` to handle OAuth redirect (extract code, call `/api/v1/auth/oauth/callback`, store tokens in localStorage, redirect to dashboard). Create `authStore` (Zustand) to manage authentication state (user, tokens, isAuthenticated). Implement `useAuth` hook for accessing auth state. Create `PrivateRoute` component requiring authentication. Generate and store PKCE code_verifier/code_challenge in sessionStorage.",
+  "description": "Create API client wrapper using React Query integrating authentication. Configure Axios instance with base URL, request interceptor to add `Authorization: Bearer <token>` header from authStore, response interceptor to handle 401 errors (refresh token or logout). Implement token refresh logic: on 401, call `/api/v1/auth/refresh`, update tokens in store, retry original request. Create React Query hooks for common API calls: `useUser(userId)`, `useRooms()`, `useRoomById(roomId)`. Handle loading and error states.",
   "agent_type_hint": "FrontendAgent",
-  "inputs": "OAuth2 flow from architecture blueprint, OpenAPI spec for auth endpoints, React + TypeScript + Zustand patterns",
+  "inputs": "OpenAPI spec for endpoint definitions, React Query patterns, Token refresh flow requirements",
   "input_files": [
     "api/openapi.yaml",
-    ".codemachine/artifacts/architecture/04_Behavior_and_Communication.md"
+    "frontend/src/stores/authStore.ts"
   ],
   "target_files": [
-    "frontend/src/pages/LoginPage.tsx",
-    "frontend/src/pages/OAuthCallbackPage.tsx",
-    "frontend/src/stores/authStore.ts",
-    "frontend/src/hooks/useAuth.ts",
-    "frontend/src/components/auth/PrivateRoute.tsx",
-    "frontend/src/utils/pkce.ts"
+    "frontend/src/services/api.ts",
+    "frontend/src/services/apiHooks.ts",
+    "frontend/src/services/authApi.ts"
   ],
-  "deliverables": "LoginPage with OAuth provider buttons styled with Tailwind, PKCE code_verifier generation (crypto.randomBytes equivalent in browser), OAuth redirect URL construction with code_challenge, OAuthCallbackPage: code extraction → API call → token storage, authStore with state: user, accessToken, refreshToken, isAuthenticated, useAuth hook for components to check authentication status, PrivateRoute redirects unauthenticated users to /login",
-  "acceptance_criteria": "Clicking \"Sign in with Google\" redirects to Google OAuth consent screen, After consent, callback page receives code parameter, Callback page successfully exchanges code for tokens (visible in Network tab), Tokens stored in localStorage, authStore updates with user data, Navigating to /dashboard (PrivateRoute) works when authenticated, Unauthenticated users redirected to /login",
+  "deliverables": "Axios instance configured with baseURL, timeout, Request interceptor adding Authorization header from authStore, Response interceptor detecting 401, triggering token refresh, Token refresh logic: call /refresh API, update authStore, retry request, React Query hooks: useUser, useRooms, useRoomById, Error handling: network errors, 500 server errors",
+  "acceptance_criteria": "API requests include Authorization header when user authenticated, Expired access token triggers refresh automatically, After refresh, original request retries successfully, If refresh fails (invalid refresh token), user logged out and redirected to login, React Query hooks return loading/error/data states correctly, Cache invalidation works (e.g., after room creation, useRooms refetches)",
   "dependencies": [
-    "I3.T3"
+    "I3.T5"
   ],
   "parallelizable": false,
   "done": false
@@ -44,100 +41,112 @@ This is the full specification of the task you must complete.
 
 The following are the relevant sections from the architecture and plan documents, which I found by analyzing the task description.
 
-### Context: key-interaction-flow-oauth-login (from 04_Behavior_and_Communication.md)
+### Context: rest-api-endpoints (from 04_Behavior_and_Communication.md)
 
 ```markdown
-#### Key Interaction Flow: OAuth2 Authentication (Google/Microsoft)
+#### REST API Endpoints Overview
 
-##### Description
+**Authentication & User Management:**
+- `POST /api/v1/auth/oauth/callback` - Exchange OAuth2 code for JWT tokens
+- `POST /api/v1/auth/refresh` - Refresh expired access token
+- `POST /api/v1/auth/logout` - Revoke refresh token
+- `GET /api/v1/users/{userId}` - Retrieve user profile
+- `PUT /api/v1/users/{userId}` - Update profile (display name, avatar)
+- `GET /api/v1/users/{userId}/preferences` - Get user preferences
+- `PUT /api/v1/users/{userId}/preferences` - Update default room settings, theme
 
-This sequence demonstrates the OAuth2 authorization code flow for user authentication via Google or Microsoft identity providers, JWT token generation, and session establishment.
+**Room Management:**
+- `POST /api/v1/rooms` - Create new room (authenticated or anonymous)
+- `GET /api/v1/rooms/{roomId}` - Get room configuration and current state
+- `PUT /api/v1/rooms/{roomId}/config` - Update room settings (host only)
+- `DELETE /api/v1/rooms/{roomId}` - Delete room (owner only)
+- `GET /api/v1/users/{userId}/rooms` - List user's owned rooms
 
-##### Diagram (PlantUML)
+**Subscription & Billing:**
+- `GET /api/v1/subscriptions/{userId}` - Get current subscription status
+- `POST /api/v1/subscriptions/checkout` - Create Stripe checkout session for upgrade
+- `POST /api/v1/subscriptions/{subscriptionId}/cancel` - Cancel subscription (end of period)
+- `POST /api/v1/subscriptions/webhook` - Stripe webhook endpoint (signature verification)
+- `GET /api/v1/billing/invoices` - List payment history
 
-~~~plantuml
-@startuml
+**Reporting & Analytics:**
+- `GET /api/v1/reports/sessions` - List session history (tier-gated pagination, filters)
+- `GET /api/v1/reports/sessions/{sessionId}` - Detailed session report (tier-gated round detail)
+- `POST /api/v1/reports/export` - Generate export job (CSV/PDF), returns job ID
+- `GET /api/v1/jobs/{jobId}` - Poll export job status, retrieve download URL
 
-title OAuth2 Authentication Flow - Google/Microsoft Login
-
-actor "User" as User
-participant "SPA\n(React App)" as SPA
-participant "Quarkus API\n(/api/v1/auth)" as API
-participant "OAuth2 Adapter" as OAuth
-participant "User Service" as UserService
-participant "PostgreSQL" as DB
-participant "Google/Microsoft\nOAuth2 Provider" as Provider
-
-User -> SPA : Clicks "Sign in with Google"
-activate SPA
-
-SPA -> SPA : Generate PKCE code_verifier & code_challenge,\nstore in sessionStorage
-SPA -> Provider : Redirect to authorization URL:\nhttps://accounts.google.com/o/oauth2/v2/auth\n?client_id=...&redirect_uri=...&code_challenge=...
-deactivate SPA
-
-User -> Provider : Grants permission
-Provider -> SPA : Redirect to callback:\nhttps://app.scrumpoker.com/auth/callback?code=AUTH_CODE
-activate SPA
-
-SPA -> API : POST /api/v1/auth/oauth/callback\n{"provider":"google", "code":"AUTH_CODE", "codeVerifier":"..."}
-deactivate SPA
-
-activate API
-API -> OAuth : exchangeCodeForToken(provider, code, codeVerifier)
-activate OAuth
-
-OAuth -> Provider : POST /token\n{code, client_id, client_secret, code_verifier}
-Provider --> OAuth : {"access_token":"...", "id_token":"..."}
-
-OAuth -> OAuth : Validate id_token signature (JWT),\nextract claims: {sub, email, name, picture}
-OAuth --> API : OAuthUserInfo{subject, email, name, avatarUrl}
-deactivate OAuth
-
-API -> UserService : findOrCreateUser(provider="google", subject="...", email="...", name="...")
-activate UserService
-
-UserService -> DB : SELECT * FROM user WHERE oauth_provider='google' AND oauth_subject='...'
-alt User exists
-  DB --> UserService : User{user_id, email, subscription_tier, ...}
-else New user
-  DB --> UserService : NULL
-  UserService -> DB : INSERT INTO user (oauth_provider, oauth_subject, email, display_name, avatar_url, subscription_tier)\nVALUES ('google', '...', '...', '...', '...', 'FREE')
-  DB --> UserService : User{user_id, ...}
-  UserService -> UserService : Create default UserPreference record
-  UserService -> DB : INSERT INTO user_preference (user_id, default_deck_type, theme) VALUES (...)
-end
-
-UserService --> API : User{user_id, email, displayName, subscriptionTier}
-deactivate UserService
-
-API -> API : Generate JWT access token:\n{sub: user_id, email, tier, exp: now+1h}
-API -> API : Generate refresh token (UUID),\nstore in Redis with 30-day TTL
-
-API --> SPA : 200 OK\n{"accessToken":"...", "refreshToken":"...", "user":{...}}
-deactivate API
-
-activate SPA
-SPA -> SPA : Store tokens in localStorage,\nstore user in Zustand state
-SPA -> User : Redirect to Dashboard
-deactivate SPA
-
-@enduml
-~~~
+**Organization Management (Enterprise):**
+- `POST /api/v1/organizations` - Create organization workspace
+- `GET /api/v1/organizations/{orgId}` - Get org settings
+- `PUT /api/v1/organizations/{orgId}/sso` - Configure OIDC/SAML2 settings
+- `POST /api/v1/organizations/{orgId}/members` - Invite member
+- `DELETE /api/v1/organizations/{orgId}/members/{userId}` - Remove member
+- `GET /api/v1/organizations/{orgId}/audit-logs` - Query audit trail
 ```
 
-### Context: OAuth2 Authentication Endpoint (from openapi.yaml)
+### Context: authentication-security (from 05_Operational_Architecture.md)
+
+```markdown
+**Authentication Security:**
+- **JWT Signature:** RS256 (RSA with SHA-256) algorithm, private key stored in Kubernetes Secret
+- **Token Expiration:** Short-lived access tokens (1 hour), refresh tokens rotated on use
+- **OAuth2 State Parameter:** CSRF protection for OAuth flow, state validated on callback
+- **PKCE:** Protects authorization code from interception in browser-based flows
+```
+
+### Context: authentication-mechanisms (from 05_Operational_Architecture.md)
+
+```markdown
+**OAuth2 Social Login (Free/Pro Tiers):**
+- **Providers:** Google OAuth2, Microsoft Identity Platform
+- **Flow:** Authorization Code Flow with PKCE (Proof Key for Code Exchange) for browser-based clients
+- **Implementation:** Quarkus OIDC extension handling token exchange and validation
+- **Token Storage:** JWT access tokens (1-hour expiration) in browser `localStorage`, refresh tokens (30-day expiration) in `httpOnly` secure cookies
+- **User Provisioning:** Automatic user creation on first login with `oauth_provider` and `oauth_subject` as unique identifiers
+- **Profile Sync:** Email, display name, and avatar URL synced from OAuth provider on each login
+```
+
+### Context: api-style (from 04_Behavior_and_Communication.md)
+
+```markdown
+**Primary API Style:** **RESTful JSON API (OpenAPI 3.1 Specification)**
+
+**Rationale:**
+- **Simplicity & Familiarity:** REST over HTTPS provides a well-understood contract for CRUD operations on resources (users, rooms, subscriptions)
+- **Tooling Ecosystem:** OpenAPI specification enables automatic client SDK generation (TypeScript for React frontend), API documentation (Swagger UI), and contract testing
+- **Caching Support:** HTTP semantics (ETags, Cache-Control headers) enable browser and CDN caching for read-heavy endpoints (room configurations, user profiles)
+- **Versioning Strategy:** URL-based versioning (`/api/v1/`) for backward compatibility during iterative releases
+```
+
+### Context: synchronous-rest-pattern (from 04_Behavior_and_Communication.md)
+
+```markdown
+**Use Cases:**
+- User authentication and registration
+- Room creation and configuration updates
+- Subscription management (upgrade, cancellation, payment method updates)
+- Report generation triggers and export downloads
+- Organization settings management
+
+**Pattern Characteristics:**
+- Client blocks waiting for server response (typically <500ms)
+- Transactional consistency guaranteed within single database transaction
+- Idempotency keys for payment operations to prevent duplicate charges
+- Error responses use standard HTTP status codes (4xx client errors, 5xx server errors)
+```
+
+### Context: Refresh Token Endpoint (from openapi.yaml)
 
 ```yaml
-/api/v1/auth/oauth/callback:
+/api/v1/auth/refresh:
   post:
     tags:
       - Authentication
-    summary: Exchange OAuth2 authorization code for JWT tokens
+    summary: Refresh expired access token
     description: |
-      Exchanges OAuth2 authorization code from provider (Google/Microsoft) for access and refresh tokens.
-      Returns JWT access token (15min expiry) and refresh token (30 days).
-    operationId: oauthCallback
-    security: []  # Public endpoint
+      Exchanges refresh token for new access token. Refresh tokens are single-use and rotated on each refresh.
+    operationId: refreshToken
+    security: []  # Uses refresh token, not access token
     requestBody:
       required: true
       content:
@@ -145,134 +154,23 @@ deactivate SPA
           schema:
             type: object
             required:
-              - code
-              - provider
-              - redirectUri
+              - refreshToken
             properties:
-              code:
+              refreshToken:
                 type: string
-                description: Authorization code from OAuth2 provider
-                example: "4/0AX4XfWh..."
-              provider:
-                type: string
-                enum: [google, microsoft]
-                description: OAuth2 provider
-                example: google
-              redirectUri:
-                type: string
-                format: uri
-                description: Redirect URI used in authorization request (must match)
-                example: "https://planningpoker.example.com/auth/callback"
-          example:
-            code: "4/0AX4XfWh..."
-            provider: google
-            redirectUri: "https://planningpoker.example.com/auth/callback"
+                description: Valid refresh token
+                example: "v1.MR5tqKz..."
     responses:
       '200':
-        description: Successfully authenticated
+        description: Token refreshed successfully
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/TokenResponse'
-            example:
-              accessToken: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-              refreshToken: "v1.MR5tqKz..."
-              expiresIn: 900
-              tokenType: "Bearer"
-              user:
-                userId: "123e4567-e89b-12d3-a456-426614174000"
-                email: "alice@example.com"
-                displayName: "Alice Smith"
-                avatarUrl: "https://example.com/avatar.jpg"
-                subscriptionTier: "PRO"
-                createdAt: "2025-01-01T10:00:00Z"
-                updatedAt: "2025-01-10T15:30:00Z"
-```
-
-### Context: TokenResponse Schema (from openapi.yaml)
-
-```yaml
-TokenResponse:
-  type: object
-  required:
-    - accessToken
-    - refreshToken
-    - expiresIn
-    - tokenType
-    - user
-  properties:
-    accessToken:
-      type: string
-      description: JWT access token (15min expiry)
-      example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-    refreshToken:
-      type: string
-      description: Refresh token (30 days expiry, single-use)
-      example: "v1.MR5tqKz..."
-    expiresIn:
-      type: integer
-      description: Access token TTL in seconds
-      example: 900
-    tokenType:
-      type: string
-      description: Token type (always "Bearer")
-      example: "Bearer"
-    user:
-      $ref: '#/components/schemas/UserDTO'
-```
-
-### Context: UserDTO Schema (from openapi.yaml)
-
-```yaml
-UserDTO:
-  type: object
-  required:
-    - userId
-    - email
-    - displayName
-    - subscriptionTier
-    - createdAt
-  properties:
-    userId:
-      type: string
-      format: uuid
-      description: User unique identifier
-      example: "123e4567-e89b-12d3-a456-426614174000"
-    email:
-      type: string
-      format: email
-      maxLength: 255
-      description: User email address (unique)
-      example: "alice@example.com"
-    oauthProvider:
-      type: string
-      enum: [google, microsoft]
-      description: OAuth2 provider
-      example: "google"
-    displayName:
-      type: string
-      maxLength: 100
-      description: User display name
-      example: "Alice Smith"
-    avatarUrl:
-      type: string
-      format: uri
-      maxLength: 500
-      nullable: true
-      description: Profile avatar URL
-      example: "https://example.com/avatar.jpg"
-    subscriptionTier:
-      $ref: '#/components/schemas/SubscriptionTier'
-    createdAt:
-      type: string
-      format: date-time
-      description: Account creation timestamp
-      example: "2025-01-01T10:00:00Z"
-    updatedAt:
-      type: string
-      format: date-time
-      description: Last profile update timestamp
-      example: "2025-01-10T15:30:00Z"
+      '401':
+        $ref: '#/components/responses/Unauthorized'
+      '500':
+        $ref: '#/components/responses/InternalServerError'
 ```
 
 ---
@@ -283,136 +181,118 @@ The following analysis is based on my direct review of the current codebase. Use
 
 ### Relevant Existing Code
 
-*   **File:** `backend/src/main/java/com/scrumpoker/api/rest/AuthController.java`
-    *   **Summary:** This file contains the fully implemented backend OAuth2 authentication endpoints. The `/api/v1/auth/oauth/callback` endpoint is ready to receive requests from the frontend.
-    *   **Recommendation:** You MUST call the `POST /api/v1/auth/oauth/callback` endpoint with the exact request body structure shown in the OpenAPI spec: `{code, provider, redirectUri, codeVerifier}`. The provider must be either "google" or "microsoft". The endpoint returns a `TokenResponse` with `accessToken`, `refreshToken`, `expiresIn`, `tokenType`, and `user` object.
-    *   **CRITICAL NOTE:** Looking at the AuthController implementation (lines 113-116), the `codeVerifier` field is validated and required. The OpenAPI spec example doesn't show it, but the backend code explicitly checks for it and returns a 400 error if missing. You MUST include this field in your API request.
+*   **File:** `frontend/src/stores/authStore.ts`
+    *   **Summary:** This file contains the Zustand authentication store that manages user authentication state, access tokens, refresh tokens, and localStorage persistence. It exposes three key actions: `setAuth()` (stores tokens and user data), `clearAuth()` (logs user out), and `loadAuthFromStorage()` (restores session from localStorage on app reload).
+    *   **Recommendation:** You MUST import and use the `useAuthStore` hook from this file in your API client. The store provides the `accessToken` that should be attached to the `Authorization` header. When a token refresh succeeds, you MUST call `setAuth(tokenResponse)` to update the store. When a refresh fails (indicating the user's session is invalid), you MUST call `clearAuth()` to log them out.
 
-*   **File:** `frontend/src/App.tsx`
-    *   **Summary:** This is the main React application component using React Router v6. It already has routes defined for `/`, `/room/:roomId`, and `/dashboard`.
-    *   **Recommendation:** You MUST add new routes for `/login` (LoginPage) and `/auth/callback` (OAuthCallbackPage). You SHOULD wrap the `/dashboard` route with the `PrivateRoute` component you'll create.
+*   **File:** `frontend/src/hooks/useAuth.ts`
+    *   **Summary:** This is a convenience hook that provides access to the authentication store's state and actions. It exports: `user`, `accessToken`, `refreshToken`, `isAuthenticated`, `setAuth`, `clearAuth`, and `loadAuthFromStorage`.
+    *   **Recommendation:** You SHOULD NOT directly use this hook in the API client layer (services/api.ts) because React hooks cannot be called outside React components. Instead, directly import `useAuthStore` from the store file and use `.getState()` to access the state imperatively. However, you WILL use this hook in your React Query hooks (apiHooks.ts) to access authentication state within React components.
+
+*   **File:** `frontend/src/types/auth.ts`
+    *   **Summary:** This file defines TypeScript interfaces matching the OpenAPI specification, including: `UserDTO`, `TokenResponse`, `OAuthCallbackRequest`, and `ErrorResponse`. These types ensure type safety for API requests and responses.
+    *   **Recommendation:** You MUST import and use the `TokenResponse` type for the refresh endpoint response. You MUST import and use the `UserDTO` type for user-related API responses. You SHOULD reuse the `ErrorResponse` type for error handling logic.
+
+*   **File:** `api/openapi.yaml`
+    *   **Summary:** This is the comprehensive OpenAPI 3.1 specification defining all REST API endpoints, request/response schemas, authentication requirements, and error codes. Key endpoints for this task: `/api/v1/auth/refresh` (POST, refreshes access token), `/api/v1/users/{userId}` (GET, retrieves user profile), `/api/v1/rooms` (POST, creates room; GET list via `/api/v1/users/{userId}/rooms`), `/api/v1/rooms/{roomId}` (GET, retrieves room details).
+    *   **Recommendation:** You MUST reference this specification when implementing API calls. All request payloads and response structures MUST match the defined schemas. Error handling MUST align with the documented error codes (400, 401, 403, 404, 500).
+
+*   **File:** `frontend/vite.config.ts`
+    *   **Summary:** This configuration file defines path aliases for the project (e.g., `@/services`, `@/stores`, `@/types`) and sets up a proxy for API calls during development (`/api` proxies to `http://localhost:8080`).
+    *   **Recommendation:** You MUST use the base URL `/api/v1` for your Axios instance (NOT the full `http://localhost:8080`), as the Vite dev server proxy will handle routing during development. In production, the base URL should be configurable via environment variable.
 
 *   **File:** `frontend/package.json`
-    *   **Summary:** The project already has all required dependencies installed: React 18, React Router v6.20, Zustand 4.4, React Query 5.12, and Tailwind CSS 3.3.
-    *   **Recommendation:** You do NOT need to install any additional packages. All dependencies required for this task (Zustand for state management, React Router for navigation, Tailwind for styling) are already present.
-
-*   **File:** `frontend/src/pages/HomePage.tsx`
-    *   **Summary:** This is an example page component using Tailwind CSS classes and the `@/` path alias for imports. It demonstrates the project's styling conventions.
-    *   **Recommendation:** You SHOULD follow the same Tailwind styling patterns used here: `dark:` variants for dark mode, responsive breakpoints like `md:`, and utility classes for spacing/colors. The `@/` path alias is already configured and working (see import on line 2).
-
-*   **File:** `frontend/src/components/common/Button.tsx`
-    *   **Summary:** A reusable Button component exists with variant support (primary, secondary).
-    *   **Recommendation:** You SHOULD reuse this Button component for the "Sign in with Google" and "Sign in with Microsoft" buttons on the LoginPage. Import it with `import Button from '@/components/common/Button';`.
+    *   **Summary:** The project has `@tanstack/react-query` version `^5.12.0` installed for data fetching and caching. It also has `zustand` for state management, and `zod` for schema validation. Axios is NOT yet installed.
+    *   **Recommendation:** You MUST install `axios` as a dependency (`npm install axios`) before implementing the API client. The project already has React Query installed, so you can proceed with creating query hooks immediately after installing Axios.
 
 ### Implementation Tips & Notes
 
-*   **Tip:** The backend API is running at `http://localhost:8080` (as shown in openapi.yaml servers configuration). When making API calls from the frontend during development, you'll need to either:
-    1. Configure a proxy in `vite.config.ts` to forward `/api` requests to `http://localhost:8080`, OR
-    2. Use the full URL `http://localhost:8080/api/v1/auth/oauth/callback` in your API client
+*   **CRITICAL:** The task description specifies that you need to handle 401 errors by refreshing the token and retrying the original request. This is a critical piece of logic. You SHOULD implement a response interceptor that: (1) detects 401 status codes, (2) calls the `/api/v1/auth/refresh` endpoint with the stored `refreshToken`, (3) updates the auth store with the new tokens via `setAuth()`, (4) retries the original request with the new access token. If the refresh fails, you MUST call `clearAuth()` and potentially redirect to the login page (though redirection may need to be handled at the component level).
 
-    I recommend option 1 (proxy) for cleaner code.
+*   **CRITICAL:** The OpenAPI spec shows that the `/api/v1/auth/refresh` endpoint expects a `refreshToken` in the request body as `{"refreshToken": "v1.MR5tqKz..."}`, NOT in a cookie (despite the architecture document's mention of "httpOnly secure cookies"). You MUST use the refresh token from the authStore (which is in localStorage) and send it in the request body.
 
-*   **Note:** PKCE (Proof Key for Code Exchange) is required for the OAuth2 flow. You need to generate a `code_verifier` (random string, 43-128 characters) and compute a `code_challenge` (base64url-encoded SHA-256 hash of the verifier). The browser's `crypto.subtle.digest()` API can be used for SHA-256 hashing.
+*   **CRITICAL:** React Query version 5 (which is installed in this project) introduced breaking changes from version 4. The query hooks MUST use the new API: `useQuery({ queryKey: [...], queryFn: async () => {...} })` instead of the old `useQuery([...], async () => {...})` syntax. Ensure you use the correct v5 syntax.
 
-*   **Note:** The OAuth2 redirect flow works as follows:
-    1. User clicks "Sign in with Google" on LoginPage
-    2. Frontend generates PKCE verifier/challenge, stores verifier in sessionStorage
-    3. Frontend redirects to Google's authorization URL with `client_id`, `redirect_uri`, `code_challenge`, `response_type=code`, `scope=openid email profile`
-    4. User grants permission on Google's consent screen
-    5. Google redirects back to `http://localhost:5173/auth/callback?code=AUTH_CODE`
-    6. OAuthCallbackPage extracts code from URL params, retrieves verifier from sessionStorage
-    7. OAuthCallbackPage calls `POST /api/v1/auth/oauth/callback` with code, provider, redirectUri, codeVerifier
-    8. Backend returns tokens and user data
-    9. Frontend stores tokens in localStorage, updates authStore
-    10. Frontend redirects to /dashboard
+*   **Tip:** The Axios request interceptor should check if the user is authenticated before adding the `Authorization` header. This allows unauthenticated requests (e.g., anonymous room creation) to proceed without a token. You can check `useAuthStore.getState().isAuthenticated` or simply check if `accessToken` exists.
 
-*   **Warning:** You will need to configure OAuth2 client IDs for Google and Microsoft in the backend's `application.properties`. For development, you can use test/mock values, but the OAuth redirect URLs must match exactly what's configured in the OAuth provider's console. The redirect URI should be `http://localhost:5173/auth/callback` for local development.
+*   **WARNING:** Be very careful with the token refresh retry logic to avoid infinite loops. You MUST track which requests are refresh attempts and NOT retry those if they fail with a 401. Otherwise, a failed refresh will trigger another refresh, which will fail and trigger another refresh, ad infinitum. A common pattern is to use a flag like `_retry: true` on the Axios request config to mark retried requests, or use a separate Axios instance for the refresh call that doesn't use the interceptor.
 
-*   **Tip:** For Zustand store, create a simple state structure:
-    ```typescript
-    interface AuthState {
-      user: UserDTO | null;
-      accessToken: string | null;
-      refreshToken: string | null;
-      isAuthenticated: boolean;
-      setAuth: (tokens: TokenResponse) => void;
-      clearAuth: () => void;
-    }
-    ```
-    Store this in `frontend/src/stores/authStore.ts` and use `create()` from Zustand. The store should persist tokens to localStorage in the `setAuth` action and load from localStorage on initialization.
+*   **Tip:** For React Query cache invalidation, you SHOULD use the `useMutation` hook from React Query for write operations (POST, PUT, DELETE). In the mutation's `onSuccess` callback, you can call `queryClient.invalidateQueries({ queryKey: ['rooms'] })` to trigger a refetch of the rooms list after creating a new room. Make sure to pass the `queryClient` instance to your hooks (via `useQueryClient()` from `@tanstack/react-query`).
 
-*   **Tip:** For the PrivateRoute component, check `isAuthenticated` from the authStore. If false, use `<Navigate to="/login" />` from React Router v6 to redirect. Example pattern:
-    ```typescript
-    const PrivateRoute: React.FC<{children: React.ReactNode}> = ({children}) => {
-      const isAuthenticated = useAuth(state => state.isAuthenticated);
-      return isAuthenticated ? <>{children}</> : <Navigate to="/login" />;
-    };
-    ```
+*   **Note:** The project uses TypeScript with strict mode enabled. You MUST ensure all type definitions are correct and all function return types are explicitly declared. The linter is configured to report unused disable directives, so avoid adding `// @ts-ignore` comments unless absolutely necessary.
 
-*   **Security Note:** Store tokens in `localStorage` as specified in the task, but be aware this has XSS vulnerability implications. In production, consider using httpOnly cookies or more secure storage mechanisms. For this task, localStorage is acceptable as it matches the architectural design.
+*   **Tip:** The API base URL should be configurable. You SHOULD read it from an environment variable (e.g., `import.meta.env.VITE_API_BASE_URL`) with a fallback to `/api/v1` for development. This allows the frontend to point to different backend instances in staging vs. production. Note that Vite uses `import.meta.env` (NOT `process.env`) for environment variables.
 
-*   **Tip:** When extracting the authorization code from the callback URL, use React Router's `useSearchParams()` hook:
-    ```typescript
-    const [searchParams] = useSearchParams();
-    const code = searchParams.get('code');
-    ```
+*   **Tip:** For error handling, you should create a standardized error handler that can parse the backend's error response format (see `ErrorResponse` schema in openapi.yaml). The backend returns errors as `{error: string, message: string, timestamp: string}`. Your error handler should extract the `message` field for display to users.
 
-*   **Tip:** For PKCE implementation, you can use the Web Crypto API which is available in all modern browsers:
-    ```typescript
-    // Generate verifier: random 128-character base64url string
-    const array = new Uint8Array(96);
-    crypto.getRandomValues(array);
-    const verifier = base64UrlEncode(array);
+*   **Tip:** When implementing the response interceptor for token refresh, you'll need to queue pending requests while the refresh is in progress. Otherwise, if multiple API calls fail with 401 simultaneously (because the token expired), they will all trigger separate refresh attempts. Use a promise that resolves when the refresh completes, and have all pending requests wait for that promise.
 
-    // Generate challenge: SHA-256 hash of verifier
-    const encoder = new TextEncoder();
-    const data = encoder.encode(verifier);
-    const hash = await crypto.subtle.digest('SHA-256', data);
-    const challenge = base64UrlEncode(new Uint8Array(hash));
-    ```
+*   **Note:** The `useRooms()` hook should fetch the list of rooms for the current user. According to the OpenAPI spec, this is done via `GET /api/v1/users/{userId}/rooms`. You'll need to get the `userId` from the auth store's `user` object. Make sure to handle the case where the user is not authenticated (return an empty result or skip the query).
 
-*   **Note:** You'll need to configure OAuth client IDs. For Google OAuth2, the authorization URL is:
-    ```
-    https://accounts.google.com/o/oauth2/v2/auth?
-      client_id=YOUR_CLIENT_ID
-      &redirect_uri=http://localhost:5173/auth/callback
-      &response_type=code
-      &scope=openid%20email%20profile
-      &code_challenge=CODE_CHALLENGE
-      &code_challenge_method=S256
-    ```
-    The `client_id` must match what's configured in the backend `application.properties` file.
+*   **Tip:** React Query provides built-in support for loading and error states. Your hooks should return these states directly from the `useQuery` result: `{ data, isLoading, error, isError }`. Components can then destructure these values to show loading spinners or error messages.
 
-*   **Warning:** The backend AuthController expects the `redirectUri` in the callback request to EXACTLY match the one used in the initial authorization request. Store this in sessionStorage along with the code_verifier so you can include it in the token exchange call.
-
-*   **Tip:** Consider error handling for the OAuth callback:
-    - Check if `code` parameter is present in the URL
-    - Handle cases where `error` parameter is present (user denied consent)
-    - Validate that code_verifier exists in sessionStorage
-    - Handle API call failures with appropriate error messages to the user
+*   **Security Note:** Store tokens in `localStorage` as specified in the architecture design. While this has XSS vulnerability implications, it matches the project's requirements. The refresh token rotation (single-use refresh tokens) provides some mitigation against token theft.
 
 ### Project Structure Observations
 
-*   The frontend uses path aliases configured with `@/` prefix (see HomePage.tsx line 2)
-*   All pages go in `frontend/src/pages/`
-*   Reusable components go in `frontend/src/components/` (organized by domain like `auth/`, `common/`)
+*   The frontend uses path aliases configured with `@/` prefix
+*   Services go in `frontend/src/services/`
 *   Stores go in `frontend/src/stores/`
 *   Hooks go in `frontend/src/hooks/`
-*   Utilities go in `frontend/src/utils/`
+*   Types go in `frontend/src/types/`
 *   The project already has TypeScript configured with strict mode enabled
+*   Vite is configured to proxy `/api` requests to the backend at `http://localhost:8080`
 
-### OAuth Provider Configuration Reference
+### Example Code Patterns
 
-**Google OAuth2:**
-- Authorization endpoint: `https://accounts.google.com/o/oauth2/v2/auth`
-- Required scopes: `openid email profile`
-- Response type: `code`
-- PKCE method: `S256`
+**Axios Instance Configuration:**
+```typescript
+const apiClient = axios.create({
+  baseURL: import.meta.env.VITE_API_BASE_URL || '/api/v1',
+  timeout: 10000,
+  headers: {
+    'Content-Type': 'application/json',
+  },
+});
+```
 
-**Microsoft OAuth2:**
-- Authorization endpoint: `https://login.microsoftonline.com/common/oauth2/v2.0/authorize`
-- Required scopes: `openid email profile`
-- Response type: `code`
-- PKCE method: `S256`
+**Request Interceptor Pattern:**
+```typescript
+apiClient.interceptors.request.use((config) => {
+  const token = useAuthStore.getState().accessToken;
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+```
 
-Both providers return the authorization code as a `?code=` query parameter in the redirect URL.
+**React Query v5 Hook Pattern:**
+```typescript
+export function useUser(userId: string) {
+  return useQuery({
+    queryKey: ['user', userId],
+    queryFn: async () => {
+      const response = await apiClient.get<UserDTO>(`/users/${userId}`);
+      return response.data;
+    },
+    enabled: !!userId, // Only run query if userId is provided
+  });
+}
+```
+
+**Mutation with Cache Invalidation:**
+```typescript
+export function useCreateRoom() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (roomData: CreateRoomRequest) => {
+      const response = await apiClient.post<RoomDTO>('/rooms', roomData);
+      return response.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['rooms'] });
+    },
+  });
+}
+```
