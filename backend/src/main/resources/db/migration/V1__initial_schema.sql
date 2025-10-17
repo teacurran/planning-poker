@@ -154,6 +154,7 @@ COMMENT ON COLUMN room.deleted_at IS 'Soft delete timestamp for audit trail';
 
 -- RoomParticipant: Active session participants
 CREATE TABLE room_participant (
+    participant_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     room_id VARCHAR(6) NOT NULL,
     user_id UUID,
     anonymous_id VARCHAR(50),
@@ -161,7 +162,6 @@ CREATE TABLE room_participant (
     role room_role_enum NOT NULL DEFAULT 'VOTER',
     connected_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
     disconnected_at TIMESTAMP WITH TIME ZONE,
-    PRIMARY KEY (room_id, COALESCE(user_id::TEXT, anonymous_id)),
     CONSTRAINT fk_room_participant_room FOREIGN KEY (room_id)
         REFERENCES room(room_id) ON DELETE CASCADE,
     CONSTRAINT fk_room_participant_user FOREIGN KEY (user_id)
@@ -169,10 +169,13 @@ CREATE TABLE room_participant (
     CONSTRAINT chk_room_participant_identity CHECK (
         (user_id IS NOT NULL AND anonymous_id IS NULL) OR
         (user_id IS NULL AND anonymous_id IS NOT NULL)
-    )
+    ),
+    CONSTRAINT uq_room_participant_room_user UNIQUE (room_id, user_id) DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT uq_room_participant_room_anon UNIQUE (room_id, anonymous_id) DEFERRABLE INITIALLY DEFERRED
 );
 
 COMMENT ON TABLE room_participant IS 'Active participants in estimation sessions';
+COMMENT ON COLUMN room_participant.participant_id IS 'Surrogate UUID primary key for participant identity';
 COMMENT ON COLUMN room_participant.user_id IS 'NULL for anonymous participants';
 COMMENT ON COLUMN room_participant.anonymous_id IS 'Required when user_id IS NULL for anonymous guests';
 
@@ -199,19 +202,18 @@ COMMENT ON COLUMN round.median IS 'VARCHAR to support non-numeric cards (?, ∞,
 CREATE TABLE vote (
     vote_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     round_id UUID NOT NULL,
-    room_id VARCHAR(6) NOT NULL,
-    participant_id TEXT NOT NULL,
+    participant_id UUID NOT NULL,
     card_value VARCHAR(10) NOT NULL,
     voted_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_vote_round FOREIGN KEY (round_id)
         REFERENCES round(round_id) ON DELETE CASCADE,
-    CONSTRAINT fk_vote_room FOREIGN KEY (room_id)
-        REFERENCES room(room_id) ON DELETE CASCADE,
+    CONSTRAINT fk_vote_participant FOREIGN KEY (participant_id)
+        REFERENCES room_participant(participant_id) ON DELETE CASCADE,
     CONSTRAINT uq_vote_participant UNIQUE (round_id, participant_id)
 );
 
 COMMENT ON TABLE vote IS 'Individual votes cast by participants in estimation rounds';
-COMMENT ON COLUMN vote.participant_id IS 'Composite key matching room_participant PK (user_id or anonymous_id)';
+COMMENT ON COLUMN vote.participant_id IS 'Foreign key to room_participant.participant_id (UUID)';
 COMMENT ON COLUMN vote.card_value IS 'Deck card value (0, 1, 2, 3, 5, 8, 13, ?, ∞, ☕)';
 
 -- SessionHistory: Completed session record (partitioned table)

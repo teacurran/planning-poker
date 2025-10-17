@@ -102,9 +102,6 @@ CREATE INDEX idx_vote_round_voted ON vote(round_id, voted_at) INCLUDE (card_valu
 -- Participant voting history
 CREATE INDEX idx_vote_participant ON vote(participant_id, voted_at DESC);
 
--- Room-level vote queries
-CREATE INDEX idx_vote_room ON vote(room_id, voted_at DESC);
-
 -- ----------------------------------------------------------------------------
 -- SessionHistory Table Indexes
 -- ----------------------------------------------------------------------------
@@ -114,9 +111,6 @@ CREATE INDEX idx_session_history_started ON session_history(started_at DESC);
 
 -- Room session history
 CREATE INDEX idx_session_history_room ON session_history(room_id, started_at DESC);
-
--- Session duration queries
-CREATE INDEX idx_session_history_duration ON session_history(ended_at - started_at);
 
 -- Story count filtering
 CREATE INDEX idx_session_history_stories ON session_history(total_stories) WHERE total_stories > 0;
