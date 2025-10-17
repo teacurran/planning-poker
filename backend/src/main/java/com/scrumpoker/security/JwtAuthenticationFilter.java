@@ -13,6 +13,7 @@ import jakarta.ws.rs.container.ContainerRequestFilter;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import jakarta.ws.rs.ext.Provider;
+import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.jboss.logging.Logger;
 
 import java.util.HashSet;
@@ -118,6 +119,9 @@ public class JwtAuthenticationFilter implements ContainerRequestFilter {
     @Inject
     JwtTokenService jwtTokenService;
 
+    @ConfigProperty(name = "quarkus.security.auth.enabled", defaultValue = "true")
+    boolean authenticationEnabled;
+
     /**
      * Filters incoming HTTP requests to perform JWT authentication.
      * <p>
@@ -130,6 +134,12 @@ public class JwtAuthenticationFilter implements ContainerRequestFilter {
      */
     @Override
     public void filter(ContainerRequestContext requestContext) {
+        // Skip authentication if disabled (e.g., in test profile)
+        if (!authenticationEnabled) {
+            LOG.debugf("Authentication disabled by configuration");
+            return;
+        }
+
         String path = requestContext.getUriInfo().getPath();
         String method = requestContext.getMethod();
 

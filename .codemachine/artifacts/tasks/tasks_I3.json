@@ -88,7 +88,7 @@
     "acceptance_criteria": "Protected endpoints (e.g., GET /api/v1/users/{userId}) require valid JWT (401 if missing), Valid JWT allows request to proceed, populates security context, Expired JWT returns 401 Unauthorized, Public endpoints (/api/v1/auth/*) accessible without JWT, `@RolesAllowed` annotations work correctly (use roles from JWT claims)",
     "dependencies": ["I3.T2"],
     "parallelizable": false,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I3.T5",

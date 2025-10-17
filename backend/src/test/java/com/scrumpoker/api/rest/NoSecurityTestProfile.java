@@ -20,6 +20,8 @@ public class NoSecurityTestProfile implements QuarkusTestProfile {
         Map<String, String> config = new HashMap<>();
         // Disable OIDC authentication
         config.put("quarkus.oidc.enabled", "false");
+        // Disable JWT authentication filter for tests
+        config.put("quarkus.security.auth.enabled", "false");
         // Allow unannotated endpoints (but annotated ones still need roles)
         config.put("quarkus.security.jaxrs.deny-unannotated-endpoints", "false");
         return config;

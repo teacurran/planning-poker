@@ -25,7 +25,9 @@ This is the full specification of the task you must complete.
   ],
   "deliverables": "JwtAuthenticationFilter annotated with `@Provider` and `@Priority(AUTHENTICATION)`, Bearer token extraction from Authorization header, Token validation and claims extraction, Security context population (userId, roles, email), Public endpoint exemption (auth endpoints, health checks), 401 response for missing/invalid tokens",
   "acceptance_criteria": "Protected endpoints (e.g., GET /api/v1/users/{userId}) require valid JWT (401 if missing), Valid JWT allows request to proceed, populates security context, Expired JWT returns 401 Unauthorized, Public endpoints (/api/v1/auth/*) accessible without JWT, `@RolesAllowed` annotations work correctly (use roles from JWT claims)",
-  "dependencies": ["I3.T2"],
+  "dependencies": [
+    "I3.T2"
+  ],
   "parallelizable": false,
   "done": false
 }
@@ -136,209 +138,98 @@ The following analysis is based on my direct review of the current codebase. Use
 
 ### Relevant Existing Code
 
+**CRITICAL FINDING: The filter already exists!** The file `backend/src/main/java/com/scrumpoker/security/JwtAuthenticationFilter.java` is already fully implemented with comprehensive documentation and all required functionality.
+
+*   **File:** `backend/src/main/java/com/scrumpoker/security/JwtAuthenticationFilter.java`
+    *   **Summary:** This file is a complete JAX-RS request filter implementing JWT authentication. It is annotated with `@Provider` and `@Priority(Priorities.AUTHENTICATION)`, intercepts all HTTP requests, extracts and validates JWT tokens from the Authorization header, populates the Quarkus security context, and handles public endpoints.
+    *   **Current Implementation Status:**
+        *   ✅ Bearer token extraction from `Authorization: Bearer <token>` header (lines 145-169)
+        *   ✅ Token validation using `JwtTokenService.validateAccessToken()` (lines 178-179)
+        *   ✅ Security context population with user principal and roles (lines 185-192)
+        *   ✅ Public endpoint exemption for `/api/v1/auth/*`, `/q/health/*`, `/q/swagger-ui/*`, `/q/openapi`, `/q/metrics`, and OPTIONS requests (lines 232-259)
+        *   ✅ 401 Unauthorized response for missing/invalid/expired tokens (lines 146-210, 272-283)
+        *   ✅ Integration with Quarkus Security (setting `SECURITY_IDENTITY_KEY` in request context, line 192)
+        *   ✅ JWT claims stored as security identity attribute for controllers to access (line 188)
+    *   **Recommendation:** **DO NOT create a new file.** The filter is already complete and production-ready with excellent documentation. Review the existing implementation to verify it meets all acceptance criteria.
+
 *   **File:** `backend/src/main/java/com/scrumpoker/security/JwtTokenService.java`
-    *   **Summary:** This service implements JWT token lifecycle management including generation, validation, and refresh. It contains the critical `validateAccessToken(String token)` method that returns `Uni<JwtClaims>`.
-    *   **Recommendation:** You MUST import and use the `JwtTokenService.validateAccessToken()` method in your filter to validate incoming JWT tokens. This method handles signature verification, expiration checks, and claims extraction.
-    *   **Key Method:** `validateAccessToken(String token)` (lines 178-215) returns `Uni<JwtClaims>` containing userId, email, roles, and tier. Use this to populate the security context.
-    *   **Implementation Detail:** The method uses SmallRye JWT's DefaultJWTParser which automatically validates signature using RSA public key from application.properties config.
+    *   **Summary:** This service provides JWT token generation, validation, and refresh functionality. It is the dependency for the authentication filter's validation logic.
+    *   **Key Methods Used by Filter:**
+        *   `validateAccessToken(String token)` - Returns `Uni<JwtClaims>` with userId, email, roles, tier (line 178)
+        *   Automatically validates signature using RSA public key from config
+        *   Checks token expiration and issuer claim
+    *   **Recommendation:** The filter correctly uses this service's reactive API with blocking await (`.await().indefinitely()`) as documented in the filter's implementation notes (line 177-179).
 
 *   **File:** `backend/src/main/java/com/scrumpoker/security/JwtClaims.java`
-    *   **Summary:** This is a record class representing the extracted JWT claims with fields: userId (UUID), email (String), roles (List<String>), and tier (String).
-    *   **Recommendation:** After validating the token, you'll receive a `JwtClaims` object. Use this to create your security context implementation.
-    *   **Helper Methods:** The record includes `hasRole(String)` and `hasAnyRole(String...)` utility methods for role checking.
+    *   **Summary:** Record class representing JWT claims extracted from validated tokens. Contains userId (UUID), email (String), roles (List<String>), and tier (String).
+    *   **Helper Methods:**
+        *   `hasRole(String role)` - Check if user has specific role
+        *   `hasAnyRole(String... roles)` - Check if user has any of specified roles
+    *   **Recommendation:** The filter stores this complete JwtClaims object in the SecurityIdentity attributes (key: "jwt.claims") so controllers can access full claim data beyond just roles.
 
-*   **File:** `backend/src/main/java/com/scrumpoker/api/rest/AuthController.java`
-    *   **Summary:** This controller contains authentication endpoints annotated with `@PermitAll`. It shows the pattern for public endpoints that should NOT be intercepted by your authentication filter.
-    *   **Recommendation:** Your filter MUST skip authentication for endpoints under `/api/v1/auth/*` path prefix. The AuthController has three endpoints: `/oauth/callback`, `/refresh`, `/logout` - all are public.
+*   **File:** `backend/src/main/java/com/scrumpoker/security/SecurityContextImpl.java`
+    *   **Current Status:** This file is mentioned in the target_files list but does NOT exist in the codebase.
+    *   **Analysis:** The filter uses Quarkus's built-in `QuarkusSecurityIdentity` (line 185) instead of a custom implementation. This is the correct approach and aligns with Quarkus best practices.
+    *   **Recommendation:** **DO NOT create SecurityContextImpl.java.** The task specification appears outdated - the implementation correctly uses `QuarkusSecurityIdentity.builder()` which is the standard Quarkus Security mechanism.
 
-*   **File:** `backend/src/main/java/com/scrumpoker/api/rest/UserController.java`
-    *   **Summary:** This controller has endpoints annotated with `@RolesAllowed("USER")` (lines 80, 120, 156) but currently contains TODO comments indicating that authentication is not yet enforced. Your filter will enable this enforcement.
-    *   **Recommendation:** After your filter is implemented, these `@RolesAllowed` annotations will start working. Ensure your security context provides the roles from JWT claims so Quarkus Security can enforce these annotations.
-    *   **Pattern:** Notice lines 61, 100, 137, 176 have TODOs about verifying authentication. Your filter will resolve these by enforcing auth automatically.
+*   **File:** `backend/src/main/java/com/scrumpoker/api/rest/UserController.java` and `RoomController.java`
+    *   **Summary:** These controllers have `@RolesAllowed("USER")` annotations on protected endpoints (UserController lines 80, 120, 156; RoomController lines 112, 173, 198).
+    *   **Current TODOs:** Multiple TODO comments indicate authentication is planned for "Iteration 3" (UserController lines 61, 100, 137, 175; RoomController lines 60, 125, 182, 212).
+    *   **Recommendation:** With the authentication filter now active, these controllers will automatically enforce role-based access control. The TODO comments should be removed once you verify the filter is working.
 
-*   **File:** `backend/src/main/java/com/scrumpoker/api/rest/RoomController.java`
-    *   **Summary:** Similar to UserController, this has `@RolesAllowed("USER")` annotations (lines 112, 173, 198) with TODO comments. It also shows patterns for accessing user context (currently set to null with TODO on line 60).
-    *   **Recommendation:** Your security context implementation should allow controllers to access the authenticated user's ID. Consider storing JwtClaims in a way that controllers can retrieve the current user ID.
+*   **File:** `backend/src/test/java/com/scrumpoker/api/rest/NoSecurityTestProfile.java`
+    *   **Summary:** Test profile that disables security for integration tests by enabling `TestSecurityIdentityAugmentor` which auto-grants USER role.
+    *   **Recommendation:** This allows existing tests to continue passing while the filter is enabled. When writing tests specifically for authentication (in a future task), you'll need a different test profile that enables the filter.
 
 *   **File:** `backend/src/main/resources/application.properties`
-    *   **Summary:** Contains JWT configuration properties including:
-        - `mp.jwt.verify.issuer` (line 56) - Token issuer to verify
-        - `mp.jwt.verify.publickey.location` (line 61) - RSA public key for signature verification
-        - `mp.jwt.token.expiration` (line 70) - Access token TTL (1 hour = 3600 seconds)
-    *   **Recommendation:** You don't need to read these properties directly in the filter. The `JwtTokenService` already uses them. Just be aware they exist for context.
-
-*   **File:** `backend/src/main/java/com/scrumpoker/api/rest/dto/ErrorResponse.java`
-    *   **Summary:** Standardized error response DTO used across all controllers for consistent error formatting.
-    *   **Recommendation:** When returning 401 Unauthorized from your filter, construct an ErrorResponse with error code "UNAUTHORIZED" or "INVALID_TOKEN" and an appropriate message.
+    *   **Summary:** Configuration file with JWT settings already in place.
+    *   **Key JWT Properties:**
+        *   `mp.jwt.verify.issuer` (line 56) - Token issuer validation
+        *   `mp.jwt.verify.publickey.location` (line 61) - RSA public key path
+        *   `mp.jwt.token.expiration` (line 70) - Access token TTL (3600 seconds / 1 hour)
+        *   `quarkus.oidc.enabled=false` (line 84) - OIDC disabled, using custom filter
+    *   **Recommendation:** No changes needed. All required configuration is present.
 
 ### Implementation Tips & Notes
 
-*   **Tip - JAX-RS Filter Priority:** Use `@Priority(Priorities.AUTHENTICATION)` (import from `jakarta.ws.rs.Priorities`) to ensure your filter runs early in the request processing chain, before method interceptors that check `@RolesAllowed`.
+*   **CRITICAL: Task is Already Complete!** The JwtAuthenticationFilter is fully implemented with all required functionality. Your task should focus on **verification and testing** rather than implementation.
 
-*   **Tip - Reactive Challenge:** Since `JwtTokenService.validateAccessToken()` returns `Uni<JwtClaims>`, you need to handle reactive programming properly. JAX-RS ContainerRequestFilter is synchronous by nature. You have two options:
-    1. Block on the Uni using `.await().indefinitely()` (simpler, acceptable for authentication)
-    2. Use async processing (more complex, not needed for MVP)
+*   **Verification Checklist:**
+    1. Confirm the filter intercepts requests at AUTHENTICATION priority
+    2. Verify Bearer token extraction handles missing/malformed headers correctly
+    3. Test that public endpoints (`/api/v1/auth/*`, health checks, swagger) bypass authentication
+    4. Validate that protected endpoints require JWT and return 401 when missing
+    5. Ensure expired/invalid tokens return 401 Unauthorized
+    6. Confirm SecurityIdentity is populated with correct userId and roles from token claims
+    7. Verify `@RolesAllowed` annotations work correctly with roles from JWT
 
-    **Recommendation:** Option 1 is acceptable here since authentication should be fast (<50ms) and needs to complete before request proceeds.
+*   **Important Implementation Details Already Present:**
+    *   The filter uses **blocking await** on the reactive `validateAccessToken()` call (line 179). This is documented as acceptable because JWT validation is fast (<50ms) and must complete before request proceeds.
+    *   The filter **never logs full token values**, only metadata like first 10 characters (lines 171-172, 184) for security.
+    *   Security context key uses the standard Quarkus constant `"quarkus.security.identity"` (line 110) for proper integration.
+    *   JWT claims are stored in SecurityIdentity attributes under key `"jwt.claims"` (line 116) so controllers can access full claim data via `identity.getAttribute("jwt.claims")`.
 
-*   **Tip - Header Extraction:** Extract the `Authorization` header using `containerRequestContext.getHeaderString("Authorization")`. Check if it starts with `"Bearer "` (note the space) and extract the token substring using `header.substring(7)` (length of "Bearer ").
+*   **Public Endpoint Logic:** The `isPublicEndpoint()` method (lines 232-259) handles both with and without leading slash (e.g., `"api/v1/auth/"` and `"/api/v1/auth/"`) for robustness.
 
-*   **Tip - Public Endpoints:** You MUST skip authentication for:
-    *   All paths starting with `/api/v1/auth/` (OAuth callback, refresh, logout)
-    *   OPTIONS requests (for CORS preflight) - check `containerRequestContext.getMethod()`
-    *   Health check endpoints: `/q/health/*`
-    *   Swagger UI endpoints: `/q/swagger-ui/*` and `/q/openapi`
-    *   Metrics endpoint: `/q/metrics`
-    *   The simplest approach is to check the request URI path before performing authentication.
+*   **Error Handling:** The filter provides specific error codes in ErrorResponse JSON:
+    *   `MISSING_TOKEN` - No Authorization header
+    *   `INVALID_TOKEN_FORMAT` - Header doesn't start with "Bearer "
+    *   `EMPTY_TOKEN` - Bearer token is blank
+    *   `INVALID_TOKEN` - Token validation failed (signature, expiration, etc.)
 
-*   **Tip - 401 Response Construction:** When authentication fails, use:
-    ```java
-    ErrorResponse error = new ErrorResponse("UNAUTHORIZED", "Missing or invalid authentication token");
-    Response response = Response.status(Response.Status.UNAUTHORIZED)
-        .entity(error)
-        .build();
-    containerRequestContext.abortWith(response);
-    ```
+*   **Next Steps Recommendation:**
+    *   Since the filter already exists, your primary task should be to **verify it works correctly** by:
+        1. Running the application with `mvn quarkus:dev`
+        2. Testing protected endpoints without JWT (should get 401)
+        3. Testing with a valid JWT from the auth flow (should succeed)
+        4. Testing public endpoints without JWT (should succeed)
+        5. Optionally adding integration tests specifically for the filter's behavior
+    *   The acceptance criteria can be met by demonstrating the existing implementation works correctly, not by rewriting it.
 
-*   **Tip - Security Context Integration:** Quarkus Security expects a `SecurityIdentity` to be set. You'll need to:
-    1. Create a `SecurityIdentity` implementation wrapping `JwtClaims`
-    2. Use `QuarkusSecurityIdentity.builder()` to construct it
-    3. Set the principal (user email or userId as string)
-    4. Add all roles from `JwtClaims.roles` list
-    5. Store the SecurityIdentity in the Quarkus security context
+*   **WARNING:** The second target file `SecurityContextImpl.java` should NOT be created. The filter correctly uses Quarkus's built-in `QuarkusSecurityIdentity` which is the standard pattern. Creating a custom SecurityContext implementation would be unnecessary and potentially problematic.
 
-    **Example Pattern:**
-    ```java
-    SecurityIdentity identity = QuarkusSecurityIdentity.builder()
-        .setPrincipal(new QuarkusPrincipal(claims.userId().toString()))
-        .addRoles(new HashSet<>(claims.roles()))
-        .build();
-    // Inject and use io.quarkus.security.identity.SecurityIdentity
-    ```
+### Code Quality Observations
 
-*   **Note - Existing TODOs:** Multiple controllers (UserController lines 61, 100, 137, 176; RoomController lines 60, 125, 182, 212) have TODO comments about verifying authentication. Your filter implementation will resolve these TODOs automatically, enabling the security checks that are currently stubbed out.
-
-*   **Warning - Reactive Blocking:** Be careful when calling `.await().indefinitely()` on the Uni. This blocks the current thread, which is acceptable for the short duration of JWT validation. However, avoid blocking for extended periods.
-
-*   **Pattern Observation:** The codebase uses comprehensive Javadoc comments on all classes and public methods. You SHOULD follow this pattern in your filter implementation for consistency. See JwtTokenService (lines 22-61) for an excellent example.
-
-*   **Pattern Observation:** Exception handling in this codebase logs errors at appropriate levels:
-    - ERROR for unexpected exceptions
-    - WARN for validation failures
-    - INFO for successful security events
-    - DEBUG for trace-level details
-    Follow this pattern in your filter.
-
-*   **Critical - Role-Based Authorization:** The `@RolesAllowed` annotations in controllers specify role names like "USER". Your security context MUST provide these exact role names from the JWT claims' `roles` field. The `JwtTokenService.mapTierToRoles()` method (private, lines 293-313) already maps subscription tiers to roles like:
-    - FREE tier → ["USER"]
-    - PRO/PRO_PLUS → ["USER", "PRO_USER"]
-    - ENTERPRISE → ["USER", "PRO_USER", "ORG_MEMBER"]
-
-*   **Security Note:** Never log full JWT tokens. Only log metadata (user ID, expiration time). This is critical for security. See JwtTokenService line 184 for an example of safe logging (only first 10 chars of token).
-
-*   **Implementation Order Recommendation:**
-    1. First create the basic filter structure with public endpoint exemption
-    2. Then add Bearer token extraction
-    3. Then integrate JwtTokenService validation
-    4. Then create SecurityIdentity and set it in context
-    5. Finally add comprehensive error handling and logging
-
-### Expected Files Structure
-
-You need to create two files:
-
-1. **JwtAuthenticationFilter.java** - The main JAX-RS ContainerRequestFilter implementation
-   - Package: `com.scrumpoker.security`
-   - Annotate with `@Provider` to register as JAX-RS provider
-   - Annotate with `@Priority(Priorities.AUTHENTICATION)`
-   - Implement `ContainerRequestFilter` interface
-   - Inject `JwtTokenService` with `@Inject`
-   - In the `filter(ContainerRequestContext)` method:
-     - Check if path is public (skip authentication if so)
-     - Extract Bearer token from Authorization header
-     - Validate token using JwtTokenService (handle reactive Uni)
-     - Create SecurityIdentity with claims
-     - Set security context
-     - Return 401 on authentication failure (use `abortWith()`)
-
-2. **Custom SecurityIdentity implementation** (optional but recommended)
-   - You may not need a separate file if using `QuarkusSecurityIdentity.builder()`
-   - If you do create one, it should wrap JwtClaims
-   - Provide principal name (userId or email as string)
-   - Provide roles from claims
-   - Optionally implement methods to retrieve full JwtClaims for controllers
-
-### Quarkus Security Integration Details
-
-**Key Classes to Use:**
-- `io.quarkus.security.identity.SecurityIdentity` - Interface for security context
-- `io.quarkus.security.runtime.QuarkusSecurityIdentity` - Builder for SecurityIdentity
-- `io.quarkus.security.identity.request.AuthenticationRequest` - For custom authentication
-- `jakarta.ws.rs.container.ContainerRequestContext` - Request context in filter
-
-**Setting Security Context:**
-After creating SecurityIdentity, you need to set it in Quarkus's security context. The recommended approach:
-
-```java
-@Inject
-SecurityIdentity currentIdentity;
-
-// In filter method, after validation:
-containerRequestContext.setProperty("quarkus.security.identity", identity);
-```
-
-Alternatively, you can inject and use `IdentityProviderManager` for more control.
-
-### Testing Strategy
-
-After implementation, the acceptance criteria require:
-- Protected endpoints return 401 without token
-- Protected endpoints work with valid token
-- Expired tokens return 401
-- Public endpoints accessible without token
-- @RolesAllowed annotations enforced
-
-You should test these manually first using curl or Postman:
-```bash
-# Test protected endpoint without token (should return 401)
-curl -X GET http://localhost:8080/api/v1/users/123e4567-e89b-12d3-a456-426614174000
-
-# Test public endpoint without token (should work)
-curl -X POST http://localhost:8080/api/v1/auth/oauth/callback -d '{...}'
-
-# Test protected endpoint with valid token (should work)
-curl -X GET http://localhost:8080/api/v1/users/123e4567-e89b-12d3-a456-426614174000 \
-  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-```
-
-The existing integration tests in `UserControllerTest` and `RoomControllerTest` will need to be updated to include authentication tokens. There's a test profile `NoSecurityTestProfile` that may need adjusting.
-
-### Critical Implementation Notes
-
-1. **Do NOT validate @PermitAll annotations** - Focus on path-based public endpoint detection. The @PermitAll annotation is a hint but checking request paths is more reliable.
-
-2. **Bearer Token Format** - Ensure you handle the "Bearer " prefix correctly (with space). Common mistake is to forget the space or not trim the token.
-
-3. **Error Response Content-Type** - When aborting with 401, ensure the response has `application/json` content type. Use `.type(MediaType.APPLICATION_JSON)` on the Response builder.
-
-4. **CORS Preflight** - OPTIONS requests MUST be allowed through without authentication, otherwise CORS will break for browser clients.
-
-5. **Health Checks** - Never block health check endpoints with authentication. Kubernetes liveness/readiness probes need unauthenticated access to `/q/health/*`.
-
-### Final Checklist
-
-Before marking the task complete, verify:
-- [ ] Filter annotated with @Provider and @Priority(AUTHENTICATION)
-- [ ] Bearer token extracted from Authorization header correctly
-- [ ] Token validated using JwtTokenService.validateAccessToken()
-- [ ] SecurityIdentity created with userId and roles from JWT claims
-- [ ] Security context set in Quarkus (enables @RolesAllowed to work)
-- [ ] Public endpoints exempted: /api/v1/auth/*, /q/*, OPTIONS requests
-- [ ] 401 Unauthorized returned for missing/invalid/expired tokens
-- [ ] 401 response includes ErrorResponse JSON body
-- [ ] Proper logging (security events, no token values logged)
-- [ ] Code compiles with `mvn clean compile`
-- [ ] Follows existing code style (Javadoc, error handling patterns)
-- [ ] Manual testing confirms protected endpoints require valid JWT
-- [ ] Manual testing confirms public endpoints work without JWT
-- [ ] Manual testing confirms @RolesAllowed annotations are enforced
+*   **Excellent Documentation:** The existing filter has comprehensive JavaDoc explaining the authentication flow, public endpoints, security context integration, and implementation notes.
+*   **Production-Ready Code:** Error handling is thorough, logging is security-aware (no token values logged), and the implementation follows Quarkus best practices.
+*   **Test Coverage Gap:** While the NoSecurityTestProfile exists for integration tests, there are no dedicated tests for the authentication filter itself. Consider this for future work.
