@@ -1,0 +1,604 @@
+{
+  "locations": [
+    {
+      "key": "introduction-and-goals",
+      "file": "01_Context_and_Drivers.md",
+      "start_anchor": "<!-- anchor: introduction-and-goals -->",
+      "description": "Overview of project vision, objectives, scope, and assumptions"
+    },
+    {
+      "key": "project-vision",
+      "file": "01_Context_and_Drivers.md",
+      "start_anchor": "<!-- anchor: project-vision -->",
+      "description": "High-level vision and purpose of the Scrum Poker Platform"
+    },
+    {
+      "key": "key-objectives",
+      "file": "01_Context_and_Drivers.md",
+      "start_anchor": "<!-- anchor: key-objectives -->",
+      "description": "Primary functional and non-functional objectives the architecture must support"
+    },
+    {
+      "key": "scope",
+      "file": "01_Context_and_Drivers.md",
+      "start_anchor": "<!-- anchor: scope -->",
+      "description": "System boundaries defining what is in scope and out of scope"
+    },
+    {
+      "key": "key-assumptions",
+      "file": "01_Context_and_Drivers.md",
+      "start_anchor": "<!-- anchor: key-assumptions -->",
+      "description": "Foundational assumptions about users, technology, infrastructure, and compliance"
+    },
+    {
+      "key": "architectural-drivers",
+      "file": "01_Context_and_Drivers.md",
+      "start_anchor": "<!-- anchor: architectural-drivers -->",
+      "description": "Key requirements and constraints that shape architectural decisions"
+    },
+    {
+      "key": "functional-requirements-summary",
+      "file": "01_Context_and_Drivers.md",
+      "start_anchor": "<!-- anchor: functional-requirements-summary -->",
+      "description": "Summary of core functional requirements across all features"
+    },
+    {
+      "key": "core-gameplay-requirements",
+      "file": "01_Context_and_Drivers.md",
+      "start_anchor": "<!-- anchor: core-gameplay-requirements -->",
+      "description": "Real-time estimation, session management, and room control requirements"
+    },
+    {
+      "key": "user-account-requirements",
+      "file": "01_Context_and_Drivers.md",
+      "start_anchor": "<!-- anchor: user-account-requirements -->",
+      "description": "OAuth2 authentication, profile management, and preference persistence"
+    },
+    {
+      "key": "monetization-requirements",
+      "file": "01_Context_and_Drivers.md",
+      "start_anchor": "<!-- anchor: monetization-requirements -->",
+      "description": "Stripe integration, tier enforcement, and subscription management"
+    },
+    {
+      "key": "reporting-requirements",
+      "file": "01_Context_and_Drivers.md",
+      "start_anchor": "<!-- anchor: reporting-requirements -->",
+      "description": "Tier-based reporting capabilities from basic summaries to enterprise dashboards"
+    },
+    {
+      "key": "enterprise-requirements",
+      "file": "01_Context_and_Drivers.md",
+      "start_anchor": "<!-- anchor: enterprise-requirements -->",
+      "description": "SSO integration, organization management, and audit logging"
+    },
+    {
+      "key": "collaboration-requirements",
+      "file": "01_Context_and_Drivers.md",
+      "start_anchor": "<!-- anchor: collaboration-requirements -->",
+      "description": "Presence indicators, observer mode, chat, and animated reveals"
+    },
+    {
+      "key": "non-functional-requirements",
+      "file": "01_Context_and_Drivers.md",
+      "start_anchor": "<!-- anchor: non-functional-requirements -->",
+      "description": "Performance, scalability, availability, security, and maintainability requirements"
+    },
+    {
+      "key": "performance-nfrs",
+      "file": "01_Context_and_Drivers.md",
+      "start_anchor": "<!-- anchor: performance-nfrs -->",
+      "description": "Latency, throughput, and response time targets"
+    },
+    {
+      "key": "scalability-nfrs",
+      "file": "01_Context_and_Drivers.md",
+      "start_anchor": "<!-- anchor: scalability-nfrs -->",
+      "description": "Horizontal scaling and auto-scaling requirements"
+    },
+    {
+      "key": "availability-nfrs",
+      "file": "01_Context_and_Drivers.md",
+      "start_anchor": "<!-- anchor: availability-nfrs -->",
+      "description": "Uptime targets, fault tolerance, and health monitoring"
+    },
+    {
+      "key": "security-nfrs",
+      "file": "01_Context_and_Drivers.md",
+      "start_anchor": "<!-- anchor: security-nfrs -->",
+      "description": "Transport security, authentication, authorization, and data protection requirements"
+    },
+    {
+      "key": "maintainability-nfrs",
+      "file": "01_Context_and_Drivers.md",
+      "start_anchor": "<!-- anchor: maintainability-nfrs -->",
+      "description": "Code organization, versioning, logging, and monitoring standards"
+    },
+    {
+      "key": "usability-nfrs",
+      "file": "01_Context_and_Drivers.md",
+      "start_anchor": "<!-- anchor: usability-nfrs -->",
+      "description": "Responsive design, accessibility, browser support, and internationalization"
+    },
+    {
+      "key": "constraints-and-preferences",
+      "file": "01_Context_and_Drivers.md",
+      "start_anchor": "<!-- anchor: constraints-and-preferences -->",
+      "description": "Technology, architectural, organizational constraints and preferences"
+    },
+    {
+      "key": "technology-constraints",
+      "file": "01_Context_and_Drivers.md",
+      "start_anchor": "<!-- anchor: technology-constraints -->",
+      "description": "Specified technology requirements including Quarkus, PostgreSQL, Redis"
+    },
+    {
+      "key": "architectural-constraints",
+      "file": "01_Context_and_Drivers.md",
+      "start_anchor": "<!-- anchor: architectural-constraints -->",
+      "description": "Stateless services, cloud-native design, reactive patterns"
+    },
+    {
+      "key": "organizational-constraints",
+      "file": "01_Context_and_Drivers.md",
+      "start_anchor": "<!-- anchor: organizational-constraints -->",
+      "description": "Team expertise, timeline, budget, and compliance requirements"
+    },
+    {
+      "key": "preferences",
+      "file": "01_Context_and_Drivers.md",
+      "start_anchor": "<!-- anchor: preferences -->",
+      "description": "Preferred frontend framework, CSS framework, observability stack"
+    },
+    {
+      "key": "proposed-architecture",
+      "file": "02_Architecture_Overview.md",
+      "start_anchor": "<!-- anchor: proposed-architecture -->",
+      "description": "High-level architectural style and technology stack decisions"
+    },
+    {
+      "key": "architectural-style",
+      "file": "02_Architecture_Overview.md",
+      "start_anchor": "<!-- anchor: architectural-style -->",
+      "description": "Modular monolith with event-driven reactive patterns rationale"
+    },
+    {
+      "key": "technology-stack-summary",
+      "file": "02_Architecture_Overview.md",
+      "start_anchor": "<!-- anchor: technology-stack-summary -->",
+      "description": "Comprehensive technology choices for all system layers with justifications"
+    },
+    {
+      "key": "system-context-diagram",
+      "file": "03_System_Structure_and_Data.md",
+      "start_anchor": "<!-- anchor: system-context-diagram -->",
+      "description": "C4 Level 1 diagram showing system boundary, users, and external systems"
+    },
+    {
+      "key": "container-diagram",
+      "file": "03_System_Structure_and_Data.md",
+      "start_anchor": "<!-- anchor: container-diagram -->",
+      "description": "C4 Level 2 diagram showing deployable units and data stores"
+    },
+    {
+      "key": "component-diagram",
+      "file": "03_System_Structure_and_Data.md",
+      "start_anchor": "<!-- anchor: component-diagram -->",
+      "description": "C4 Level 3 diagram detailing Quarkus application internal components"
+    },
+    {
+      "key": "data-model-overview-erd",
+      "file": "03_System_Structure_and_Data.md",
+      "start_anchor": "<!-- anchor: data-model-overview-erd -->",
+      "description": "Database schema design with entity relationships and indexing strategy"
+    },
+    {
+      "key": "api-design-and-communication",
+      "file": "04_Behavior_and_Communication.md",
+      "start_anchor": "<!-- anchor: api-design-and-communication -->",
+      "description": "API styles, communication patterns, and interaction flows"
+    },
+    {
+      "key": "api-style",
+      "file": "04_Behavior_and_Communication.md",
+      "start_anchor": "<!-- anchor: api-style -->",
+      "description": "RESTful JSON API and WebSocket protocol design rationale"
+    },
+    {
+      "key": "communication-patterns",
+      "file": "04_Behavior_and_Communication.md",
+      "start_anchor": "<!-- anchor: communication-patterns -->",
+      "description": "Synchronous REST, asynchronous WebSocket, and job processing patterns"
+    },
+    {
+      "key": "synchronous-rest-pattern",
+      "file": "04_Behavior_and_Communication.md",
+      "start_anchor": "<!-- anchor: synchronous-rest-pattern -->",
+      "description": "Request/response pattern for CRUD operations and transactional updates"
+    },
+    {
+      "key": "asynchronous-websocket-pattern",
+      "file": "04_Behavior_and_Communication.md",
+      "start_anchor": "<!-- anchor: asynchronous-websocket-pattern -->",
+      "description": "Event-driven WebSocket pattern for real-time voting and presence"
+    },
+    {
+      "key": "asynchronous-job-processing-pattern",
+      "file": "04_Behavior_and_Communication.md",
+      "start_anchor": "<!-- anchor: asynchronous-job-processing-pattern -->",
+      "description": "Fire-and-forget pattern for report generation and email notifications"
+    },
+    {
+      "key": "key-interaction-flow-vote-round",
+      "file": "04_Behavior_and_Communication.md",
+      "start_anchor": "<!-- anchor: key-interaction-flow-vote-round -->",
+      "description": "Sequence diagram for vote casting and round reveal workflow"
+    },
+    {
+      "key": "key-interaction-flow-oauth-login",
+      "file": "04_Behavior_and_Communication.md",
+      "start_anchor": "<!-- anchor: key-interaction-flow-oauth-login -->",
+      "description": "Sequence diagram for OAuth2 authentication flow with JWT generation"
+    },
+    {
+      "key": "rest-api-endpoints",
+      "file": "04_Behavior_and_Communication.md",
+      "start_anchor": "<!-- anchor: rest-api-endpoints -->",
+      "description": "Overview of REST API endpoints for authentication, rooms, billing, reporting"
+    },
+    {
+      "key": "websocket-connection-lifecycle",
+      "file": "04_Behavior_and_Communication.md",
+      "start_anchor": "<!-- anchor: websocket-connection-lifecycle -->",
+      "description": "WebSocket connection establishment, heartbeat, disconnection, and reconnection"
+    },
+    {
+      "key": "cross-cutting-concerns",
+      "file": "05_Operational_Architecture.md",
+      "start_anchor": "<!-- anchor: cross-cutting-concerns -->",
+      "description": "Authentication, logging, security, scalability, and reliability strategies"
+    },
+    {
+      "key": "authentication-and-authorization",
+      "file": "05_Operational_Architecture.md",
+      "start_anchor": "<!-- anchor: authentication-and-authorization -->",
+      "description": "OAuth2, SSO, anonymous play, and RBAC implementation details"
+    },
+    {
+      "key": "authentication-mechanisms",
+      "file": "05_Operational_Architecture.md",
+      "start_anchor": "<!-- anchor: authentication-mechanisms -->",
+      "description": "OAuth2 social login, enterprise SSO, and anonymous play mechanisms"
+    },
+    {
+      "key": "authorization-strategy",
+      "file": "05_Operational_Architecture.md",
+      "start_anchor": "<!-- anchor: authorization-strategy -->",
+      "description": "Role-based access control and resource-level permissions"
+    },
+    {
+      "key": "logging-and-monitoring",
+      "file": "05_Operational_Architecture.md",
+      "start_anchor": "<!-- anchor: logging-and-monitoring -->",
+      "description": "Structured logging, metrics collection, and alerting strategies"
+    },
+    {
+      "key": "logging-strategy",
+      "file": "05_Operational_Architecture.md",
+      "start_anchor": "<!-- anchor: logging-strategy -->",
+      "description": "JSON structured logging, aggregation, and audit logging approach"
+    },
+    {
+      "key": "monitoring-metrics",
+      "file": "05_Operational_Architecture.md",
+      "start_anchor": "<!-- anchor: monitoring-metrics -->",
+      "description": "Prometheus metrics, alerting rules, and Grafana dashboards"
+    },
+    {
+      "key": "security-considerations",
+      "file": "05_Operational_Architecture.md",
+      "start_anchor": "<!-- anchor: security-considerations -->",
+      "description": "Transport security, application security, and vulnerability management"
+    },
+    {
+      "key": "transport-security",
+      "file": "05_Operational_Architecture.md",
+      "start_anchor": "<!-- anchor: transport-security -->",
+      "description": "HTTPS/TLS, certificate management, and HSTS enforcement"
+    },
+    {
+      "key": "application-security",
+      "file": "05_Operational_Architecture.md",
+      "start_anchor": "<!-- anchor: application-security -->",
+      "description": "Input validation, authentication security, authorization, and data protection"
+    },
+    {
+      "key": "vulnerability-management",
+      "file": "05_Operational_Architecture.md",
+      "start_anchor": "<!-- anchor: vulnerability-management -->",
+      "description": "Dependency scanning, container scanning, SAST/DAST, and GDPR compliance"
+    },
+    {
+      "key": "scalability-and-performance",
+      "file": "05_Operational_Architecture.md",
+      "start_anchor": "<!-- anchor: scalability-and-performance -->",
+      "description": "Horizontal scaling, auto-scaling, database optimization, and caching"
+    },
+    {
+      "key": "horizontal-scaling",
+      "file": "05_Operational_Architecture.md",
+      "start_anchor": "<!-- anchor: horizontal-scaling -->",
+      "description": "Stateless design, Kubernetes HPA, database scaling, and Redis clustering"
+    },
+    {
+      "key": "performance-optimization",
+      "file": "05_Operational_Architecture.md",
+      "start_anchor": "<!-- anchor: performance-optimization -->",
+      "description": "Caching strategy, database optimization, WebSocket optimization, frontend optimization"
+    },
+    {
+      "key": "reliability-and-availability",
+      "file": "05_Operational_Architecture.md",
+      "start_anchor": "<!-- anchor: reliability-and-availability -->",
+      "description": "Fault tolerance, graceful degradation, circuit breakers, and health checks"
+    },
+    {
+      "key": "fault-tolerance",
+      "file": "05_Operational_Architecture.md",
+      "start_anchor": "<!-- anchor: fault-tolerance -->",
+      "description": "Graceful degradation, circuit breaker patterns, and health check configuration"
+    },
+    {
+      "key": "high-availability",
+      "file": "05_Operational_Architecture.md",
+      "start_anchor": "<!-- anchor: high-availability -->",
+      "description": "Uptime targets, redundancy, disaster recovery, and incident response"
+    },
+    {
+      "key": "deployment-view",
+      "file": "05_Operational_Architecture.md",
+      "start_anchor": "<!-- anchor: deployment-view -->",
+      "description": "Target environment, deployment strategy, and CI/CD pipeline"
+    },
+    {
+      "key": "target-environment",
+      "file": "05_Operational_Architecture.md",
+      "start_anchor": "<!-- anchor: target-environment -->",
+      "description": "AWS cloud platform selection and rationale"
+    },
+    {
+      "key": "deployment-strategy",
+      "file": "05_Operational_Architecture.md",
+      "start_anchor": "<!-- anchor: deployment-strategy -->",
+      "description": "Docker containerization, Kubernetes orchestration, and CI/CD pipeline"
+    },
+    {
+      "key": "deployment-diagram",
+      "file": "05_Operational_Architecture.md",
+      "start_anchor": "<!-- anchor: deployment-diagram -->",
+      "description": "AWS deployment architecture diagram with VPC, EKS, RDS, and ElastiCache"
+    },
+    {
+      "key": "design-rationale-and-tradeoffs",
+      "file": "06_Rationale_and_Future.md",
+      "start_anchor": "<!-- anchor: design-rationale-and-tradeoffs -->",
+      "description": "Key architectural decisions, alternatives considered, and known risks"
+    },
+    {
+      "key": "key-decisions-summary",
+      "file": "06_Rationale_and_Future.md",
+      "start_anchor": "<!-- anchor: key-decisions-summary -->",
+      "description": "Summary of critical architectural decisions with rationale and trade-offs"
+    },
+    {
+      "key": "decision-modular-monolith",
+      "file": "06_Rationale_and_Future.md",
+      "start_anchor": "<!-- anchor: decision-modular-monolith -->",
+      "description": "Modular monolith vs microservices decision rationale"
+    },
+    {
+      "key": "decision-quarkus-reactive",
+      "file": "06_Rationale_and_Future.md",
+      "start_anchor": "<!-- anchor: decision-quarkus-reactive -->",
+      "description": "Quarkus reactive stack selection for WebSocket concurrency"
+    },
+    {
+      "key": "decision-postgres-primary",
+      "file": "06_Rationale_and_Future.md",
+      "start_anchor": "<!-- anchor: decision-postgres-primary -->",
+      "description": "PostgreSQL as primary data store decision rationale"
+    },
+    {
+      "key": "decision-redis-pubsub",
+      "file": "06_Rationale_and_Future.md",
+      "start_anchor": "<!-- anchor: decision-redis-pubsub -->",
+      "description": "Redis Pub/Sub for WebSocket event broadcasting rationale"
+    },
+    {
+      "key": "decision-stripe-billing",
+      "file": "06_Rationale_and_Future.md",
+      "start_anchor": "<!-- anchor: decision-stripe-billing -->",
+      "description": "Stripe for subscription billing decision rationale"
+    },
+    {
+      "key": "decision-react-frontend",
+      "file": "06_Rationale_and_Future.md",
+      "start_anchor": "<!-- anchor: decision-react-frontend -->",
+      "description": "React for frontend SPA decision rationale"
+    },
+    {
+      "key": "alternatives-considered",
+      "file": "06_Rationale_and_Future.md",
+      "start_anchor": "<!-- anchor: alternatives-considered -->",
+      "description": "Alternative architectural approaches that were evaluated and rejected"
+    },
+    {
+      "key": "alternative-microservices",
+      "file": "06_Rationale_and_Future.md",
+      "start_anchor": "<!-- anchor: alternative-microservices -->",
+      "description": "Microservices architecture alternative analysis"
+    },
+    {
+      "key": "alternative-graphql",
+      "file": "06_Rationale_and_Future.md",
+      "start_anchor": "<!-- anchor: alternative-graphql -->",
+      "description": "GraphQL API alternative analysis"
+    },
+    {
+      "key": "alternative-mongodb",
+      "file": "06_Rationale_and_Future.md",
+      "start_anchor": "<!-- anchor: alternative-mongodb -->",
+      "description": "MongoDB for room/vote storage alternative analysis"
+    },
+    {
+      "key": "alternative-kafka",
+      "file": "06_Rationale_and_Future.md",
+      "start_anchor": "<!-- anchor: alternative-kafka -->",
+      "description": "Apache Kafka for event streaming alternative analysis"
+    },
+    {
+      "key": "alternative-websocket-fallback",
+      "file": "06_Rationale_and_Future.md",
+      "start_anchor": "<!-- anchor: alternative-websocket-fallback -->",
+      "description": "Server-Sent Events instead of WebSockets alternative analysis"
+    },
+    {
+      "key": "known-risks-and-mitigation",
+      "file": "06_Rationale_and_Future.md",
+      "start_anchor": "<!-- anchor: known-risks-and-mitigation -->",
+      "description": "Identified technical and operational risks with mitigation strategies"
+    },
+    {
+      "key": "risk-websocket-scaling",
+      "file": "06_Rationale_and_Future.md",
+      "start_anchor": "<!-- anchor: risk-websocket-scaling -->",
+      "description": "WebSocket connection scaling limits risk and mitigation"
+    },
+    {
+      "key": "risk-database-hotspots",
+      "file": "06_Rationale_and_Future.md",
+      "start_anchor": "<!-- anchor: risk-database-hotspots -->",
+      "description": "Database write hotspots on high-traffic rooms risk and mitigation"
+    },
+    {
+      "key": "risk-oauth-provider-outage",
+      "file": "06_Rationale_and_Future.md",
+      "start_anchor": "<!-- anchor: risk-oauth-provider-outage -->",
+      "description": "OAuth provider outage risk and mitigation strategies"
+    },
+    {
+      "key": "risk-stripe-webhook-failures",
+      "file": "06_Rationale_and_Future.md",
+      "start_anchor": "<!-- anchor: risk-stripe-webhook-failures -->",
+      "description": "Stripe webhook delivery failures risk and mitigation"
+    },
+    {
+      "key": "risk-gdpr-data-deletion",
+      "file": "06_Rationale_and_Future.md",
+      "start_anchor": "<!-- anchor: risk-gdpr-data-deletion -->",
+      "description": "GDPR data deletion compliance risk and mitigation"
+    },
+    {
+      "key": "risk-concurrent-deployment",
+      "file": "06_Rationale_and_Future.md",
+      "start_anchor": "<!-- anchor: risk-concurrent-deployment -->",
+      "description": "Zero-downtime deployment with WebSocket connections risk and mitigation"
+    },
+    {
+      "key": "future-considerations",
+      "file": "06_Rationale_and_Future.md",
+      "start_anchor": "<!-- anchor: future-considerations -->",
+      "description": "Potential system evolution and areas requiring deeper analysis"
+    },
+    {
+      "key": "potential-evolution",
+      "file": "06_Rationale_and_Future.md",
+      "start_anchor": "<!-- anchor: potential-evolution -->",
+      "description": "Future architectural evolution paths for features and scale"
+    },
+    {
+      "key": "evolution-native-mobile",
+      "file": "06_Rationale_and_Future.md",
+      "start_anchor": "<!-- anchor: evolution-native-mobile -->",
+      "description": "Native mobile applications evolution path"
+    },
+    {
+      "key": "evolution-ai-estimation",
+      "file": "06_Rationale_and_Future.md",
+      "start_anchor": "<!-- anchor: evolution-ai-estimation -->",
+      "description": "AI-powered estimation suggestions evolution path"
+    },
+    {
+      "key": "evolution-integrations",
+      "file": "06_Rationale_and_Future.md",
+      "start_anchor": "<!-- anchor: evolution-integrations -->",
+      "description": "Project management tool integrations evolution path"
+    },
+    {
+      "key": "evolution-white-label",
+      "file": "06_Rationale_and_Future.md",
+      "start_anchor": "<!-- anchor: evolution-white-label -->",
+      "description": "White-label/self-hosted deployment evolution path"
+    },
+    {
+      "key": "evolution-advanced-analytics",
+      "file": "06_Rationale_and_Future.md",
+      "start_anchor": "<!-- anchor: evolution-advanced-analytics -->",
+      "description": "Advanced analytics and reporting evolution path"
+    },
+    {
+      "key": "evolution-horizontal-scaling",
+      "file": "06_Rationale_and_Future.md",
+      "start_anchor": "<!-- anchor: evolution-horizontal-scaling -->",
+      "description": "Multi-region horizontal scaling evolution path"
+    },
+    {
+      "key": "areas-for-deeper-dive",
+      "file": "06_Rationale_and_Future.md",
+      "start_anchor": "<!-- anchor: areas-for-deeper-dive -->",
+      "description": "Areas requiring detailed design work before implementation"
+    },
+    {
+      "key": "deepdive-security-audit",
+      "file": "06_Rationale_and_Future.md",
+      "start_anchor": "<!-- anchor: deepdive-security-audit -->",
+      "description": "Security architecture and compliance deep dive requirements"
+    },
+    {
+      "key": "deepdive-performance-testing",
+      "file": "06_Rationale_and_Future.md",
+      "start_anchor": "<!-- anchor: deepdive-performance-testing -->",
+      "description": "Performance testing and capacity planning deep dive requirements"
+    },
+    {
+      "key": "deepdive-disaster-recovery",
+      "file": "06_Rationale_and_Future.md",
+      "start_anchor": "<!-- anchor: deepdive-disaster-recovery -->",
+      "description": "Disaster recovery and business continuity deep dive requirements"
+    },
+    {
+      "key": "deepdive-api-contracts",
+      "file": "06_Rationale_and_Future.md",
+      "start_anchor": "<!-- anchor: deepdive-api-contracts -->",
+      "description": "API contract design and versioning deep dive requirements"
+    },
+    {
+      "key": "deepdive-observability",
+      "file": "06_Rationale_and_Future.md",
+      "start_anchor": "<!-- anchor: deepdive-observability -->",
+      "description": "Distributed tracing observability deep dive requirements"
+    },
+    {
+      "key": "deepdive-cicd-pipeline",
+      "file": "06_Rationale_and_Future.md",
+      "start_anchor": "<!-- anchor: deepdive-cicd-pipeline -->",
+      "description": "CI/CD pipeline hardening deep dive requirements"
+    },
+    {
+      "key": "glossary",
+      "file": "06_Rationale_and_Future.md",
+      "start_anchor": "<!-- anchor: glossary -->",
+      "description": "Glossary of technical terms and acronyms used in the blueprint"
+    }
+  ]
+}

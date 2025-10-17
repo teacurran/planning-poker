@@ -1,0 +1,604 @@
+{
+  "locations": [
+    {
+      "key": "project-overview",
+      "file": "01_Plan_Overview_and_Setup.md",
+      "start_anchor": "<!-- anchor: project-overview -->",
+      "description": "High-level project vision, goals, and requirements summary"
+    },
+    {
+      "key": "goal",
+      "file": "01_Plan_Overview_and_Setup.md",
+      "start_anchor": "<!-- anchor: goal -->",
+      "description": "Concise project goal statement"
+    },
+    {
+      "key": "requirements-summary",
+      "file": "01_Plan_Overview_and_Setup.md",
+      "start_anchor": "<!-- anchor: requirements-summary -->",
+      "description": "Bulleted summary of key product features and constraints"
+    },
+    {
+      "key": "key-assumptions",
+      "file": "01_Plan_Overview_and_Setup.md",
+      "start_anchor": "<!-- anchor: key-assumptions -->",
+      "description": "Assumptions about technology stack, team, timeline, and scale"
+    },
+    {
+      "key": "core-architecture",
+      "file": "01_Plan_Overview_and_Setup.md",
+      "start_anchor": "<!-- anchor: core-architecture -->",
+      "description": "Architectural style and core technology decisions"
+    },
+    {
+      "key": "architectural-style",
+      "file": "01_Plan_Overview_and_Setup.md",
+      "start_anchor": "<!-- anchor: architectural-style -->",
+      "description": "Modular monolith with event-driven reactive patterns rationale"
+    },
+    {
+      "key": "technology-stack",
+      "file": "01_Plan_Overview_and_Setup.md",
+      "start_anchor": "<!-- anchor: technology-stack -->",
+      "description": "Complete technology stack breakdown (frontend, backend, database, deployment)"
+    },
+    {
+      "key": "key-components",
+      "file": "01_Plan_Overview_and_Setup.md",
+      "start_anchor": "<!-- anchor: key-components -->",
+      "description": "Major system components and their responsibilities"
+    },
+    {
+      "key": "data-model-overview",
+      "file": "01_Plan_Overview_and_Setup.md",
+      "start_anchor": "<!-- anchor: data-model-overview -->",
+      "description": "Overview of 11 core database entities and design principles"
+    },
+    {
+      "key": "api-contract-style",
+      "file": "01_Plan_Overview_and_Setup.md",
+      "start_anchor": "<!-- anchor: api-contract-style -->",
+      "description": "RESTful JSON API and WebSocket protocol specifications"
+    },
+    {
+      "key": "communication-patterns",
+      "file": "01_Plan_Overview_and_Setup.md",
+      "start_anchor": "<!-- anchor: communication-patterns -->",
+      "description": "Synchronous REST, asynchronous WebSocket, and job processing patterns"
+    },
+    {
+      "key": "key-architectural-artifacts",
+      "file": "01_Plan_Overview_and_Setup.md",
+      "start_anchor": "<!-- anchor: key-architectural-artifacts -->",
+      "description": "List of diagrams and specifications to be generated"
+    },
+    {
+      "key": "directory-structure",
+      "file": "01_Plan_Overview_and_Setup.md",
+      "start_anchor": "<!-- anchor: directory-structure -->",
+      "description": "Proposed file and directory layout for the entire project"
+    },
+    {
+      "key": "iteration-plan-summary",
+      "file": "01_Plan_Overview_and_Setup.md",
+      "start_anchor": "<!-- anchor: iteration-plan-summary -->",
+      "description": "Overview of 8 iterations with dependencies and flow"
+    },
+    {
+      "key": "iteration-1",
+      "file": "02_Iteration_I1.md",
+      "start_anchor": "<!-- anchor: iteration-1 -->",
+      "description": "Iteration 1: Project Setup & Database Foundation - complete plan with 8 tasks"
+    },
+    {
+      "key": "task-i1-t1",
+      "file": "02_Iteration_I1.md",
+      "start_anchor": "<!-- anchor: task-i1-t1 -->",
+      "description": "Task I1.T1: Initialize Backend Project Structure (Quarkus Maven setup)"
+    },
+    {
+      "key": "task-i1-t2",
+      "file": "02_Iteration_I1.md",
+      "start_anchor": "<!-- anchor: task-i1-t2 -->",
+      "description": "Task I1.T2: Initialize Frontend Project Structure (React TypeScript Vite)"
+    },
+    {
+      "key": "task-i1-t3",
+      "file": "02_Iteration_I1.md",
+      "start_anchor": "<!-- anchor: task-i1-t3 -->",
+      "description": "Task I1.T3: Define Database Schema & Create Migration Scripts (11 tables)"
+    },
+    {
+      "key": "task-i1-t4",
+      "file": "02_Iteration_I1.md",
+      "start_anchor": "<!-- anchor: task-i1-t4 -->",
+      "description": "Task I1.T4: Create JPA Entity Classes with Panache"
+    },
+    {
+      "key": "task-i1-t5",
+      "file": "02_Iteration_I1.md",
+      "start_anchor": "<!-- anchor: task-i1-t5 -->",
+      "description": "Task I1.T5: Set Up Local Development Environment with Docker Compose"
+    },
+    {
+      "key": "task-i1-t6",
+      "file": "02_Iteration_I1.md",
+      "start_anchor": "<!-- anchor: task-i1-t6 -->",
+      "description": "Task I1.T6: Configure CI/CD Pipeline (GitHub Actions)"
+    },
+    {
+      "key": "task-i1-t7",
+      "file": "02_Iteration_I1.md",
+      "start_anchor": "<!-- anchor: task-i1-t7 -->",
+      "description": "Task I1.T7: Create Panache Repository Interfaces"
+    },
+    {
+      "key": "task-i1-t8",
+      "file": "02_Iteration_I1.md",
+      "start_anchor": "<!-- anchor: task-i1-t8 -->",
+      "description": "Task I1.T8: Write Integration Tests for Repositories"
+    },
+    {
+      "key": "iteration-2",
+      "file": "02_Iteration_I2.md",
+      "start_anchor": "<!-- anchor: iteration-2 -->",
+      "description": "Iteration 2: Core Backend Services & API Contracts - 8 tasks for services and specs"
+    },
+    {
+      "key": "task-i2-t1",
+      "file": "02_Iteration_I2.md",
+      "start_anchor": "<!-- anchor: task-i2-t1 -->",
+      "description": "Task I2.T1: Generate OpenAPI 3.1 Specification for REST API"
+    },
+    {
+      "key": "task-i2-t2",
+      "file": "02_Iteration_I2.md",
+      "start_anchor": "<!-- anchor: task-i2-t2 -->",
+      "description": "Task I2.T2: Define WebSocket Protocol Specification"
+    },
+    {
+      "key": "task-i2-t3",
+      "file": "02_Iteration_I2.md",
+      "start_anchor": "<!-- anchor: task-i2-t3 -->",
+      "description": "Task I2.T3: Implement Room Service (CRUD Operations)"
+    },
+    {
+      "key": "task-i2-t4",
+      "file": "02_Iteration_I2.md",
+      "start_anchor": "<!-- anchor: task-i2-t4 -->",
+      "description": "Task I2.T4: Implement User Service (Profile Management)"
+    },
+    {
+      "key": "task-i2-t5",
+      "file": "02_Iteration_I2.md",
+      "start_anchor": "<!-- anchor: task-i2-t5 -->",
+      "description": "Task I2.T5: Create REST Controllers for Room Management"
+    },
+    {
+      "key": "task-i2-t6",
+      "file": "02_Iteration_I2.md",
+      "start_anchor": "<!-- anchor: task-i2-t6 -->",
+      "description": "Task I2.T6: Create REST Controllers for User Management"
+    },
+    {
+      "key": "task-i2-t7",
+      "file": "02_Iteration_I2.md",
+      "start_anchor": "<!-- anchor: task-i2-t7 -->",
+      "description": "Task I2.T7: Write Unit Tests for Domain Services"
+    },
+    {
+      "key": "task-i2-t8",
+      "file": "02_Iteration_I2.md",
+      "start_anchor": "<!-- anchor: task-i2-t8 -->",
+      "description": "Task I2.T8: Write Integration Tests for REST Controllers"
+    },
+    {
+      "key": "iteration-3",
+      "file": "02_Iteration_I3.md",
+      "start_anchor": "<!-- anchor: iteration-3 -->",
+      "description": "Iteration 3: Authentication & User Management - OAuth2, JWT, frontend auth UI"
+    },
+    {
+      "key": "task-i3-t1",
+      "file": "02_Iteration_I3.md",
+      "start_anchor": "<!-- anchor: task-i3-t1 -->",
+      "description": "Task I3.T1: Implement OAuth2 Integration Adapter (Google & Microsoft)"
+    },
+    {
+      "key": "task-i3-t2",
+      "file": "02_Iteration_I3.md",
+      "start_anchor": "<!-- anchor: task-i3-t2 -->",
+      "description": "Task I3.T2: Implement JWT Token Service (Generation & Validation)"
+    },
+    {
+      "key": "task-i3-t3",
+      "file": "02_Iteration_I3.md",
+      "start_anchor": "<!-- anchor: task-i3-t3 -->",
+      "description": "Task I3.T3: Implement Authentication REST Controller"
+    },
+    {
+      "key": "task-i3-t4",
+      "file": "02_Iteration_I3.md",
+      "start_anchor": "<!-- anchor: task-i3-t4 -->",
+      "description": "Task I3.T4: Implement JWT Authentication Filter"
+    },
+    {
+      "key": "task-i3-t5",
+      "file": "02_Iteration_I3.md",
+      "start_anchor": "<!-- anchor: task-i3-t5 -->",
+      "description": "Task I3.T5: Create Frontend Authentication Components (Login, OAuth Callback)"
+    },
+    {
+      "key": "task-i3-t6",
+      "file": "02_Iteration_I3.md",
+      "start_anchor": "<!-- anchor: task-i3-t6 -->",
+      "description": "Task I3.T6: Implement Frontend API Client with Authentication"
+    },
+    {
+      "key": "task-i3-t7",
+      "file": "02_Iteration_I3.md",
+      "start_anchor": "<!-- anchor: task-i3-t7 -->",
+      "description": "Task I3.T7: Create User Dashboard Page (Frontend)"
+    },
+    {
+      "key": "task-i3-t8",
+      "file": "02_Iteration_I3.md",
+      "start_anchor": "<!-- anchor: task-i3-t8 -->",
+      "description": "Task I3.T8: Write End-to-End Tests for Authentication Flow"
+    },
+    {
+      "key": "iteration-4",
+      "file": "02_Iteration_I4.md",
+      "start_anchor": "<!-- anchor: iteration-4 -->",
+      "description": "Iteration 4: Real-Time Voting Engine (WebSocket) - voting flow with Redis Pub/Sub"
+    },
+    {
+      "key": "task-i4-t1",
+      "file": "02_Iteration_I4.md",
+      "start_anchor": "<!-- anchor: task-i4-t1 -->",
+      "description": "Task I4.T1: Implement WebSocket Connection Handler"
+    },
+    {
+      "key": "task-i4-t2",
+      "file": "02_Iteration_I4.md",
+      "start_anchor": "<!-- anchor: task-i4-t2 -->",
+      "description": "Task I4.T2: Implement Redis Pub/Sub Event Publisher & Subscriber"
+    },
+    {
+      "key": "task-i4-t3",
+      "file": "02_Iteration_I4.md",
+      "start_anchor": "<!-- anchor: task-i4-t3 -->",
+      "description": "Task I4.T3: Implement Voting Service (Vote Casting & Round Management)"
+    },
+    {
+      "key": "task-i4-t4",
+      "file": "02_Iteration_I4.md",
+      "start_anchor": "<!-- anchor: task-i4-t4 -->",
+      "description": "Task I4.T4: Implement WebSocket Message Handlers (Vote, Reveal, Chat)"
+    },
+    {
+      "key": "task-i4-t5",
+      "file": "02_Iteration_I4.md",
+      "start_anchor": "<!-- anchor: task-i4-t5 -->",
+      "description": "Task I4.T5: Create Frontend WebSocket Manager"
+    },
+    {
+      "key": "task-i4-t6",
+      "file": "02_Iteration_I4.md",
+      "start_anchor": "<!-- anchor: task-i4-t6 -->",
+      "description": "Task I4.T6: Create Voting Room UI Components (Frontend)"
+    },
+    {
+      "key": "task-i4-t7",
+      "file": "02_Iteration_I4.md",
+      "start_anchor": "<!-- anchor: task-i4-t7 -->",
+      "description": "Task I4.T7: Write Integration Tests for WebSocket Voting Flow"
+    },
+    {
+      "key": "task-i4-t8",
+      "file": "02_Iteration_I4.md",
+      "start_anchor": "<!-- anchor: task-i4-t8 -->",
+      "description": "Task I4.T8: Write End-to-End Tests for Voting UI (Playwright)"
+    },
+    {
+      "key": "iteration-5",
+      "file": "02_Iteration_I5.md",
+      "start_anchor": "<!-- anchor: iteration-5 -->",
+      "description": "Iteration 5: Subscription & Billing (Stripe Integration) - payments and tier enforcement"
+    },
+    {
+      "key": "task-i5-t1",
+      "file": "02_Iteration_I5.md",
+      "start_anchor": "<!-- anchor: task-i5-t1 -->",
+      "description": "Task I5.T1: Implement Stripe Integration Adapter"
+    },
+    {
+      "key": "task-i5-t2",
+      "file": "02_Iteration_I5.md",
+      "start_anchor": "<!-- anchor: task-i5-t2 -->",
+      "description": "Task I5.T2: Implement Billing Service (Subscription Management)"
+    },
+    {
+      "key": "task-i5-t3",
+      "file": "02_Iteration_I5.md",
+      "start_anchor": "<!-- anchor: task-i5-t3 -->",
+      "description": "Task I5.T3: Implement Stripe Webhook Handler"
+    },
+    {
+      "key": "task-i5-t4",
+      "file": "02_Iteration_I5.md",
+      "start_anchor": "<!-- anchor: task-i5-t4 -->",
+      "description": "Task I5.T4: Implement Subscription Tier Enforcement"
+    },
+    {
+      "key": "task-i5-t5",
+      "file": "02_Iteration_I5.md",
+      "start_anchor": "<!-- anchor: task-i5-t5 -->",
+      "description": "Task I5.T5: Create Subscription REST Controllers"
+    },
+    {
+      "key": "task-i5-t6",
+      "file": "02_Iteration_I5.md",
+      "start_anchor": "<!-- anchor: task-i5-t6 -->",
+      "description": "Task I5.T6: Create Frontend Pricing & Upgrade UI"
+    },
+    {
+      "key": "task-i5-t7",
+      "file": "02_Iteration_I5.md",
+      "start_anchor": "<!-- anchor: task-i5-t7 -->",
+      "description": "Task I5.T7: Write Unit Tests for Billing Service"
+    },
+    {
+      "key": "task-i5-t8",
+      "file": "02_Iteration_I5.md",
+      "start_anchor": "<!-- anchor: task-i5-t8 -->",
+      "description": "Task I5.T8: Write Integration Tests for Stripe Webhook"
+    },
+    {
+      "key": "iteration-6",
+      "file": "02_Iteration_I6.md",
+      "start_anchor": "<!-- anchor: iteration-6 -->",
+      "description": "Iteration 6: Reporting & Analytics - session history, tier-based reports, export"
+    },
+    {
+      "key": "task-i6-t1",
+      "file": "02_Iteration_I6.md",
+      "start_anchor": "<!-- anchor: task-i6-t1 -->",
+      "description": "Task I6.T1: Implement Session History Tracking"
+    },
+    {
+      "key": "task-i6-t2",
+      "file": "02_Iteration_I6.md",
+      "start_anchor": "<!-- anchor: task-i6-t2 -->",
+      "description": "Task I6.T2: Implement Reporting Service (Tier-Based Access)"
+    },
+    {
+      "key": "task-i6-t3",
+      "file": "02_Iteration_I6.md",
+      "start_anchor": "<!-- anchor: task-i6-t3 -->",
+      "description": "Task I6.T3: Implement Background Export Job Processor"
+    },
+    {
+      "key": "task-i6-t4",
+      "file": "02_Iteration_I6.md",
+      "start_anchor": "<!-- anchor: task-i6-t4 -->",
+      "description": "Task I6.T4: Create Reporting REST Controllers"
+    },
+    {
+      "key": "task-i6-t5",
+      "file": "02_Iteration_I6.md",
+      "start_anchor": "<!-- anchor: task-i6-t5 -->",
+      "description": "Task I6.T5: Create Frontend Session History Page"
+    },
+    {
+      "key": "task-i6-t6",
+      "file": "02_Iteration_I6.md",
+      "start_anchor": "<!-- anchor: task-i6-t6 -->",
+      "description": "Task I6.T6: Create Frontend Session Detail Page (Tier-Gated)"
+    },
+    {
+      "key": "task-i6-t7",
+      "file": "02_Iteration_I6.md",
+      "start_anchor": "<!-- anchor: task-i6-t7 -->",
+      "description": "Task I6.T7: Write Unit Tests for Reporting Service"
+    },
+    {
+      "key": "task-i6-t8",
+      "file": "02_Iteration_I6.md",
+      "start_anchor": "<!-- anchor: task-i6-t8 -->",
+      "description": "Task I6.T8: Write Integration Tests for Export Job Processing"
+    },
+    {
+      "key": "iteration-7",
+      "file": "02_Iteration_I7.md",
+      "start_anchor": "<!-- anchor: iteration-7 -->",
+      "description": "Iteration 7: Enterprise Features (SSO & Organizations) - OIDC/SAML2, org management"
+    },
+    {
+      "key": "task-i7-t1",
+      "file": "02_Iteration_I7.md",
+      "start_anchor": "<!-- anchor: task-i7-t1 -->",
+      "description": "Task I7.T1: Implement SSO Adapter (OIDC & SAML2)"
+    },
+    {
+      "key": "task-i7-t2",
+      "file": "02_Iteration_I7.md",
+      "start_anchor": "<!-- anchor: task-i7-t2 -->",
+      "description": "Task I7.T2: Implement Organization Service"
+    },
+    {
+      "key": "task-i7-t3",
+      "file": "02_Iteration_I7.md",
+      "start_anchor": "<!-- anchor: task-i7-t3 -->",
+      "description": "Task I7.T3: Implement Audit Logging Service"
+    },
+    {
+      "key": "task-i7-t4",
+      "file": "02_Iteration_I7.md",
+      "start_anchor": "<!-- anchor: task-i7-t4 -->",
+      "description": "Task I7.T4: Implement SSO Authentication Flow"
+    },
+    {
+      "key": "task-i7-t5",
+      "file": "02_Iteration_I7.md",
+      "start_anchor": "<!-- anchor: task-i7-t5 -->",
+      "description": "Task I7.T5: Create Organization REST Controllers"
+    },
+    {
+      "key": "task-i7-t6",
+      "file": "02_Iteration_I7.md",
+      "start_anchor": "<!-- anchor: task-i7-t6 -->",
+      "description": "Task I7.T6: Create Frontend Organization Management Pages"
+    },
+    {
+      "key": "task-i7-t7",
+      "file": "02_Iteration_I7.md",
+      "start_anchor": "<!-- anchor: task-i7-t7 -->",
+      "description": "Task I7.T7: Write Integration Tests for SSO Authentication"
+    },
+    {
+      "key": "task-i7-t8",
+      "file": "02_Iteration_I7.md",
+      "start_anchor": "<!-- anchor: task-i7-t8 -->",
+      "description": "Task I7.T8: Write Unit Tests for Organization Service"
+    },
+    {
+      "key": "iteration-8",
+      "file": "02_Iteration_I8.md",
+      "start_anchor": "<!-- anchor: iteration-8 -->",
+      "description": "Iteration 8: Deployment & Production Readiness - K8s, monitoring, docs, launch"
+    },
+    {
+      "key": "task-i8-t1",
+      "file": "02_Iteration_I8.md",
+      "start_anchor": "<!-- anchor: task-i8-t1 -->",
+      "description": "Task I8.T1: Create Kubernetes Deployment Manifests"
+    },
+    {
+      "key": "task-i8-t2",
+      "file": "02_Iteration_I8.md",
+      "start_anchor": "<!-- anchor: task-i8-t2 -->",
+      "description": "Task I8.T2: Configure Prometheus Metrics & Grafana Dashboards"
+    },
+    {
+      "key": "task-i8-t3",
+      "file": "02_Iteration_I8.md",
+      "start_anchor": "<!-- anchor: task-i8-t3 -->",
+      "description": "Task I8.T3: Implement Structured Logging with Correlation IDs"
+    },
+    {
+      "key": "task-i8-t4",
+      "file": "02_Iteration_I8.md",
+      "start_anchor": "<!-- anchor: task-i8-t4 -->",
+      "description": "Task I8.T4: Performance Optimization & Load Testing"
+    },
+    {
+      "key": "task-i8-t5",
+      "file": "02_Iteration_I8.md",
+      "start_anchor": "<!-- anchor: task-i8-t5 -->",
+      "description": "Task I8.T5: Security Hardening & Vulnerability Scanning"
+    },
+    {
+      "key": "task-i8-t6",
+      "file": "02_Iteration_I8.md",
+      "start_anchor": "<!-- anchor: task-i8-t6 -->",
+      "description": "Task I8.T6: Create Deployment & Operations Documentation"
+    },
+    {
+      "key": "task-i8-t7",
+      "file": "02_Iteration_I8.md",
+      "start_anchor": "<!-- anchor: task-i8-t7 -->",
+      "description": "Task I8.T7: End-to-End Production Smoke Tests"
+    },
+    {
+      "key": "task-i8-t8",
+      "file": "02_Iteration_I8.md",
+      "start_anchor": "<!-- anchor: task-i8-t8 -->",
+      "description": "Task I8.T8: Prepare Marketing Website & Launch Checklist"
+    },
+    {
+      "key": "verification-and-integration-strategy",
+      "file": "03_Verification_and_Glossary.md",
+      "start_anchor": "<!-- anchor: verification-and-integration-strategy -->",
+      "description": "Comprehensive testing strategy, CI/CD, and quality gates"
+    },
+    {
+      "key": "testing-levels",
+      "file": "03_Verification_and_Glossary.md",
+      "start_anchor": "<!-- anchor: testing-levels -->",
+      "description": "Unit, integration, E2E, smoke, performance, and security testing levels"
+    },
+    {
+      "key": "unit-testing",
+      "file": "03_Verification_and_Glossary.md",
+      "start_anchor": "<!-- anchor: unit-testing -->",
+      "description": "Unit testing approach with JUnit 5, Mockito, and coverage targets"
+    },
+    {
+      "key": "integration-testing",
+      "file": "03_Verification_and_Glossary.md",
+      "start_anchor": "<!-- anchor: integration-testing -->",
+      "description": "Integration testing with Testcontainers and REST Assured"
+    },
+    {
+      "key": "end-to-end-testing",
+      "file": "03_Verification_and_Glossary.md",
+      "start_anchor": "<!-- anchor: end-to-end-testing -->",
+      "description": "E2E testing with Playwright for complete user journeys"
+    },
+    {
+      "key": "smoke-testing",
+      "file": "03_Verification_and_Glossary.md",
+      "start_anchor": "<!-- anchor: smoke-testing -->",
+      "description": "Smoke testing for post-deployment validation"
+    },
+    {
+      "key": "performance-testing",
+      "file": "03_Verification_and_Glossary.md",
+      "start_anchor": "<!-- anchor: performance-testing -->",
+      "description": "Performance testing with k6 to validate NFRs"
+    },
+    {
+      "key": "security-testing",
+      "file": "03_Verification_and_Glossary.md",
+      "start_anchor": "<!-- anchor: security-testing -->",
+      "description": "Security testing with SAST, dependency scanning, and OWASP ZAP"
+    },
+    {
+      "key": "ci-cd-pipeline",
+      "file": "03_Verification_and_Glossary.md",
+      "start_anchor": "<!-- anchor: ci-cd-pipeline -->",
+      "description": "CI/CD pipeline integration with quality gates and deployment strategies"
+    },
+    {
+      "key": "code-quality-gates",
+      "file": "03_Verification_and_Glossary.md",
+      "start_anchor": "<!-- anchor: code-quality-gates -->",
+      "description": "Automated and manual code quality checks (coverage, SonarQube, linting)"
+    },
+    {
+      "key": "artifact-validation",
+      "file": "03_Verification_and_Glossary.md",
+      "start_anchor": "<!-- anchor: artifact-validation -->",
+      "description": "Validation of API specs, diagrams, and database migrations"
+    },
+    {
+      "key": "integration-strategy",
+      "file": "03_Verification_and_Glossary.md",
+      "start_anchor": "<!-- anchor: integration-strategy -->",
+      "description": "Strategy for integrating components and external services"
+    },
+    {
+      "key": "glossary",
+      "file": "03_Verification_and_Glossary.md",
+      "start_anchor": "<!-- anchor: glossary -->",
+      "description": "Glossary of technical terms and acronyms used throughout the plan"
+    },
+    {
+      "key": "acronyms",
+      "file": "03_Verification_and_Glossary.md",
+      "start_anchor": "<!-- anchor: acronyms -->",
+      "description": "Common acronyms and abbreviations reference"
+    }
+  ]
+}

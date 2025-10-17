@@ -1,0 +1,14 @@
+{
+  "activeTemplate": "codemachine.workflow.js",
+  "lastUpdated": "2025-10-17T06:08:06.637Z",
+  "completedSteps": [
+    0,
+    1,
+    2,
+    3
+  ],
+  "notCompletedSteps": [
+    4
+  ],
+  "resumeFromLastStep": true
+}

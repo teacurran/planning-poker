@@ -1,0 +1,185 @@
+[
+  {
+    "task_id": "I3.T1",
+    "iteration_id": "I3",
+    "iteration_goal": "Implement OAuth2 authentication (Google, Microsoft), JWT token generation/validation, user registration/login flows, and frontend authentication UI to enable secured access to the application.",
+    "description": "Create `OAuth2Adapter` service integrating with Google and Microsoft OAuth2 providers using Quarkus OIDC extension. Implement authorization code flow with PKCE: validate authorization code, exchange for access token, fetch user profile (ID token claims: sub, email, name, picture), return `OAuthUserInfo` DTO. Configure OAuth2 client IDs/secrets in `application.properties` (use environment variables for prod). Handle token validation (signature verification, expiration checks). Implement provider-specific logic (Google uses `accounts.google.com`, Microsoft uses `login.microsoftonline.com`).",
+    "agent_type_hint": "BackendAgent",
+    "inputs": "OAuth2 authentication flow from architecture blueprint, Quarkus OIDC extension documentation, Google and Microsoft OAuth2 endpoint URLs",
+    "input_files": [
+      ".codemachine/artifacts/architecture/04_Behavior_and_Communication.md"
+    ],
+    "target_files": [
+      "backend/src/main/java/com/scrumpoker/integration/oauth/OAuth2Adapter.java",
+      "backend/src/main/java/com/scrumpoker/integration/oauth/OAuthUserInfo.java",
+      "backend/src/main/java/com/scrumpoker/integration/oauth/GoogleOAuthProvider.java",
+      "backend/src/main/java/com/scrumpoker/integration/oauth/MicrosoftOAuthProvider.java",
+      "backend/src/main/resources/application.properties"
+    ],
+    "deliverables": "OAuth2Adapter with methods: `exchangeCodeForToken(provider, code, codeVerifier)`, `validateIdToken(idToken)`, Provider-specific implementations for Google and Microsoft, OAuthUserInfo DTO with fields: subject, email, name, avatarUrl, provider, Configuration properties for client IDs, secrets, redirect URIs, ID token signature validation using JWKS endpoints",
+    "acceptance_criteria": "OAuth2 flow completes successfully for Google (test with real OAuth code), OAuth2 flow completes for Microsoft (test with real OAuth code), ID token validation rejects expired/invalid tokens, OAuthUserInfo correctly populated from ID token claims, Environment variables used for sensitive config (client secrets)",
+    "dependencies": [],
+    "parallelizable": true,
+    "done": false
+  },
+  {
+    "task_id": "I3.T2",
+    "iteration_id": "I3",
+    "iteration_goal": "Implement OAuth2 authentication (Google, Microsoft), JWT token generation/validation, user registration/login flows, and frontend authentication UI to enable secured access to the application.",
+    "description": "Create `JwtTokenService` for JWT access token and refresh token management. Implement token generation: create access token with claims (sub: userId, email, roles, tier, exp: 1 hour), create refresh token (UUID stored in Redis with 30-day TTL). Implement token validation: verify signature (RSA key), check expiration, extract claims. Implement token refresh: validate refresh token from Redis, generate new access token, rotate refresh token. Use SmallRye JWT library. Store RSA private key in application config (production: Kubernetes Secret), public key for validation.",
+    "agent_type_hint": "BackendAgent",
+    "inputs": "JWT authentication requirements from architecture blueprint, SmallRye JWT Quarkus extension patterns, Token lifecycle (access 1 hour, refresh 30 days)",
+    "input_files": [
+      ".codemachine/artifacts/architecture/05_Operational_Architecture.md"
+    ],
+    "target_files": [
+      "backend/src/main/java/com/scrumpoker/security/JwtTokenService.java",
+      "backend/src/main/java/com/scrumpoker/security/TokenPair.java",
+      "backend/src/main/java/com/scrumpoker/security/JwtClaims.java",
+      "backend/src/main/resources/privateKey.pem",
+      "backend/src/main/resources/publicKey.pem"
+    ],
+    "deliverables": "JwtTokenService with methods: `generateTokens(User)`, `validateAccessToken(String)`, `refreshTokens(String refreshToken)`, RSA key pair generation script (openssl commands in README), Access token with claims: sub, email, roles, tier, exp, iat, Refresh token storage in Redis with TTL, Token rotation on refresh (invalidate old refresh token, issue new one)",
+    "acceptance_criteria": "Generated access token validates successfully, Token includes correct user claims (userId, email, subscription tier), Expired token validation throws JwtException, Refresh token lookup succeeds from Redis, Token rotation invalidates old refresh token, Signature validation uses RSA public key correctly",
+    "dependencies": [],
+    "parallelizable": true,
+    "done": false
+  },
+  {
+    "task_id": "I3.T3",
+    "iteration_id": "I3",
+    "iteration_goal": "Implement OAuth2 authentication (Google, Microsoft), JWT token generation/validation, user registration/login flows, and frontend authentication UI to enable secured access to the application.",
+    "description": "Create `AuthController` with endpoints per OpenAPI spec: `POST /api/v1/auth/oauth/callback` (exchange OAuth code for JWT tokens), `POST /api/v1/auth/refresh` (refresh access token), `POST /api/v1/auth/logout` (revoke refresh token). Inject `OAuth2Adapter`, `UserService`, `JwtTokenService`. OAuth callback flow: validate code, exchange for user info, find or create user in database, generate JWT tokens, return TokenPair. Refresh flow: validate refresh token, generate new tokens, rotate refresh token. Logout flow: delete refresh token from Redis.",
+    "agent_type_hint": "BackendAgent",
+    "inputs": "OAuth2 sequence diagram from architecture blueprint, OpenAPI specification for auth endpoints, OAuth2Adapter and JwtTokenService from I3.T1, I3.T2",
+    "input_files": [
+      "api/openapi.yaml",
+      "backend/src/main/java/com/scrumpoker/integration/oauth/OAuth2Adapter.java",
+      "backend/src/main/java/com/scrumpoker/security/JwtTokenService.java",
+      "backend/src/main/java/com/scrumpoker/domain/user/UserService.java"
+    ],
+    "target_files": [
+      "backend/src/main/java/com/scrumpoker/api/rest/AuthController.java",
+      "backend/src/main/java/com/scrumpoker/api/rest/dto/OAuthCallbackRequest.java",
+      "backend/src/main/java/com/scrumpoker/api/rest/dto/TokenResponse.java",
+      "backend/src/main/java/com/scrumpoker/api/rest/dto/RefreshTokenRequest.java"
+    ],
+    "deliverables": "AuthController with 3 endpoints: /oauth/callback, /refresh, /logout, OAuth callback handler: code exchange → user provisioning → token generation, User provisioning logic (find by oauth_provider + oauth_subject, create if new user), Refresh token rotation implementation, Logout implementation (Redis DELETE refresh token key)",
+    "acceptance_criteria": "POST /oauth/callback with valid code returns 200 with access + refresh tokens, New user created in database on first OAuth login, Existing user found and tokens issued on subsequent login, POST /refresh with valid refresh token returns new token pair, POST /logout deletes refresh token from Redis (subsequent refresh fails), Invalid codes/tokens return 401 Unauthorized",
+    "dependencies": ["I3.T1", "I3.T2", "I2.T4"],
+    "parallelizable": false,
+    "done": false
+  },
+  {
+    "task_id": "I3.T4",
+    "iteration_id": "I3",
+    "iteration_goal": "Implement OAuth2 authentication (Google, Microsoft), JWT token generation/validation, user registration/login flows, and frontend authentication UI to enable secured access to the application.",
+    "description": "Create JAX-RS request filter (`@Provider`) for JWT authentication. Intercept requests to protected endpoints, extract JWT from `Authorization: Bearer <token>` header, validate token using `JwtTokenService`, extract user claims, set security context (user ID, roles) for authorization checks. Skip authentication for public endpoints (/api/v1/auth/*, OPTIONS requests). Handle authentication failures with 401 Unauthorized response. Integrate with Quarkus Security for `@RolesAllowed` annotations.",
+    "agent_type_hint": "BackendAgent",
+    "inputs": "JWT validation logic from I3.T2, JAX-RS filter patterns, Quarkus Security integration",
+    "input_files": [
+      "backend/src/main/java/com/scrumpoker/security/JwtTokenService.java"
+    ],
+    "target_files": [
+      "backend/src/main/java/com/scrumpoker/security/JwtAuthenticationFilter.java",
+      "backend/src/main/java/com/scrumpoker/security/SecurityContextImpl.java"
+    ],
+    "deliverables": "JwtAuthenticationFilter annotated with `@Provider` and `@Priority(AUTHENTICATION)`, Bearer token extraction from Authorization header, Token validation and claims extraction, Security context population (userId, roles, email), Public endpoint exemption (auth endpoints, health checks), 401 response for missing/invalid tokens",
+    "acceptance_criteria": "Protected endpoints (e.g., GET /api/v1/users/{userId}) require valid JWT (401 if missing), Valid JWT allows request to proceed, populates security context, Expired JWT returns 401 Unauthorized, Public endpoints (/api/v1/auth/*) accessible without JWT, `@RolesAllowed` annotations work correctly (use roles from JWT claims)",
+    "dependencies": ["I3.T2"],
+    "parallelizable": false,
+    "done": false
+  },
+  {
+    "task_id": "I3.T5",
+    "iteration_id": "I3",
+    "iteration_goal": "Implement OAuth2 authentication (Google, Microsoft), JWT token generation/validation, user registration/login flows, and frontend authentication UI to enable secured access to the application.",
+    "description": "Implement React components for authentication flow: `LoginPage` with \"Sign in with Google\" and \"Sign in with Microsoft\" buttons (redirect to OAuth providers with PKCE), `OAuthCallbackPage` to handle OAuth redirect (extract code, call `/api/v1/auth/oauth/callback`, store tokens in localStorage, redirect to dashboard). Create `authStore` (Zustand) to manage authentication state (user, tokens, isAuthenticated). Implement `useAuth` hook for accessing auth state. Create `PrivateRoute` component requiring authentication. Generate and store PKCE code_verifier/code_challenge in sessionStorage.",
+    "agent_type_hint": "FrontendAgent",
+    "inputs": "OAuth2 flow from architecture blueprint, OpenAPI spec for auth endpoints, React + TypeScript + Zustand patterns",
+    "input_files": [
+      "api/openapi.yaml",
+      ".codemachine/artifacts/architecture/04_Behavior_and_Communication.md"
+    ],
+    "target_files": [
+      "frontend/src/pages/LoginPage.tsx",
+      "frontend/src/pages/OAuthCallbackPage.tsx",
+      "frontend/src/stores/authStore.ts",
+      "frontend/src/hooks/useAuth.ts",
+      "frontend/src/components/auth/PrivateRoute.tsx",
+      "frontend/src/utils/pkce.ts"
+    ],
+    "deliverables": "LoginPage with OAuth provider buttons styled with Tailwind, PKCE code_verifier generation (crypto.randomBytes equivalent in browser), OAuth redirect URL construction with code_challenge, OAuthCallbackPage: code extraction → API call → token storage, authStore with state: user, accessToken, refreshToken, isAuthenticated, useAuth hook for components to check authentication status, PrivateRoute redirects unauthenticated users to /login",
+    "acceptance_criteria": "Clicking \"Sign in with Google\" redirects to Google OAuth consent screen, After consent, callback page receives code parameter, Callback page successfully exchanges code for tokens (visible in Network tab), Tokens stored in localStorage, authStore updates with user data, Navigating to /dashboard (PrivateRoute) works when authenticated, Unauthenticated users redirected to /login",
+    "dependencies": ["I3.T3"],
+    "parallelizable": false,
+    "done": false
+  },
+  {
+    "task_id": "I3.T6",
+    "iteration_id": "I3",
+    "iteration_goal": "Implement OAuth2 authentication (Google, Microsoft), JWT token generation/validation, user registration/login flows, and frontend authentication UI to enable secured access to the application.",
+    "description": "Create API client wrapper using React Query integrating authentication. Configure Axios instance with base URL, request interceptor to add `Authorization: Bearer <token>` header from authStore, response interceptor to handle 401 errors (refresh token or logout). Implement token refresh logic: on 401, call `/api/v1/auth/refresh`, update tokens in store, retry original request. Create React Query hooks for common API calls: `useUser(userId)`, `useRooms()`, `useRoomById(roomId)`. Handle loading and error states.",
+    "agent_type_hint": "FrontendAgent",
+    "inputs": "OpenAPI spec for endpoint definitions, React Query patterns, Token refresh flow requirements",
+    "input_files": [
+      "api/openapi.yaml",
+      "frontend/src/stores/authStore.ts"
+    ],
+    "target_files": [
+      "frontend/src/services/api.ts",
+      "frontend/src/services/apiHooks.ts",
+      "frontend/src/services/authApi.ts"
+    ],
+    "deliverables": "Axios instance configured with baseURL, timeout, Request interceptor adding Authorization header from authStore, Response interceptor detecting 401, triggering token refresh, Token refresh logic: call /refresh API, update authStore, retry request, React Query hooks: useUser, useRooms, useRoomById, Error handling: network errors, 500 server errors",
+    "acceptance_criteria": "API requests include Authorization header when user authenticated, Expired access token triggers refresh automatically, After refresh, original request retries successfully, If refresh fails (invalid refresh token), user logged out and redirected to login, React Query hooks return loading/error/data states correctly, Cache invalidation works (e.g., after room creation, useRooms refetches)",
+    "dependencies": ["I3.T5"],
+    "parallelizable": false,
+    "done": false
+  },
+  {
+    "task_id": "I3.T7",
+    "iteration_id": "I3",
+    "iteration_goal": "Implement OAuth2 authentication (Google, Microsoft), JWT token generation/validation, user registration/login flows, and frontend authentication UI to enable secured access to the application.",
+    "description": "Implement `DashboardPage` component displaying user profile, list of owned rooms, recent session history, and quick actions (create new room, view preferences). Use `useUser` and `useRooms` hooks to fetch data. Display loading skeleton while fetching, error message on failure. Show user avatar, display name, email. List rooms in card grid with room title, privacy mode badge, last active timestamp, \"Open Room\" button. Add \"Create New Room\" button navigating to room creation form. Style with Tailwind CSS, responsive for mobile/tablet/desktop.",
+    "agent_type_hint": "FrontendAgent",
+    "inputs": "Dashboard requirements from product spec, API hooks from I3.T6, Design system (Tailwind, Headless UI)",
+    "input_files": [
+      "frontend/src/services/apiHooks.ts",
+      "frontend/src/stores/authStore.ts"
+    ],
+    "target_files": [
+      "frontend/src/pages/DashboardPage.tsx",
+      "frontend/src/components/dashboard/UserProfileCard.tsx",
+      "frontend/src/components/dashboard/RoomListCard.tsx",
+      "frontend/src/components/dashboard/CreateRoomButton.tsx"
+    ],
+    "deliverables": "DashboardPage with user profile section (avatar, name, email, tier badge), Room list grid (responsive, 1 col mobile, 2 col tablet, 3 col desktop), Room card component showing title, privacy mode, last active date, Create room button with prominent styling, Loading skeleton using Tailwind animate-pulse, Error state UI (retry button, error message)",
+    "acceptance_criteria": "Dashboard loads user data from API on mount, User profile displays correct information (avatar, name, subscription tier), Room list shows user's owned rooms from API, Clicking room card navigates to /room/{roomId}, Create room button navigates to /rooms/new, Loading state displayed while fetching data, Error state shows message if API call fails, Responsive layout works on mobile, tablet, desktop",
+    "dependencies": ["I3.T6"],
+    "parallelizable": false,
+    "done": false
+  },
+  {
+    "task_id": "I3.T8",
+    "iteration_id": "I3",
+    "iteration_goal": "Implement OAuth2 authentication (Google, Microsoft), JWT token generation/validation, user registration/login flows, and frontend authentication UI to enable secured access to the application.",
+    "description": "Create Playwright end-to-end tests for complete authentication flow: user visits /login, clicks \"Sign in with Google\", OAuth redirect to Google (mock in test), consent granted, redirect to callback, tokens received, dashboard displayed. Test scenarios: successful login, token refresh on expiration, logout, unauthorized access redirects to login. Use Playwright to intercept OAuth redirect, mock OAuth provider responses, verify token storage in localStorage, assert dashboard elements rendered.",
+    "agent_type_hint": "BackendAgent",
+    "inputs": "Authentication flow from architecture blueprint, Playwright testing patterns for OAuth mocking, Frontend authentication components",
+    "input_files": [
+      "frontend/src/pages/LoginPage.tsx",
+      "frontend/src/pages/OAuthCallbackPage.tsx",
+      "frontend/src/pages/DashboardPage.tsx"
+    ],
+    "target_files": [
+      "frontend/e2e/auth.spec.ts",
+      "frontend/e2e/fixtures/mockOAuthResponse.ts"
+    ],
+    "deliverables": "Playwright test: successful OAuth login flow end-to-end, Mock OAuth provider responses (intercept network requests), Assertions: tokens in localStorage, user redirected to /dashboard, profile displayed, Test: logout clears tokens and redirects to /login, Test: accessing /dashboard without auth redirects to /login, Test: expired token triggers refresh (mock 401 response)",
+    "acceptance_criteria": "`npm run test:e2e` executes Playwright tests successfully, OAuth login test completes without real OAuth provider (mocked), Dashboard displays after successful authentication, Logout test clears tokens and redirects correctly, Unauthorized access test verifies PrivateRoute behavior, Tests run in CI pipeline (headless mode)",
+    "dependencies": ["I3.T5", "I3.T7"],
+    "parallelizable": false,
+    "done": false
+  }
+]
