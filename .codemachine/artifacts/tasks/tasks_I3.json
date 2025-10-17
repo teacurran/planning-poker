@@ -113,7 +113,7 @@
     "acceptance_criteria": "Clicking \"Sign in with Google\" redirects to Google OAuth consent screen, After consent, callback page receives code parameter, Callback page successfully exchanges code for tokens (visible in Network tab), Tokens stored in localStorage, authStore updates with user data, Navigating to /dashboard (PrivateRoute) works when authenticated, Unauthenticated users redirected to /login",
     "dependencies": ["I3.T3"],
     "parallelizable": false,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I3.T6",

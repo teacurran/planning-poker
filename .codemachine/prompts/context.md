@@ -10,23 +10,28 @@ This is the full specification of the task you must complete.
 
 ```json
 {
-  "task_id": "I3.T4",
+  "task_id": "I3.T5",
   "iteration_id": "I3",
   "iteration_goal": "Implement OAuth2 authentication (Google, Microsoft), JWT token generation/validation, user registration/login flows, and frontend authentication UI to enable secured access to the application.",
-  "description": "Create JAX-RS request filter (`@Provider`) for JWT authentication. Intercept requests to protected endpoints, extract JWT from `Authorization: Bearer <token>` header, validate token using `JwtTokenService`, extract user claims, set security context (user ID, roles) for authorization checks. Skip authentication for public endpoints (/api/v1/auth/*, OPTIONS requests). Handle authentication failures with 401 Unauthorized response. Integrate with Quarkus Security for `@RolesAllowed` annotations.",
-  "agent_type_hint": "BackendAgent",
-  "inputs": "JWT validation logic from I3.T2, JAX-RS filter patterns, Quarkus Security integration",
+  "description": "Implement React components for authentication flow: `LoginPage` with \"Sign in with Google\" and \"Sign in with Microsoft\" buttons (redirect to OAuth providers with PKCE), `OAuthCallbackPage` to handle OAuth redirect (extract code, call `/api/v1/auth/oauth/callback`, store tokens in localStorage, redirect to dashboard). Create `authStore` (Zustand) to manage authentication state (user, tokens, isAuthenticated). Implement `useAuth` hook for accessing auth state. Create `PrivateRoute` component requiring authentication. Generate and store PKCE code_verifier/code_challenge in sessionStorage.",
+  "agent_type_hint": "FrontendAgent",
+  "inputs": "OAuth2 flow from architecture blueprint, OpenAPI spec for auth endpoints, React + TypeScript + Zustand patterns",
   "input_files": [
-    "backend/src/main/java/com/scrumpoker/security/JwtTokenService.java"
+    "api/openapi.yaml",
+    ".codemachine/artifacts/architecture/04_Behavior_and_Communication.md"
   ],
   "target_files": [
-    "backend/src/main/java/com/scrumpoker/security/JwtAuthenticationFilter.java",
-    "backend/src/main/java/com/scrumpoker/security/SecurityContextImpl.java"
+    "frontend/src/pages/LoginPage.tsx",
+    "frontend/src/pages/OAuthCallbackPage.tsx",
+    "frontend/src/stores/authStore.ts",
+    "frontend/src/hooks/useAuth.ts",
+    "frontend/src/components/auth/PrivateRoute.tsx",
+    "frontend/src/utils/pkce.ts"
   ],
-  "deliverables": "JwtAuthenticationFilter annotated with `@Provider` and `@Priority(AUTHENTICATION)`, Bearer token extraction from Authorization header, Token validation and claims extraction, Security context population (userId, roles, email), Public endpoint exemption (auth endpoints, health checks), 401 response for missing/invalid tokens",
-  "acceptance_criteria": "Protected endpoints (e.g., GET /api/v1/users/{userId}) require valid JWT (401 if missing), Valid JWT allows request to proceed, populates security context, Expired JWT returns 401 Unauthorized, Public endpoints (/api/v1/auth/*) accessible without JWT, `@RolesAllowed` annotations work correctly (use roles from JWT claims)",
+  "deliverables": "LoginPage with OAuth provider buttons styled with Tailwind, PKCE code_verifier generation (crypto.randomBytes equivalent in browser), OAuth redirect URL construction with code_challenge, OAuthCallbackPage: code extraction → API call → token storage, authStore with state: user, accessToken, refreshToken, isAuthenticated, useAuth hook for components to check authentication status, PrivateRoute redirects unauthenticated users to /login",
+  "acceptance_criteria": "Clicking \"Sign in with Google\" redirects to Google OAuth consent screen, After consent, callback page receives code parameter, Callback page successfully exchanges code for tokens (visible in Network tab), Tokens stored in localStorage, authStore updates with user data, Navigating to /dashboard (PrivateRoute) works when authenticated, Unauthenticated users redirected to /login",
   "dependencies": [
-    "I3.T2"
+    "I3.T3"
   ],
   "parallelizable": false,
   "done": false
@@ -39,95 +44,235 @@ This is the full specification of the task you must complete.
 
 The following are the relevant sections from the architecture and plan documents, which I found by analyzing the task description.
 
-### Context: authentication-mechanisms (from 05_Operational_Architecture.md)
+### Context: key-interaction-flow-oauth-login (from 04_Behavior_and_Communication.md)
 
 ```markdown
-##### Authentication Mechanisms
+#### Key Interaction Flow: OAuth2 Authentication (Google/Microsoft)
 
-**OAuth2 Social Login (Free/Pro Tiers):**
-- **Providers:** Google OAuth2, Microsoft Identity Platform
-- **Flow:** Authorization Code Flow with PKCE (Proof Key for Code Exchange) for browser-based clients
-- **Implementation:** Quarkus OIDC extension handling token exchange and validation
-- **Token Storage:** JWT access tokens (1-hour expiration) in browser `localStorage`, refresh tokens (30-day expiration) in `httpOnly` secure cookies
-- **User Provisioning:** Automatic user creation on first login with `oauth_provider` and `oauth_subject` as unique identifiers
-- **Profile Sync:** Email, display name, and avatar URL synced from OAuth provider on each login
+##### Description
 
-**Enterprise SSO (Enterprise Tier):**
-- **Protocols:** OIDC (OpenID Connect) and SAML2 support via Quarkus Security extensions
-- **Configuration:** Per-organization SSO settings stored in `Organization.sso_config` JSONB field (IdP endpoint, certificate, attribute mapping)
-- **Domain Enforcement:** Email domain verification ensures users with `@company.com` email automatically join organization workspace
-- **Just-In-Time (JIT) Provisioning:** User accounts created on first SSO login with organization membership pre-assigned
-- **Session Management:** SSO sessions synchronized with IdP via backchannel logout or session validation
+This sequence demonstrates the OAuth2 authorization code flow for user authentication via Google or Microsoft identity providers, JWT token generation, and session establishment.
 
-**Anonymous Play:**
-- **Identifier:** Client-generated UUID stored in browser `sessionStorage` for session continuity
-- **Room Association:** Anonymous participants linked to room via `RoomParticipant.anonymous_id`
-- **Feature Restrictions:** No session history access, no saved preferences, no administrative capabilities
-- **Data Lifecycle:** Anonymous session data purged 24 hours after room inactivity
+##### Diagram (PlantUML)
+
+~~~plantuml
+@startuml
+
+title OAuth2 Authentication Flow - Google/Microsoft Login
+
+actor "User" as User
+participant "SPA\n(React App)" as SPA
+participant "Quarkus API\n(/api/v1/auth)" as API
+participant "OAuth2 Adapter" as OAuth
+participant "User Service" as UserService
+participant "PostgreSQL" as DB
+participant "Google/Microsoft\nOAuth2 Provider" as Provider
+
+User -> SPA : Clicks "Sign in with Google"
+activate SPA
+
+SPA -> SPA : Generate PKCE code_verifier & code_challenge,\nstore in sessionStorage
+SPA -> Provider : Redirect to authorization URL:\nhttps://accounts.google.com/o/oauth2/v2/auth\n?client_id=...&redirect_uri=...&code_challenge=...
+deactivate SPA
+
+User -> Provider : Grants permission
+Provider -> SPA : Redirect to callback:\nhttps://app.scrumpoker.com/auth/callback?code=AUTH_CODE
+activate SPA
+
+SPA -> API : POST /api/v1/auth/oauth/callback\n{"provider":"google", "code":"AUTH_CODE", "codeVerifier":"..."}
+deactivate SPA
+
+activate API
+API -> OAuth : exchangeCodeForToken(provider, code, codeVerifier)
+activate OAuth
+
+OAuth -> Provider : POST /token\n{code, client_id, client_secret, code_verifier}
+Provider --> OAuth : {"access_token":"...", "id_token":"..."}
+
+OAuth -> OAuth : Validate id_token signature (JWT),\nextract claims: {sub, email, name, picture}
+OAuth --> API : OAuthUserInfo{subject, email, name, avatarUrl}
+deactivate OAuth
+
+API -> UserService : findOrCreateUser(provider="google", subject="...", email="...", name="...")
+activate UserService
+
+UserService -> DB : SELECT * FROM user WHERE oauth_provider='google' AND oauth_subject='...'
+alt User exists
+  DB --> UserService : User{user_id, email, subscription_tier, ...}
+else New user
+  DB --> UserService : NULL
+  UserService -> DB : INSERT INTO user (oauth_provider, oauth_subject, email, display_name, avatar_url, subscription_tier)\nVALUES ('google', '...', '...', '...', '...', 'FREE')
+  DB --> UserService : User{user_id, ...}
+  UserService -> UserService : Create default UserPreference record
+  UserService -> DB : INSERT INTO user_preference (user_id, default_deck_type, theme) VALUES (...)
+end
+
+UserService --> API : User{user_id, email, displayName, subscriptionTier}
+deactivate UserService
+
+API -> API : Generate JWT access token:\n{sub: user_id, email, tier, exp: now+1h}
+API -> API : Generate refresh token (UUID),\nstore in Redis with 30-day TTL
+
+API --> SPA : 200 OK\n{"accessToken":"...", "refreshToken":"...", "user":{...}}
+deactivate API
+
+activate SPA
+SPA -> SPA : Store tokens in localStorage,\nstore user in Zustand state
+SPA -> User : Redirect to Dashboard
+deactivate SPA
+
+@enduml
+~~~
 ```
 
-### Context: authorization-strategy (from 05_Operational_Architecture.md)
+### Context: OAuth2 Authentication Endpoint (from openapi.yaml)
 
-```markdown
-##### Authorization Strategy
-
-**Role-Based Access Control (RBAC):**
-- **Roles:** `ANONYMOUS`, `USER`, `PRO_USER`, `ORG_ADMIN`, `ORG_MEMBER`
-- **Implementation:** Quarkus Security annotations (`@RolesAllowed`) on REST endpoints and service methods
-- **JWT Claims:** Access token includes `roles` array for authorization decisions
-- **Dynamic Role Mapping:** Subscription tier (`FREE`, `PRO`, `PRO_PLUS`, `ENTERPRISE`) mapped to roles during token generation
-
-**Resource-Level Permissions:**
-- **Room Access:**
-  - `PUBLIC` rooms: Accessible to anyone with room ID
-  - `INVITE_ONLY` rooms: Requires room owner to whitelist participant (Pro+ tier)
-  - `ORG_RESTRICTED` rooms: Requires organization membership (Enterprise tier)
-- **Room Operations:**
-  - Host controls (reveal, reset, kick): Room creator or user with `HOST` role in `RoomParticipant`
-  - Configuration updates: Room owner only
-  - Vote casting: Participants with `VOTER` role (excludes `OBSERVER`)
-- **Report Access:**
-  - Free tier: Session summary only (no round-level detail)
-  - Pro tier: Full session history with round breakdown
-  - Enterprise tier: Organization-wide analytics with member filtering
-
-**Enforcement Points:**
-1. **API Gateway/Ingress:** JWT validation and signature verification
-2. **REST Controllers:** Role-based annotations reject unauthorized requests with `403 Forbidden`
-3. **WebSocket Handshake:** Token validation before connection upgrade
-4. **Service Layer:** Domain-level checks (e.g., room privacy mode enforcement, subscription feature gating)
+```yaml
+/api/v1/auth/oauth/callback:
+  post:
+    tags:
+      - Authentication
+    summary: Exchange OAuth2 authorization code for JWT tokens
+    description: |
+      Exchanges OAuth2 authorization code from provider (Google/Microsoft) for access and refresh tokens.
+      Returns JWT access token (15min expiry) and refresh token (30 days).
+    operationId: oauthCallback
+    security: []  # Public endpoint
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - code
+              - provider
+              - redirectUri
+            properties:
+              code:
+                type: string
+                description: Authorization code from OAuth2 provider
+                example: "4/0AX4XfWh..."
+              provider:
+                type: string
+                enum: [google, microsoft]
+                description: OAuth2 provider
+                example: google
+              redirectUri:
+                type: string
+                format: uri
+                description: Redirect URI used in authorization request (must match)
+                example: "https://planningpoker.example.com/auth/callback"
+          example:
+            code: "4/0AX4XfWh..."
+            provider: google
+            redirectUri: "https://planningpoker.example.com/auth/callback"
+    responses:
+      '200':
+        description: Successfully authenticated
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TokenResponse'
+            example:
+              accessToken: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+              refreshToken: "v1.MR5tqKz..."
+              expiresIn: 900
+              tokenType: "Bearer"
+              user:
+                userId: "123e4567-e89b-12d3-a456-426614174000"
+                email: "alice@example.com"
+                displayName: "Alice Smith"
+                avatarUrl: "https://example.com/avatar.jpg"
+                subscriptionTier: "PRO"
+                createdAt: "2025-01-01T10:00:00Z"
+                updatedAt: "2025-01-10T15:30:00Z"
 ```
 
-### Context: application-security (from 05_Operational_Architecture.md)
+### Context: TokenResponse Schema (from openapi.yaml)
 
-```markdown
-##### Application Security
+```yaml
+TokenResponse:
+  type: object
+  required:
+    - accessToken
+    - refreshToken
+    - expiresIn
+    - tokenType
+    - user
+  properties:
+    accessToken:
+      type: string
+      description: JWT access token (15min expiry)
+      example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+    refreshToken:
+      type: string
+      description: Refresh token (30 days expiry, single-use)
+      example: "v1.MR5tqKz..."
+    expiresIn:
+      type: integer
+      description: Access token TTL in seconds
+      example: 900
+    tokenType:
+      type: string
+      description: Token type (always "Bearer")
+      example: "Bearer"
+    user:
+      $ref: '#/components/schemas/UserDTO'
+```
 
-**Input Validation:**
-- **REST APIs:** Bean Validation (JSR-380) annotations on DTOs, automatic validation in Quarkus REST layer
-- **WebSocket Messages:** Zod schema validation on client, server-side JSON schema validation before deserialization
-- **SQL Injection Prevention:** Parameterized queries via Hibernate Reactive, no dynamic SQL concatenation
-- **XSS Prevention:** React automatic escaping for user-generated content, CSP (Content Security Policy) headers
+### Context: UserDTO Schema (from openapi.yaml)
 
-**Authentication Security:**
-- **JWT Signature:** RS256 (RSA with SHA-256) algorithm, private key stored in Kubernetes Secret
-- **Token Expiration:** Short-lived access tokens (1 hour), refresh tokens rotated on use
-- **OAuth2 State Parameter:** CSRF protection for OAuth flow, state validated on callback
-- **PKCE:** Protects authorization code from interception in browser-based flows
-
-**Authorization Security:**
-- **Least Privilege:** Default deny policy, explicit role grants required for resource access
-- **Resource Ownership Validation:** Service layer verifies user owns/has permission for requested resource (e.g., room, report)
-- **Rate Limiting:** Redis-backed token bucket algorithm:
-  - Anonymous users: 10 req/min per IP
-  - Authenticated users: 100 req/min per user
-  - WebSocket messages: 50 msg/min per connection
-
-**Data Protection:**
-- **Encryption at Rest:** PostgreSQL Transparent Data Encryption (TDE) for sensitive columns (email, payment metadata)
-- **PII Handling:** User emails hashed in logs, full values only in database and audit logs
-- **Secrets Management:** Kubernetes Secrets for database credentials, OAuth client secrets, JWT signing keys
-- **Payment Security:** Stripe tokenization for card details, no PCI-sensitive data stored in application database
+```yaml
+UserDTO:
+  type: object
+  required:
+    - userId
+    - email
+    - displayName
+    - subscriptionTier
+    - createdAt
+  properties:
+    userId:
+      type: string
+      format: uuid
+      description: User unique identifier
+      example: "123e4567-e89b-12d3-a456-426614174000"
+    email:
+      type: string
+      format: email
+      maxLength: 255
+      description: User email address (unique)
+      example: "alice@example.com"
+    oauthProvider:
+      type: string
+      enum: [google, microsoft]
+      description: OAuth2 provider
+      example: "google"
+    displayName:
+      type: string
+      maxLength: 100
+      description: User display name
+      example: "Alice Smith"
+    avatarUrl:
+      type: string
+      format: uri
+      maxLength: 500
+      nullable: true
+      description: Profile avatar URL
+      example: "https://example.com/avatar.jpg"
+    subscriptionTier:
+      $ref: '#/components/schemas/SubscriptionTier'
+    createdAt:
+      type: string
+      format: date-time
+      description: Account creation timestamp
+      example: "2025-01-01T10:00:00Z"
+    updatedAt:
+      type: string
+      format: date-time
+      description: Last profile update timestamp
+      example: "2025-01-10T15:30:00Z"
 ```
 
 ---
@@ -138,98 +283,136 @@ The following analysis is based on my direct review of the current codebase. Use
 
 ### Relevant Existing Code
 
-**CRITICAL FINDING: The filter already exists!** The file `backend/src/main/java/com/scrumpoker/security/JwtAuthenticationFilter.java` is already fully implemented with comprehensive documentation and all required functionality.
+*   **File:** `backend/src/main/java/com/scrumpoker/api/rest/AuthController.java`
+    *   **Summary:** This file contains the fully implemented backend OAuth2 authentication endpoints. The `/api/v1/auth/oauth/callback` endpoint is ready to receive requests from the frontend.
+    *   **Recommendation:** You MUST call the `POST /api/v1/auth/oauth/callback` endpoint with the exact request body structure shown in the OpenAPI spec: `{code, provider, redirectUri, codeVerifier}`. The provider must be either "google" or "microsoft". The endpoint returns a `TokenResponse` with `accessToken`, `refreshToken`, `expiresIn`, `tokenType`, and `user` object.
+    *   **CRITICAL NOTE:** Looking at the AuthController implementation (lines 113-116), the `codeVerifier` field is validated and required. The OpenAPI spec example doesn't show it, but the backend code explicitly checks for it and returns a 400 error if missing. You MUST include this field in your API request.
 
-*   **File:** `backend/src/main/java/com/scrumpoker/security/JwtAuthenticationFilter.java`
-    *   **Summary:** This file is a complete JAX-RS request filter implementing JWT authentication. It is annotated with `@Provider` and `@Priority(Priorities.AUTHENTICATION)`, intercepts all HTTP requests, extracts and validates JWT tokens from the Authorization header, populates the Quarkus security context, and handles public endpoints.
-    *   **Current Implementation Status:**
-        *   ✅ Bearer token extraction from `Authorization: Bearer <token>` header (lines 145-169)
-        *   ✅ Token validation using `JwtTokenService.validateAccessToken()` (lines 178-179)
-        *   ✅ Security context population with user principal and roles (lines 185-192)
-        *   ✅ Public endpoint exemption for `/api/v1/auth/*`, `/q/health/*`, `/q/swagger-ui/*`, `/q/openapi`, `/q/metrics`, and OPTIONS requests (lines 232-259)
-        *   ✅ 401 Unauthorized response for missing/invalid/expired tokens (lines 146-210, 272-283)
-        *   ✅ Integration with Quarkus Security (setting `SECURITY_IDENTITY_KEY` in request context, line 192)
-        *   ✅ JWT claims stored as security identity attribute for controllers to access (line 188)
-    *   **Recommendation:** **DO NOT create a new file.** The filter is already complete and production-ready with excellent documentation. Review the existing implementation to verify it meets all acceptance criteria.
+*   **File:** `frontend/src/App.tsx`
+    *   **Summary:** This is the main React application component using React Router v6. It already has routes defined for `/`, `/room/:roomId`, and `/dashboard`.
+    *   **Recommendation:** You MUST add new routes for `/login` (LoginPage) and `/auth/callback` (OAuthCallbackPage). You SHOULD wrap the `/dashboard` route with the `PrivateRoute` component you'll create.
 
-*   **File:** `backend/src/main/java/com/scrumpoker/security/JwtTokenService.java`
-    *   **Summary:** This service provides JWT token generation, validation, and refresh functionality. It is the dependency for the authentication filter's validation logic.
-    *   **Key Methods Used by Filter:**
-        *   `validateAccessToken(String token)` - Returns `Uni<JwtClaims>` with userId, email, roles, tier (line 178)
-        *   Automatically validates signature using RSA public key from config
-        *   Checks token expiration and issuer claim
-    *   **Recommendation:** The filter correctly uses this service's reactive API with blocking await (`.await().indefinitely()`) as documented in the filter's implementation notes (line 177-179).
+*   **File:** `frontend/package.json`
+    *   **Summary:** The project already has all required dependencies installed: React 18, React Router v6.20, Zustand 4.4, React Query 5.12, and Tailwind CSS 3.3.
+    *   **Recommendation:** You do NOT need to install any additional packages. All dependencies required for this task (Zustand for state management, React Router for navigation, Tailwind for styling) are already present.
 
-*   **File:** `backend/src/main/java/com/scrumpoker/security/JwtClaims.java`
-    *   **Summary:** Record class representing JWT claims extracted from validated tokens. Contains userId (UUID), email (String), roles (List<String>), and tier (String).
-    *   **Helper Methods:**
-        *   `hasRole(String role)` - Check if user has specific role
-        *   `hasAnyRole(String... roles)` - Check if user has any of specified roles
-    *   **Recommendation:** The filter stores this complete JwtClaims object in the SecurityIdentity attributes (key: "jwt.claims") so controllers can access full claim data beyond just roles.
+*   **File:** `frontend/src/pages/HomePage.tsx`
+    *   **Summary:** This is an example page component using Tailwind CSS classes and the `@/` path alias for imports. It demonstrates the project's styling conventions.
+    *   **Recommendation:** You SHOULD follow the same Tailwind styling patterns used here: `dark:` variants for dark mode, responsive breakpoints like `md:`, and utility classes for spacing/colors. The `@/` path alias is already configured and working (see import on line 2).
 
-*   **File:** `backend/src/main/java/com/scrumpoker/security/SecurityContextImpl.java`
-    *   **Current Status:** This file is mentioned in the target_files list but does NOT exist in the codebase.
-    *   **Analysis:** The filter uses Quarkus's built-in `QuarkusSecurityIdentity` (line 185) instead of a custom implementation. This is the correct approach and aligns with Quarkus best practices.
-    *   **Recommendation:** **DO NOT create SecurityContextImpl.java.** The task specification appears outdated - the implementation correctly uses `QuarkusSecurityIdentity.builder()` which is the standard Quarkus Security mechanism.
-
-*   **File:** `backend/src/main/java/com/scrumpoker/api/rest/UserController.java` and `RoomController.java`
-    *   **Summary:** These controllers have `@RolesAllowed("USER")` annotations on protected endpoints (UserController lines 80, 120, 156; RoomController lines 112, 173, 198).
-    *   **Current TODOs:** Multiple TODO comments indicate authentication is planned for "Iteration 3" (UserController lines 61, 100, 137, 175; RoomController lines 60, 125, 182, 212).
-    *   **Recommendation:** With the authentication filter now active, these controllers will automatically enforce role-based access control. The TODO comments should be removed once you verify the filter is working.
-
-*   **File:** `backend/src/test/java/com/scrumpoker/api/rest/NoSecurityTestProfile.java`
-    *   **Summary:** Test profile that disables security for integration tests by enabling `TestSecurityIdentityAugmentor` which auto-grants USER role.
-    *   **Recommendation:** This allows existing tests to continue passing while the filter is enabled. When writing tests specifically for authentication (in a future task), you'll need a different test profile that enables the filter.
-
-*   **File:** `backend/src/main/resources/application.properties`
-    *   **Summary:** Configuration file with JWT settings already in place.
-    *   **Key JWT Properties:**
-        *   `mp.jwt.verify.issuer` (line 56) - Token issuer validation
-        *   `mp.jwt.verify.publickey.location` (line 61) - RSA public key path
-        *   `mp.jwt.token.expiration` (line 70) - Access token TTL (3600 seconds / 1 hour)
-        *   `quarkus.oidc.enabled=false` (line 84) - OIDC disabled, using custom filter
-    *   **Recommendation:** No changes needed. All required configuration is present.
+*   **File:** `frontend/src/components/common/Button.tsx`
+    *   **Summary:** A reusable Button component exists with variant support (primary, secondary).
+    *   **Recommendation:** You SHOULD reuse this Button component for the "Sign in with Google" and "Sign in with Microsoft" buttons on the LoginPage. Import it with `import Button from '@/components/common/Button';`.
 
 ### Implementation Tips & Notes
 
-*   **CRITICAL: Task is Already Complete!** The JwtAuthenticationFilter is fully implemented with all required functionality. Your task should focus on **verification and testing** rather than implementation.
+*   **Tip:** The backend API is running at `http://localhost:8080` (as shown in openapi.yaml servers configuration). When making API calls from the frontend during development, you'll need to either:
+    1. Configure a proxy in `vite.config.ts` to forward `/api` requests to `http://localhost:8080`, OR
+    2. Use the full URL `http://localhost:8080/api/v1/auth/oauth/callback` in your API client
 
-*   **Verification Checklist:**
-    1. Confirm the filter intercepts requests at AUTHENTICATION priority
-    2. Verify Bearer token extraction handles missing/malformed headers correctly
-    3. Test that public endpoints (`/api/v1/auth/*`, health checks, swagger) bypass authentication
-    4. Validate that protected endpoints require JWT and return 401 when missing
-    5. Ensure expired/invalid tokens return 401 Unauthorized
-    6. Confirm SecurityIdentity is populated with correct userId and roles from token claims
-    7. Verify `@RolesAllowed` annotations work correctly with roles from JWT
+    I recommend option 1 (proxy) for cleaner code.
 
-*   **Important Implementation Details Already Present:**
-    *   The filter uses **blocking await** on the reactive `validateAccessToken()` call (line 179). This is documented as acceptable because JWT validation is fast (<50ms) and must complete before request proceeds.
-    *   The filter **never logs full token values**, only metadata like first 10 characters (lines 171-172, 184) for security.
-    *   Security context key uses the standard Quarkus constant `"quarkus.security.identity"` (line 110) for proper integration.
-    *   JWT claims are stored in SecurityIdentity attributes under key `"jwt.claims"` (line 116) so controllers can access full claim data via `identity.getAttribute("jwt.claims")`.
+*   **Note:** PKCE (Proof Key for Code Exchange) is required for the OAuth2 flow. You need to generate a `code_verifier` (random string, 43-128 characters) and compute a `code_challenge` (base64url-encoded SHA-256 hash of the verifier). The browser's `crypto.subtle.digest()` API can be used for SHA-256 hashing.
 
-*   **Public Endpoint Logic:** The `isPublicEndpoint()` method (lines 232-259) handles both with and without leading slash (e.g., `"api/v1/auth/"` and `"/api/v1/auth/"`) for robustness.
+*   **Note:** The OAuth2 redirect flow works as follows:
+    1. User clicks "Sign in with Google" on LoginPage
+    2. Frontend generates PKCE verifier/challenge, stores verifier in sessionStorage
+    3. Frontend redirects to Google's authorization URL with `client_id`, `redirect_uri`, `code_challenge`, `response_type=code`, `scope=openid email profile`
+    4. User grants permission on Google's consent screen
+    5. Google redirects back to `http://localhost:5173/auth/callback?code=AUTH_CODE`
+    6. OAuthCallbackPage extracts code from URL params, retrieves verifier from sessionStorage
+    7. OAuthCallbackPage calls `POST /api/v1/auth/oauth/callback` with code, provider, redirectUri, codeVerifier
+    8. Backend returns tokens and user data
+    9. Frontend stores tokens in localStorage, updates authStore
+    10. Frontend redirects to /dashboard
 
-*   **Error Handling:** The filter provides specific error codes in ErrorResponse JSON:
-    *   `MISSING_TOKEN` - No Authorization header
-    *   `INVALID_TOKEN_FORMAT` - Header doesn't start with "Bearer "
-    *   `EMPTY_TOKEN` - Bearer token is blank
-    *   `INVALID_TOKEN` - Token validation failed (signature, expiration, etc.)
+*   **Warning:** You will need to configure OAuth2 client IDs for Google and Microsoft in the backend's `application.properties`. For development, you can use test/mock values, but the OAuth redirect URLs must match exactly what's configured in the OAuth provider's console. The redirect URI should be `http://localhost:5173/auth/callback` for local development.
 
-*   **Next Steps Recommendation:**
-    *   Since the filter already exists, your primary task should be to **verify it works correctly** by:
-        1. Running the application with `mvn quarkus:dev`
-        2. Testing protected endpoints without JWT (should get 401)
-        3. Testing with a valid JWT from the auth flow (should succeed)
-        4. Testing public endpoints without JWT (should succeed)
-        5. Optionally adding integration tests specifically for the filter's behavior
-    *   The acceptance criteria can be met by demonstrating the existing implementation works correctly, not by rewriting it.
+*   **Tip:** For Zustand store, create a simple state structure:
+    ```typescript
+    interface AuthState {
+      user: UserDTO | null;
+      accessToken: string | null;
+      refreshToken: string | null;
+      isAuthenticated: boolean;
+      setAuth: (tokens: TokenResponse) => void;
+      clearAuth: () => void;
+    }
+    ```
+    Store this in `frontend/src/stores/authStore.ts` and use `create()` from Zustand. The store should persist tokens to localStorage in the `setAuth` action and load from localStorage on initialization.
 
-*   **WARNING:** The second target file `SecurityContextImpl.java` should NOT be created. The filter correctly uses Quarkus's built-in `QuarkusSecurityIdentity` which is the standard pattern. Creating a custom SecurityContext implementation would be unnecessary and potentially problematic.
+*   **Tip:** For the PrivateRoute component, check `isAuthenticated` from the authStore. If false, use `<Navigate to="/login" />` from React Router v6 to redirect. Example pattern:
+    ```typescript
+    const PrivateRoute: React.FC<{children: React.ReactNode}> = ({children}) => {
+      const isAuthenticated = useAuth(state => state.isAuthenticated);
+      return isAuthenticated ? <>{children}</> : <Navigate to="/login" />;
+    };
+    ```
 
-### Code Quality Observations
+*   **Security Note:** Store tokens in `localStorage` as specified in the task, but be aware this has XSS vulnerability implications. In production, consider using httpOnly cookies or more secure storage mechanisms. For this task, localStorage is acceptable as it matches the architectural design.
 
-*   **Excellent Documentation:** The existing filter has comprehensive JavaDoc explaining the authentication flow, public endpoints, security context integration, and implementation notes.
-*   **Production-Ready Code:** Error handling is thorough, logging is security-aware (no token values logged), and the implementation follows Quarkus best practices.
-*   **Test Coverage Gap:** While the NoSecurityTestProfile exists for integration tests, there are no dedicated tests for the authentication filter itself. Consider this for future work.
+*   **Tip:** When extracting the authorization code from the callback URL, use React Router's `useSearchParams()` hook:
+    ```typescript
+    const [searchParams] = useSearchParams();
+    const code = searchParams.get('code');
+    ```
+
+*   **Tip:** For PKCE implementation, you can use the Web Crypto API which is available in all modern browsers:
+    ```typescript
+    // Generate verifier: random 128-character base64url string
+    const array = new Uint8Array(96);
+    crypto.getRandomValues(array);
+    const verifier = base64UrlEncode(array);
+
+    // Generate challenge: SHA-256 hash of verifier
+    const encoder = new TextEncoder();
+    const data = encoder.encode(verifier);
+    const hash = await crypto.subtle.digest('SHA-256', data);
+    const challenge = base64UrlEncode(new Uint8Array(hash));
+    ```
+
+*   **Note:** You'll need to configure OAuth client IDs. For Google OAuth2, the authorization URL is:
+    ```
+    https://accounts.google.com/o/oauth2/v2/auth?
+      client_id=YOUR_CLIENT_ID
+      &redirect_uri=http://localhost:5173/auth/callback
+      &response_type=code
+      &scope=openid%20email%20profile
+      &code_challenge=CODE_CHALLENGE
+      &code_challenge_method=S256
+    ```
+    The `client_id` must match what's configured in the backend `application.properties` file.
+
+*   **Warning:** The backend AuthController expects the `redirectUri` in the callback request to EXACTLY match the one used in the initial authorization request. Store this in sessionStorage along with the code_verifier so you can include it in the token exchange call.
+
+*   **Tip:** Consider error handling for the OAuth callback:
+    - Check if `code` parameter is present in the URL
+    - Handle cases where `error` parameter is present (user denied consent)
+    - Validate that code_verifier exists in sessionStorage
+    - Handle API call failures with appropriate error messages to the user
+
+### Project Structure Observations
+
+*   The frontend uses path aliases configured with `@/` prefix (see HomePage.tsx line 2)
+*   All pages go in `frontend/src/pages/`
+*   Reusable components go in `frontend/src/components/` (organized by domain like `auth/`, `common/`)
+*   Stores go in `frontend/src/stores/`
+*   Hooks go in `frontend/src/hooks/`
+*   Utilities go in `frontend/src/utils/`
+*   The project already has TypeScript configured with strict mode enabled
+
+### OAuth Provider Configuration Reference
+
+**Google OAuth2:**
+- Authorization endpoint: `https://accounts.google.com/o/oauth2/v2/auth`
+- Required scopes: `openid email profile`
+- Response type: `code`
+- PKCE method: `S256`
+
+**Microsoft OAuth2:**
+- Authorization endpoint: `https://login.microsoftonline.com/common/oauth2/v2.0/authorize`
+- Required scopes: `openid email profile`
+- Response type: `code`
+- PKCE method: `S256`
+
+Both providers return the authorization code as a `?code=` query parameter in the redirect URL.
