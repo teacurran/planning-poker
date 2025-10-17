@@ -9,9 +9,11 @@ package com.scrumpoker.integration.oauth;
  * - Invalid OAuth provider configuration
  * - Missing or invalid claims in ID token
  *
- * This exception should be mapped to HTTP 401 Unauthorized in the REST controller layer.
+ * This exception should be mapped to HTTP 401 Unauthorized in the
+ * REST controller layer.
  */
-public class OAuth2AuthenticationException extends RuntimeException {
+public final class OAuth2AuthenticationException
+        extends RuntimeException {
 
     /**
      * OAuth provider name that failed authentication.
@@ -104,9 +106,18 @@ public class OAuth2AuthenticationException extends RuntimeException {
         return errorCode;
     }
 
+    /**
+     * Returns a string representation of this exception including
+     * provider and error code context.
+     * This method is designed for extension: subclasses can override
+     * to add additional context.
+     *
+     * @return String representation with provider and error code
+     */
     @Override
     public String toString() {
-        StringBuilder sb = new StringBuilder("OAuth2AuthenticationException: ");
+        StringBuilder sb =
+                new StringBuilder("OAuth2AuthenticationException: ");
         sb.append(getMessage());
         if (provider != null) {
             sb.append(" [provider=").append(provider).append("]");

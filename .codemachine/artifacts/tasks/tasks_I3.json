@@ -20,7 +20,7 @@
     "acceptance_criteria": "OAuth2 flow completes successfully for Google (test with real OAuth code), OAuth2 flow completes for Microsoft (test with real OAuth code), ID token validation rejects expired/invalid tokens, OAuthUserInfo correctly populated from ID token claims, Environment variables used for sensitive config (client secrets)",
     "dependencies": [],
     "parallelizable": true,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I3.T2",

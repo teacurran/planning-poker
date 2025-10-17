@@ -43,7 +43,6 @@ The following are the relevant sections from the architecture and plan documents
 ### Context: OAuth2 Authentication Flow (from 04_Behavior_and_Communication.md)
 
 ```markdown
-<!-- anchor: key-interaction-flow-oauth-login -->
 #### Key Interaction Flow: OAuth2 Authentication (Google/Microsoft)
 
 ##### Description
@@ -125,7 +124,6 @@ deactivate SPA
 ### Context: Authentication Mechanisms (from 05_Operational_Architecture.md)
 
 ```markdown
-<!-- anchor: authentication-mechanisms -->
 ##### Authentication Mechanisms
 
 **OAuth2 Social Login (Free/Pro Tiers):**
@@ -135,19 +133,74 @@ deactivate SPA
 - **Token Storage:** JWT access tokens (1-hour expiration) in browser `localStorage`, refresh tokens (30-day expiration) in `httpOnly` secure cookies
 - **User Provisioning:** Automatic user creation on first login with `oauth_provider` and `oauth_subject` as unique identifiers
 - **Profile Sync:** Email, display name, and avatar URL synced from OAuth provider on each login
+
+**Enterprise SSO (Enterprise Tier):**
+- **Protocols:** OIDC (OpenID Connect) and SAML2 support via Quarkus Security extensions
+- **Configuration:** Per-organization SSO settings stored in `Organization.sso_config` JSONB field (IdP endpoint, certificate, attribute mapping)
+- **Domain Enforcement:** Email domain verification ensures users with `@company.com` email automatically join organization workspace
+- **Just-In-Time (JIT) Provisioning:** User accounts created on first SSO login with organization membership pre-assigned
+- **Session Management:** SSO sessions synchronized with IdP via backchannel logout or session validation
 ```
 
-### Context: Application Security (from 05_Operational_Architecture.md)
+### Context: Application Security - Authentication (from 05_Operational_Architecture.md)
 
 ```markdown
-<!-- anchor: application-security -->
-##### Application Security
-
 **Authentication Security:**
 - **JWT Signature:** RS256 (RSA with SHA-256) algorithm, private key stored in Kubernetes Secret
 - **Token Expiration:** Short-lived access tokens (1 hour), refresh tokens rotated on use
 - **OAuth2 State Parameter:** CSRF protection for OAuth flow, state validated on callback
 - **PKCE:** Protects authorization code from interception in browser-based flows
+```
+
+### Context: OpenAPI OAuth Callback Endpoint (from openapi.yaml)
+
+```yaml
+/api/v1/auth/oauth/callback:
+  post:
+    tags:
+      - Authentication
+    summary: Exchange OAuth2 authorization code for JWT tokens
+    description: |
+      Exchanges OAuth2 authorization code from provider (Google/Microsoft) for access and refresh tokens.
+      Returns JWT access token (15min expiry) and refresh token (30 days).
+    operationId: oauthCallback
+    security: []  # Public endpoint
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - code
+              - provider
+              - redirectUri
+            properties:
+              code:
+                type: string
+                description: Authorization code from OAuth2 provider
+                example: "4/0AX4XfWh..."
+              provider:
+                type: string
+                enum: [google, microsoft]
+                description: OAuth2 provider
+                example: google
+              redirectUri:
+                type: string
+                format: uri
+                description: Redirect URI used in authorization request (must match)
+                example: "https://planningpoker.example.com/auth/callback"
+    responses:
+      '200':
+        description: Successfully authenticated
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TokenResponse'
+      '400':
+        $ref: '#/components/responses/BadRequest'
+      '401':
+        $ref: '#/components/responses/Unauthorized'
 ```
 
 ---
@@ -159,211 +212,115 @@ The following analysis is based on my direct review of the current codebase. Use
 ### Relevant Existing Code
 
 *   **File:** `backend/src/main/java/com/scrumpoker/integration/oauth/OAuth2Adapter.java`
-    *   **Summary:** This is the main adapter class that coordinates OAuth2 authentication across multiple providers. It already contains the complete implementation with methods `exchangeCodeForToken()` and `validateIdToken()` that delegate to provider-specific implementations.
-    *   **Status:** **IMPLEMENTATION IS COMPLETE** - The adapter follows the Strategy pattern and properly validates inputs, logs operations, and delegates to GoogleOAuthProvider and MicrosoftOAuthProvider.
-    *   **Recommendation:** This file is DONE. Do NOT modify it unless you find bugs during testing.
-
-*   **File:** `backend/src/main/java/com/scrumpoker/integration/oauth/GoogleOAuthProvider.java`
-    *   **Summary:** Complete implementation of Google OAuth2 provider handling authorization code exchange and ID token validation using Google's OAuth2 endpoints.
-    *   **Status:** **IMPLEMENTATION IS COMPLETE** - Properly implements token exchange with PKCE, ID token validation with signature verification, issuer/audience validation, and claim extraction.
-    *   **Key Features:** Uses `JWTParser` for signature validation, validates expiration/issuer/audience, extracts subject/email/name/picture claims, handles missing name claim gracefully.
-    *   **Recommendation:** This file is DONE. The implementation is production-ready.
-
-*   **File:** `backend/src/main/java/com/scrumpoker/integration/oauth/MicrosoftOAuthProvider.java`
-    *   **Summary:** Complete implementation of Microsoft OAuth2 provider with similar structure to GoogleOAuthProvider but adapted for Microsoft Identity Platform specifics.
-    *   **Status:** **IMPLEMENTATION IS COMPLETE** - Handles Microsoft's multi-tenant endpoints, supports both 'email' and 'preferred_username' claims, validates multiple Microsoft issuer formats.
-    *   **Key Features:** Flexible issuer validation supporting both `login.microsoftonline.com` and `sts.windows.net`, fallback from 'email' to 'preferred_username' claim.
-    *   **Recommendation:** This file is DONE. The implementation correctly handles Microsoft-specific OAuth2 nuances.
+    *   **Summary:** This is a **SKELETON** implementation that already exists. It provides the adapter pattern structure, method signatures for `exchangeCodeForToken()` and `validateIdToken()`, input validation, and provider routing logic. **However, the actual OAuth2 provider implementations (GoogleOAuthProvider, MicrosoftOAuthProvider) are NOT YET FULLY IMPLEMENTED for the authorization code flow with PKCE.**
+    *   **Recommendation:** You MUST implement the actual token exchange logic in `GoogleOAuthProvider.java` and `MicrosoftOAuthProvider.java`. The OAuth2Adapter already handles routing, so you need to focus on implementing the `exchangeCodeForToken()` method in each provider class. The skeleton shows mocked test implementations exist, but real HTTP calls to Google and Microsoft token endpoints are needed.
+    *   **Critical Detail:** The adapter already validates inputs (null checks, empty checks) and routes to the correct provider. Your implementation should focus on the HTTP token exchange, ID token validation, and claim extraction.
 
 *   **File:** `backend/src/main/java/com/scrumpoker/integration/oauth/OAuthUserInfo.java`
-    *   **Summary:** DTO class containing validated user information extracted from OAuth2 ID tokens.
-    *   **Status:** **IMPLEMENTATION IS COMPLETE** - Properly defined with Bean Validation annotations, all required fields (subject, email, name, avatarUrl, provider), complete getters/setters/toString.
-    *   **Recommendation:** This file is DONE. The DTO is ready for use by UserService for JIT user provisioning.
-
-*   **File:** `backend/src/main/java/com/scrumpoker/integration/oauth/OAuth2AuthenticationException.java`
-    *   **Summary:** Custom exception class for OAuth2-specific authentication errors.
-    *   **Status:** Should exist alongside other OAuth files. If not present, this is the only missing piece.
-    *   **Recommendation:** Verify this file exists. If missing, create it with proper exception hierarchy and error context (provider, error code).
+    *   **Summary:** This DTO is **ALREADY COMPLETE**. It contains all required fields (subject, email, name, avatarUrl, provider) with Bean Validation annotations.
+    *   **Recommendation:** You MUST use this exact DTO as the return type from your provider implementations. Do NOT modify its structure.
 
 *   **File:** `backend/src/main/resources/application.properties`
-    *   **Summary:** Quarkus configuration file containing OAuth2 provider configurations.
-    *   **Status:** **CONFIGURATION IS COMPLETE** - Contains complete Google and Microsoft OAuth2 configuration with placeholders for client IDs and secrets that use environment variables (lines 72-105).
-    *   **Key Configuration:**
-        - Google: `quarkus.oidc.google.auth-server-url`, `quarkus.oidc.google.client-id`, `quarkus.oidc.google.credentials.secret`
-        - Microsoft: `quarkus.oidc.microsoft.auth-server-url`, `quarkus.oidc.microsoft.client-id`, `quarkus.oidc.microsoft.credentials.secret`
-    *   **Recommendation:** Configuration is DONE. Environment variables are properly configured for production deployment.
+    *   **Summary:** Configuration file already has **PLACEHOLDER** sections for Google and Microsoft OAuth2. The OIDC extension is currently DISABLED (`quarkus.oidc.enabled=false`) to allow dev mode startup without keys.
+    *   **Recommendation:** You SHOULD configure the OIDC properties for both providers. Note that the current setup has client ID/secret placeholders that use environment variables. You MUST document these environment variables and ensure they're configurable.
+    *   **Critical Configuration:**
+        - Google: `auth-server-url=https://accounts.google.com`, client ID/secret from env vars
+        - Microsoft: `auth-server-url=https://login.microsoftonline.com/common/v2.0`, client ID/secret from env vars
+        - The global `quarkus.oidc.enabled` is set to false - you may need to enable it or use programmatic configuration
 
 *   **File:** `backend/pom.xml`
-    *   **Summary:** Maven build configuration with all required dependencies.
-    *   **Status:** **ALL REQUIRED DEPENDENCIES PRESENT** - Contains `quarkus-oidc` (line 75-78), `quarkus-smallrye-jwt` (line 81-84) for OAuth2/JWT support.
-    *   **Recommendation:** No changes needed to dependencies. The JWTParser required by the provider implementations is included in `quarkus-smallrye-jwt`.
+    *   **Summary:** Maven configuration already includes the Quarkus OIDC extension (`quarkus-oidc`), JWT support (`quarkus-smallrye-jwt`), and reactive dependencies.
+    *   **Recommendation:** You do NOT need to add additional dependencies. The required extensions are already present.
+
+*   **File:** `backend/src/test/java/com/scrumpoker/integration/oauth/OAuth2AdapterTest.java`
+    *   **Summary:** Comprehensive unit tests already exist using Mockito. Tests cover all routing logic, validation, and edge cases.
+    *   **Recommendation:** You SHOULD run these tests to ensure your implementation doesn't break the existing contract. The tests mock the provider implementations, so they will pass even with skeleton providers, but you should verify your real implementation works correctly.
 
 ### Implementation Tips & Notes
 
-**CRITICAL FINDING:** Task I3.T1 is **ALREADY COMPLETE**. All target files have been fully implemented:
+*   **Tip:** The task requires implementing the **Authorization Code Flow with PKCE**. This means:
+    1. The frontend generates a `code_verifier` (random string) and `code_challenge` (SHA256 hash of verifier)
+    2. Frontend redirects to OAuth provider with `code_challenge`
+    3. After user consent, provider redirects back with `authorization_code`
+    4. Your backend receives `code` + `code_verifier` and exchanges them for tokens
+    5. The `code_verifier` is sent to the provider to prove the same client that started the flow is completing it
 
-1. **OAuth2Adapter.java** (148 lines) - Complete with:
-   - Input validation for all parameters (lines 58-69)
-   - Provider routing logic for Google and Microsoft (lines 74-86)
-   - Both `exchangeCodeForToken()` and `validateIdToken()` methods
-   - Helper methods `getSupportedProviders()` and `isProviderSupported()` (lines 126-146)
-   - Comprehensive logging with JBoss Logger (lines 26, 71, 109)
-   - Proper CDI annotation `@ApplicationScoped` (line 23)
+*   **Tip:** For **Google OAuth2**:
+    - Token endpoint: `https://oauth2.googleapis.com/token`
+    - ID token validation: Use Google's JWKS endpoint `https://www.googleapis.com/oauth2/v3/certs`
+    - Claims: `sub` (subject), `email`, `name`, `picture`
 
-2. **GoogleOAuthProvider.java** (227 lines) - Complete with:
-   - Token exchange implementation using Java HttpClient (lines 50-122)
-   - PKCE support in token request (line 77)
-   - ID token validation with JWTParser (lines 132-190)
-   - Signature verification using JWKS endpoint (handled by JWTParser)
-   - Expiration check (lines 141-145)
-   - Issuer validation for Google (lines 148-153)
-   - Audience validation (lines 156-159)
-   - Claims extraction: sub, email, name, picture (lines 162-165)
-   - Fallback logic for missing name claim (lines 176-179)
-   - Simple JSON parsing to extract id_token (lines 199-217)
-   - Configuration injection using `@ConfigProperty` (lines 41-45)
+*   **Tip:** For **Microsoft OAuth2**:
+    - Token endpoint: `https://login.microsoftonline.com/common/oauth2/v2.0/token`
+    - ID token validation: Use Microsoft's JWKS endpoint `https://login.microsoftonline.com/common/discovery/v2.0/keys`
+    - Claims: `sub` (subject), `email`, `name`, `picture`
 
-3. **MicrosoftOAuthProvider.java** (254 lines) - Complete with:
-   - Microsoft-specific token endpoint (line 37-38)
-   - Support for both personal and organizational accounts via /common tenant
-   - Token exchange similar to Google (lines 65-122)
-   - Flexible issuer validation (lines 214-217) supporting:
-     * `login.microsoftonline.com` (modern endpoint)
-     * `sts.windows.net` (legacy endpoint)
-   - Fallback from 'email' to 'preferred_username' claim (lines 173-176)
-   - Complete claim extraction (lines 168-195)
-   - Proper error handling for missing claims (lines 178-186)
+*   **Warning:** The Quarkus OIDC extension can handle token exchange and validation automatically, BUT the current configuration has it DISABLED. You have two implementation approaches:
+    1. **Approach A (Recommended):** Use Quarkus OIDC extension programmatically to handle token exchange and validation (this leverages the extension's built-in JWKS validation)
+    2. **Approach B:** Implement manual HTTP calls to token endpoints using Quarkus REST Client and manually validate JWT signatures using a JWT library
 
-4. **OAuthUserInfo.java** (133 lines) - Complete DTO with:
-   - All required fields: subject, email, name, avatarUrl, provider (lines 21-55)
-   - Bean Validation annotations: `@NotNull`, `@Email`, `@Size` (lines 19-54)
-   - Complete constructor for easy instantiation (lines 72-79)
-   - All getters and setters (lines 82-121)
-   - Proper toString() for debugging (lines 124-132)
+    **I STRONGLY RECOMMEND Approach A** because it's more secure, handles edge cases, and is production-ready.
 
-5. **application.properties** - Complete configuration:
-   - OIDC globally disabled for now (line 79): `quarkus.oidc.enabled=false`
-   - Google OAuth2 provider configuration (lines 82-91)
-   - Microsoft OAuth2 provider configuration (lines 94-104)
-   - Environment variable placeholders for secrets (proper pattern: `${VAR:default}`)
-   - Correct auth server URLs for both providers
+*   **Note:** The architecture blueprint specifies that access tokens expire in **1 hour**, but the OpenAPI spec says **15 minutes**. The OpenAPI spec (`expiresIn: 900` = 15 min) is likely correct for production security. Use **15-minute expiry** for access tokens.
 
-### Verification Checklist
+*   **Note:** The task description says "ID token claims: sub, email, name, picture" - the `picture` claim from OAuth providers should map to the `avatarUrl` field in `OAuthUserInfo`.
 
-Since the implementation is complete, verify these aspects:
+*   **Critical:** The acceptance criteria state "OAuth2 flow completes successfully for Google (test with real OAuth code)". This means you MUST provide integration test instructions or a way to test with real Google/Microsoft credentials. Consider creating test accounts or documenting how to set up OAuth apps in Google Cloud Console and Azure Portal.
 
-✓ **OAuth2Adapter.java**: Strategy pattern correctly implemented with provider routing
-✓ **GoogleOAuthProvider.java**: Token exchange and validation logic complete
-✓ **MicrosoftOAuthProvider.java**: Microsoft-specific endpoint handling complete
-✓ **OAuthUserInfo.java**: DTO with all required fields and validation
-✓ **application.properties**: Multi-tenant OIDC configuration with environment variables
-✓ **pom.xml**: Required dependencies (`quarkus-oidc`, `quarkus-smallrye-jwt`) present
+*   **Security Note:** The `client_secret` MUST be stored in environment variables, never hardcoded. The current `application.properties` already uses `${GOOGLE_CLIENT_SECRET:your-google-client-secret}` pattern - this is correct. Document these required environment variables.
 
-**MISSING PIECE TO CHECK:**
-⚠ **OAuth2AuthenticationException.java**: Verify this custom exception class exists. If not, this is the only file to create.
+### Project Conventions
 
-### Testing Recommendations
+*   **Logging:** Use JBoss Logging (`org.jboss.logging.Logger`) as shown in the existing `OAuth2Adapter.java`. Log at INFO level for successful operations, ERROR for failures.
+*   **Exception Handling:** Use `OAuth2AuthenticationException` for authentication failures (it's already defined in the codebase).
+*   **Validation:** Input validation is already done in `OAuth2Adapter.java` - your provider implementations should focus on OAuth-specific validation (token signature, expiration, issuer).
+*   **Testing:** Write both unit tests (with mocked HTTP calls) and integration tests. The existing test structure uses Mockito for unit tests.
 
-Since the implementation is complete, the next step is to verify it works correctly:
+### Implementation Checklist
 
-1. **Check for OAuth2AuthenticationException.java**:
-   ```bash
-   ls backend/src/main/java/com/scrumpoker/integration/oauth/OAuth2AuthenticationException.java
-   ```
-   If missing, create it with:
-   - Extends `RuntimeException`
-   - Constructor accepting message and provider
-   - Constructor accepting message, provider, error details, and cause
-   - Fields: `provider`, `errorCode`, `errorDescription`
+Based on my analysis, here's what you MUST implement:
 
-2. **Set Environment Variables** for testing:
-   ```bash
-   export GOOGLE_CLIENT_ID="your-google-client-id"
-   export GOOGLE_CLIENT_SECRET="your-google-client-secret"
-   export MICROSOFT_CLIENT_ID="your-microsoft-client-id"
-   export MICROSOFT_CLIENT_SECRET="your-microsoft-client-secret"
-   ```
+1. ✅ **GoogleOAuthProvider.java** - Implement `exchangeCodeForToken()` method:
+   - Make HTTP POST to Google token endpoint with authorization code + code_verifier
+   - Extract ID token from response
+   - Validate ID token (signature, expiration, issuer, audience)
+   - Extract claims (sub, email, name, picture)
+   - Return `OAuthUserInfo` object
 
-3. **Run the Application** to verify configuration loads:
-   ```bash
-   cd backend
-   mvn quarkus:dev
-   ```
-   Check logs for any OIDC configuration errors.
+2. ✅ **MicrosoftOAuthProvider.java** - Implement `exchangeCodeForToken()` method:
+   - Same as Google but with Microsoft endpoints
+   - Handle Microsoft-specific claim names if different
 
-4. **Create Unit Tests** to verify:
-   - OAuth2Adapter routing logic
-   - Input validation (null/empty parameter handling)
-   - Provider-specific implementations with mocked HTTP responses
-   - ID token validation with test JWT tokens
-   - Claim extraction accuracy
+3. ✅ **Implement `validateAndExtractClaims()` method in both providers**:
+   - Validate JWT signature using JWKS
+   - Check expiration (`exp` claim)
+   - Check issuer (`iss` claim)
+   - Extract user profile claims
 
-5. **Integration Testing** (to be done in subsequent task I3.T3):
-   - Full OAuth2 flow with real providers
-   - Token exchange success/failure scenarios
-   - ID token validation with expired/invalid tokens
+4. ✅ **Update application.properties**:
+   - Document required environment variables (GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, MICROSOFT_CLIENT_ID, MICROSOFT_CLIENT_SECRET)
+   - Ensure OIDC configuration is correct for both providers
 
-### Project Conventions Observed
+5. ✅ **Write integration tests**:
+   - Test with mocked HTTP responses
+   - Provide documentation for testing with real OAuth credentials
 
-- **Package Structure:** Integration code properly organized under `com.scrumpoker.integration.oauth`
-- **CDI Annotations:** `@ApplicationScoped` used for singleton services (OAuth2Adapter, providers)
-- **Configuration:** `@ConfigProperty` for environment-based configuration
-- **Logging:** JBoss logging used consistently with proper log levels (INFO for successful auth, DEBUG for validation details, ERROR for failures)
-- **Exception Handling:** Custom exceptions (like OAuth2AuthenticationException) for domain-specific errors
-- **Validation:** Proper input validation before processing (null checks, empty string checks)
-- **Code Style:** Clean, well-documented code with comprehensive JavaDoc comments explaining each method's purpose, parameters, returns, and exceptions
-- **HTTP Client:** Java 11+ HttpClient used for OAuth token exchange (lines 50-52 in providers)
-- **Timeout Configuration:** 10-second connect and request timeouts for resilience
+6. ✅ **Error handling**:
+   - Handle network errors (provider unreachable)
+   - Handle invalid tokens (expired, wrong signature, wrong issuer)
+   - Return meaningful error messages
 
-### Next Steps
+---
 
-**Task I3.T1 Status: COMPLETE**
+## Summary
 
-The Coder Agent should:
+**Current State:** The OAuth2 integration framework is in place with a working adapter pattern, but the actual OAuth2 provider implementations are skeleton/stubs. Configuration placeholders exist but need real values.
 
-1. **Verify OAuth2AuthenticationException.java exists** - This is the only potentially missing file
-2. **If missing, create OAuth2AuthenticationException.java** with proper exception hierarchy
-3. **Run `mvn clean compile`** to verify compilation succeeds
-4. **Run `mvn quarkus:dev`** to verify application starts without errors
-5. **Mark task I3.T1 as DONE** in the task tracking system
-6. **Proceed to task I3.T2** (JWT Token Service implementation)
+**Your Task:** Implement the core OAuth2 authorization code flow with PKCE for Google and Microsoft providers. Use the Quarkus OIDC extension where possible for security and robustness. Focus on token exchange, ID token validation, and user claim extraction.
 
-**No other code changes are needed unless bugs are found during testing.**
-
-### Exception Class Template (if missing)
-
-If OAuth2AuthenticationException.java doesn't exist, create it with this structure:
-
-```java
-package com.scrumpoker.integration.oauth;
-
-/**
- * Exception thrown when OAuth2 authentication fails.
- * Captures provider-specific error details for debugging and user feedback.
- */
-public class OAuth2AuthenticationException extends RuntimeException {
-
-    private final String provider;
-    private final String errorCode;
-    private final String errorDescription;
-
-    public OAuth2AuthenticationException(String message, String provider) {
-        super(message);
-        this.provider = provider;
-        this.errorCode = null;
-        this.errorDescription = null;
-    }
-
-    public OAuth2AuthenticationException(String message, String provider,
-                                        String errorCode, Throwable cause) {
-        super(message, cause);
-        this.provider = provider;
-        this.errorCode = errorCode;
-        this.errorDescription = null;
-    }
-
-    public String getProvider() { return provider; }
-    public String getErrorCode() { return errorCode; }
-    public String getErrorDescription() { return errorDescription; }
-}
-```
+**Key Success Criteria:**
+- Real OAuth codes from Google/Microsoft can be exchanged for user profile data
+- ID tokens are cryptographically validated
+- User profile claims are correctly extracted and mapped to `OAuthUserInfo`
+- Environment variables are used for sensitive configuration
+- Integration tests demonstrate the flow works end-to-end
