@@ -102,6 +102,11 @@ public class UserService {
         preference.defaultDeckType = "fibonacci";
         // theme defaults to "light" at database level
 
+        // Manually set timestamps (Hibernate Reactive doesn't reliably support @CreationTimestamp)
+        Instant now = Instant.now();
+        preference.createdAt = now;
+        preference.updatedAt = now;
+
         // Set default JSONB configurations
         try {
             UserPreferenceConfig defaultConfig = UserPreferenceConfig.defaultConfig();
