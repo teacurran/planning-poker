@@ -30,7 +30,7 @@ import java.util.stream.Collectors;
  * Provides endpoints for creating, reading, updating, and deleting rooms.
  * Implements OpenAPI specification from I2.T1.
  */
-@Path("/api/v1/rooms")
+@Path("/api/v1")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
 @Tag(name = "Rooms", description = "Room management endpoints")
@@ -48,6 +48,7 @@ public class RoomController {
      * Returns: 201 Created with RoomDTO
      */
     @POST
+    @Path("/rooms")
     @Operation(summary = "Create a new room", description = "Creates a new estimation room with the specified configuration")
     @APIResponse(responseCode = "201", description = "Room created successfully",
         content = @Content(schema = @Schema(implementation = RoomDTO.class)))
@@ -83,7 +84,7 @@ public class RoomController {
      * Returns: 200 OK with RoomDTO, or 404 Not Found
      */
     @GET
-    @Path("/{roomId}")
+    @Path("/rooms/{roomId}")
     @Operation(summary = "Get room by ID", description = "Retrieves room details by its unique 6-character identifier")
     @APIResponse(responseCode = "200", description = "Room found",
         content = @Content(schema = @Schema(implementation = RoomDTO.class)))
@@ -107,7 +108,7 @@ public class RoomController {
      * Returns: 200 OK with updated RoomDTO
      */
     @PUT
-    @Path("/{roomId}/config")
+    @Path("/rooms/{roomId}/config")
     @RolesAllowed("USER") // Will be enforced when auth is implemented in Iteration 3
     @Operation(summary = "Update room configuration", description = "Updates room title, privacy mode, or configuration settings")
     @APIResponse(responseCode = "200", description = "Room updated successfully",
@@ -154,7 +155,7 @@ public class RoomController {
      * Returns: 204 No Content
      */
     @DELETE
-    @Path("/{roomId}")
+    @Path("/rooms/{roomId}")
     @RolesAllowed("USER") // Will be enforced when auth is implemented in Iteration 3
     @Operation(summary = "Delete room", description = "Soft deletes a room (sets deleted_at timestamp)")
     @APIResponse(responseCode = "204", description = "Room deleted successfully")
