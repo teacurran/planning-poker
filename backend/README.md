@@ -51,7 +51,26 @@ cd backend
 mvn clean compile
 ```
 
-### 2. Configure Environment Variables
+### 2. Generate RSA Key Pair for JWT Signing
+
+Before running the application, you need to generate an RSA key pair for JWT token signing:
+
+```bash
+cd backend
+./generate-keys.sh
+```
+
+This script generates:
+- `src/main/resources/privateKey.pem` - RSA private key for signing tokens (2048-bit)
+- `src/main/resources/publicKey.pem` - RSA public key for verifying signatures
+
+**SECURITY CRITICAL:**
+- The `privateKey.pem` file is already in `.gitignore` and should NEVER be committed to version control
+- In production, load keys from Kubernetes Secrets or a secure key management system
+- Rotate keys periodically (recommended: every 90 days)
+- Keep the private key secure and restrict file permissions: `chmod 600 src/main/resources/privateKey.pem`
+
+### 3. Configure Environment Variables
 
 The application uses environment variables for configuration. Default values are provided for local development:
 
@@ -65,18 +84,22 @@ export DB_REACTIVE_URL=postgresql://localhost:5432/scrumpoker
 # Redis
 export REDIS_URL=redis://localhost:6379
 
-# JWT (use proper keys in production)
+# JWT Configuration
 export JWT_ISSUER=https://scrumpoker.com
-export JWT_PRIVATE_KEY_LOCATION=/path/to/privateKey.pem
-export JWT_PUBLIC_KEY_LOCATION=/path/to/publicKey.pem
+# For production, set these to actual key content or use Kubernetes Secrets:
+# export JWT_PRIVATE_KEY="$(cat /path/to/privateKey.pem)"
+# export JWT_PUBLIC_KEY="$(cat /path/to/publicKey.pem)"
 
-# OIDC (OAuth2)
-export OIDC_CLIENT_ID=your-client-id
-export OIDC_CLIENT_SECRET=your-client-secret
-export OIDC_AUTH_SERVER_URL=https://accounts.google.com
+# OAuth2 Providers (Google)
+export GOOGLE_CLIENT_ID=your-google-client-id
+export GOOGLE_CLIENT_SECRET=your-google-client-secret
+
+# OAuth2 Providers (Microsoft)
+export MICROSOFT_CLIENT_ID=your-microsoft-client-id
+export MICROSOFT_CLIENT_SECRET=your-microsoft-client-secret
 ```
 
-### 3. Start Development Server
+### 4. Start Development Server
 
 ```bash
 mvn quarkus:dev
@@ -89,7 +112,7 @@ The application will be available at:
 - **OpenAPI**: http://localhost:8080/q/openapi
 - **Swagger UI**: http://localhost:8080/q/swagger-ui
 
-### 4. Run Tests
+### 5. Run Tests
 
 ```bash
 mvn test

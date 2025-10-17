@@ -38,3 +38,6 @@ Thumbs.db
 *.tmp
 *.swp
 *~
+
+# JWT Private Keys (NEVER COMMIT - SECURITY CRITICAL)
+src/main/resources/privateKey.pem
