@@ -24,7 +24,7 @@ This is the full specification of the task you must complete.
     "backend/src/test/java/com/scrumpoker/repository/UserRepositoryTest.java",
     "backend/src/test/java/com/scrumpoker/repository/RoomRepositoryTest.java",
     "backend/src/test/java/com/scrumpoker/repository/VoteRepositoryTest.java",
-    "backend/src/test/resources/application.properties"
+    "backend/src/test/resources/application-test.properties"
   ],
   "deliverables": "12 repository test classes with minimum 3 test methods each (create, findById, custom finder), Testcontainers PostgreSQL configuration in test profile, Tests for JSONB field operations (Room.config, UserPreference.default_room_config), Soft delete tests verifying `deleted_at` timestamp behavior, Foreign key relationship tests (e.g., deleting User cascades to UserPreference)",
   "acceptance_criteria": "`mvn test` executes all repository tests successfully, Testcontainers starts PostgreSQL container automatically, All CRUD operations pass (insert, select, update, delete), Custom finder methods return expected results, JSONB fields round-trip correctly (save and retrieve complex objects), Soft delete tests confirm `deleted_at` set correctly, Test coverage >80% for repository classes",
@@ -164,220 +164,125 @@ The following analysis is based on my direct review of the current codebase. Use
 
 ### Relevant Existing Code
 
-#### **CRITICAL STATUS UPDATE - Existing Tests Analysis**
+*   **File:** `backend/src/test/java/com/scrumpoker/repository/UserRepositoryTest.java`
+    *   **Summary:** This is a comprehensive reference implementation for repository integration tests using the REACTIVE pattern with `@RunOnVertxContext` and `UniAsserter`. It contains 11 test methods covering CRUD operations, custom finders (findByEmail, findByOAuthProviderAndSubject, findActiveByEmail), soft delete behavior, and count operations.
+    *   **Recommendation:** This file demonstrates the CORRECT reactive pattern for Quarkus Panache testing. However, note that RoomRepositoryTest uses a SIMPLER blocking pattern with `@Transactional`. You SHOULD use the blocking pattern for simplicity unless you specifically want reactive testing.
 
-I have analyzed the existing test files and found that **3 out of 12 repository tests are already implemented**:
+*   **File:** `backend/src/test/java/com/scrumpoker/repository/RoomRepositoryTest.java`
+    *   **Summary:** This test uses the BLOCKING pattern with `@Transactional` annotation and `.await().indefinitely()` on all reactive operations. It contains 14 test methods covering String ID persistence, JSONB config fields, relationship navigation to User and Organization, multiple custom finders, soft delete filtering, and update operations.
+    *   **Recommendation:** You SHOULD use this as your primary template. The `@Transactional` + `.await().indefinitely()` pattern is MUCH simpler than the reactive UniAsserter pattern and is perfectly acceptable for integration tests. This is the recommended approach for remaining tests.
 
-1. ✅ **`UserRepositoryTest.java`** - COMPLETE (11 test methods, uses `@RunOnVertxContext` + `UniAsserter`)
-2. ✅ **`RoomRepositoryTest.java`** - COMPLETE (14 test methods, uses `@Transactional` + `.await().indefinitely()`)
-3. ✅ **`VoteRepositoryTest.java`** - EXISTS but needs review
+*   **File:** `backend/src/test/java/com/scrumpoker/repository/VoteRepositoryTest.java`
+    *   **Summary:** This file EXISTS but has CRITICAL BUGS. It attempts to use reactive pattern with `@RunOnVertxContext` but has scoping errors where it references `testRound` and `testParticipant` that are not properly initialized. Many test methods fail to compile because they try to use these undefined variables.
+    *   **Recommendation:** You MUST COMPLETELY FIX OR REWRITE this test file. The main issues are: (1) Missing proper test data setup - all entity creation should be in `@BeforeEach` or within each test method, (2) Complex entity hierarchy not properly managed (User → Room → Round AND User → Room → RoomParticipant must be created and persisted before Vote).
 
-**REMAINING 9 REPOSITORIES TO TEST:**
-- `UserPreferenceRepository` - JSONB fields testing critical
-- `OrganizationRepository` - JSONB fields testing critical
-- `OrgMemberRepository` - Composite key testing
-- `RoomParticipantRepository` - Relationships + nullable FK
-- `RoundRepository` - Relationships + statistics fields
-- `SessionHistoryRepository` - Partitioned table + JSONB
-- `SubscriptionRepository` - Enums + entity polymorphism
-- `PaymentHistoryRepository` - Simple FK relationship
-- `AuditLogRepository` - Partitioned table + composite key
+*   **File:** `backend/src/main/java/com/scrumpoker/repository/VoteRepository.java`
+    *   **Summary:** Reactive Panache repository with 6 custom finder methods for vote queries.
+    *   **Recommendation:** Your fixed VoteRepositoryTest MUST cover ALL 6 methods:
+        1. `findByRoundId(UUID)` - All votes in a round, ordered by votedAt
+        2. `findByRoomIdAndRoundNumber(String, Integer)` - Alternative round query using room ID
+        3. `findByParticipantId(UUID)` - All votes by a participant
+        4. `findByRoundIdAndParticipantId(UUID, UUID)` - Specific participant's vote in a round
+        5. `countByRoundId(UUID)` - Count of votes in a round
+        6. `findByRoundIdAndCardValue(UUID, String)` - Votes with specific card value in a round
 
----
+*   **File:** `backend/src/main/java/com/scrumpoker/domain/room/Vote.java`
+    *   **Summary:** Vote entity with UUID primary key, ManyToOne relationships to Round and RoomParticipant, unique constraint on (round_id, participant_id), cardValue field supporting special characters (?, ∞, ☕).
+    *   **Recommendation:** Your test MUST verify: (1) Unique constraint enforcement - cannot insert duplicate vote for same participant+round, (2) Special character card values persist correctly, (3) Relationship navigation works (`vote.round` and `vote.participant` accessible), (4) `votedAt` timestamp auto-set on creation.
 
-#### **CRITICAL PATTERN ALERT - Two Different Testing Approaches in Use!**
-
-The codebase contains **TWO DISTINCT testing patterns** for repository tests. You MUST understand both and choose one consistently:
-
-##### **Pattern 1: @RunOnVertxContext with UniAsserter (Reactive Pattern)**
-- **File:** `backend/src/test/java/com/scrumpoker/repository/UserRepositoryTest.java`
-- **Summary:** Uses Quarkus reactive testing with `@RunOnVertxContext` and `UniAsserter` for async operations
-- **Recommendation:** This is the CORRECT pattern for testing Panache Reactive repositories. You MUST use this pattern for all reactive repository tests.
-- **Key Characteristics:**
-  - Uses `@BeforeEach @RunOnVertxContext void setUp(UniAsserter asserter)`
-  - Uses `@Test @RunOnVertxContext void testName(UniAsserter asserter)`
-  - Uses `asserter.execute()` for async operations that don't return values
-  - Uses `asserter.assertThat()` for async operations that return values for assertion
-  - Wraps all database operations in `Panache.withTransaction()`
-  - **DOES NOT** use `@Transactional` annotation
-  - Example:
-    ```java
-    @Test
-    @RunOnVertxContext
-    void testPersistAndFindById(UniAsserter asserter) {
-        User user = createTestUser("john@example.com", "github", "github-456");
-
-        // Execute async persist
-        asserter.execute(() -> Panache.withTransaction(() -> userRepository.persist(user)));
-
-        // Assert async findById result
-        asserter.assertThat(() -> Panache.withTransaction(() -> userRepository.findById(user.userId)), found -> {
-            assertThat(found).isNotNull();
-            assertThat(found.email).isEqualTo("john@example.com");
-        });
-    }
-    ```
-
-##### **Pattern 2: @Transactional with .await().indefinitely() (Blocking Pattern)**
-- **File:** `backend/src/test/java/com/scrumpoker/repository/RoomRepositoryTest.java`
-- **Summary:** Uses synchronous blocking pattern with `@Transactional` annotation and `.await().indefinitely()`
-- **Recommendation:** This pattern is SIMPLER but **less aligned with Quarkus reactive paradigm**. Only use if you find reactive testing too complex.
-- **Key Characteristics:**
-  - Uses `@BeforeEach @Transactional void setUp()`
-  - Uses `@Test @Transactional void testName()`
-  - Blocks on reactive operations with `.await().indefinitely()`
-  - Uses traditional AssertJ assertions directly
-  - **DOES** use `@Transactional` annotation for automatic transaction management
-  - Example:
-    ```java
-    @Test
-    @Transactional
-    void testPersistAndFindById() {
-        Room room = createTestRoom("room01", "Test Room", testOwner);
-
-        // Block on persist
-        roomRepository.persist(room).await().indefinitely();
-
-        // Block on find
-        Room found = roomRepository.findById("room01").await().indefinitely();
-        assertThat(found).isNotNull();
-        assertThat(found.roomId).isEqualTo("room01");
-    }
-    ```
-
-#### **Which Pattern Should You Use?**
-
-**CRITICAL DECISION:** You have two viable approaches:
-
-1. **RECOMMENDED (Reactive Pattern):** Use `@RunOnVertxContext` + `UniAsserter` like `UserRepositoryTest`
-   - **Pros:** True reactive testing, proper async handling, aligns with Quarkus best practices
-   - **Cons:** More verbose, steeper learning curve
-   - **Use When:** Testing reactive repository operations, you want production-like async behavior
-
-2. **ALTERNATIVE (Blocking Pattern):** Use `@Transactional` + `.await().indefinitely()` like `RoomRepositoryTest`
-   - **Pros:** Simpler syntax, easier to understand, still integration tests with Testcontainers
-   - **Cons:** Blocks reactive operations, not truly async
-   - **Use When:** You want simpler tests, blocking behavior is acceptable in tests
-
-**MY RECOMMENDATION:** Use **Pattern 2 (Blocking)** for the remaining tests because it's MUCH simpler and RoomRepositoryTest demonstrates it works perfectly. The task doesn't explicitly require reactive testing patterns.
-
----
-
-#### **File:** `backend/src/main/java/com/scrumpoker/repository/VoteRepository.java`
-- **Summary:** Reactive Panache repository with 6 custom finder methods for vote queries
-- **Recommendation:** Your test MUST cover ALL 6 custom methods:
-  1. `findByRoundId(UUID roundId)` - Find all votes in a round
-  2. `findByRoomIdAndRoundNumber(String roomId, Integer roundNumber)` - Alternative round query
-  3. `findByParticipantId(UUID participantId)` - All votes by a participant
-  4. `findByRoundIdAndParticipantId(UUID roundId, UUID participantId)` - Specific vote lookup
-  5. `countByRoundId(UUID roundId)` - Count votes in round
-  6. `findByRoundIdAndCardValue(UUID roundId, String cardValue)` - Votes with specific card value
-
-#### **File:** `backend/src/main/java/com/scrumpoker/domain/room/Vote.java`
-- **Summary:** Vote entity with UUID primary key, relationships to Round and RoomParticipant, unique constraint on (round_id, participant_id)
-- **Recommendation:**
-  - Test the unique constraint - attempting to insert duplicate vote for same participant+round should fail
-  - Test relationship navigation: `vote.round` and `vote.participant` should be accessible
-  - Test `cardValue` field with various deck values: "1", "2", "3", "5", "8", "13", "21", "?", "∞", "☕"
-  - Test `votedAt` timestamp is automatically set on creation
-
-#### **File:** `backend/src/main/java/com/scrumpoker/domain/room/Round.java`
-- **Summary:** Round entity with UUID primary key, relationship to Room, unique constraint on (room_id, round_number)
-- **Recommendation:**
-  - You MUST create Round entities to test Vote operations (Votes require a Round)
-  - Test fields: `roundId`, `room`, `roundNumber`, `storyTitle`, `startedAt`, `revealedAt`, `average`, `median`, `consensusReached`
-  - Use meaningful test data for statistics fields (e.g., average=5.5, median="5", consensusReached=true)
-
-#### **File:** `backend/src/main/java/com/scrumpoker/domain/room/RoomParticipant.java`
-- **Summary:** RoomParticipant entity with UUID primary key, supports both authenticated users and anonymous guests
-- **Recommendation:**
-  - You MUST create RoomParticipant entities to test Vote operations (Votes require a Participant)
-  - Test both authenticated (user_id set) and anonymous (anonymousId set) participants
-  - Use `displayName` for test participants (e.g., "Alice", "Bob", "Charlie")
-  - Set `role` to `RoomRole.VOTER` for voting participants
-
-#### **File:** `backend/src/main/java/com/scrumpoker/domain/room/Room.java`
-- **Summary:** Room entity with String primary key (6-char nanoid), relationships to User (owner) and Organization
-- **Recommendation:**
-  - You MUST create Room entities to test Round and Vote operations
-  - Use simple 6-character String IDs for test rooms (e.g., "room01", "room02")
-  - Set `privacyMode` to `PrivacyMode.PUBLIC` for simplicity
-  - Set `config` to a simple JSON string: `"{\"deckType\":\"fibonacci\"}"`
-
-#### **File:** `backend/src/test/resources/application.properties`
-- **Summary:** Test configuration with Testcontainers Dev Services enabled, Flyway migrations, and logging
-- **Recommendation:**
-  - NO CHANGES NEEDED - this file is already correctly configured
-  - Testcontainers automatically starts PostgreSQL when no explicit DB URL is provided
-  - Flyway migrations run automatically (`quarkus.flyway.migrate-at-start=true`)
-  - Database schema will be created from migration scripts before tests run
-
----
+*   **File:** `backend/src/test/resources/application.properties`
+    *   **Summary:** Already correctly configured for Testcontainers. Database URLs are intentionally left unset to trigger Dev Services automatic PostgreSQL container. Flyway migrations run at startup (`quarkus.flyway.migrate-at-start=true`).
+    *   **Recommendation:** NO CHANGES NEEDED. The task mentions `application-test.properties` but that file is NOT needed - the existing `application.properties` in test resources is correct. Testcontainers works automatically with this configuration.
 
 ### Implementation Tips & Notes
 
-#### **TIP: Test Data Creation Strategy**
-```java
-// Create test hierarchy: User → Room → Round → RoomParticipant → Vote
-User testUser = createTestUser("owner@example.com");
-userRepository.persist(testUser).await().indefinitely();
+*   **Tip:** Use the BLOCKING pattern (`@Transactional` + `.await().indefinitely()`) from RoomRepositoryTest for all remaining tests. It's simpler and easier to debug than the reactive UniAsserter pattern. Example structure:
+    ```java
+    @BeforeEach
+    @Transactional
+    void setUp() {
+        voteRepository.deleteAll().await().indefinitely();
+        // delete other repos as needed
+    }
 
-Room testRoom = createTestRoom("room01", "Test Room", testUser);
-roomRepository.persist(testRoom).await().indefinitely();
+    @Test
+    @Transactional
+    void testPersistAndFindById() {
+        Vote vote = createTestVote();
+        voteRepository.persist(vote).await().indefinitely();
 
-Round testRound = createTestRound(testRoom, 1, "Story 1");
-roundRepository.persist(testRound).await().indefinitely();
+        Vote found = voteRepository.findById(vote.voteId).await().indefinitely();
+        assertThat(found).isNotNull();
+        assertThat(found.cardValue).isEqualTo("5");
+    }
+    ```
 
-RoomParticipant testParticipant = createTestParticipant(testRoom, testUser, "Alice");
-participantRepository.persist(testParticipant).await().indefinitely();
+*   **Note:** VoteRepositoryTest requires complex entity hierarchy setup. Before testing Vote, you MUST create and persist: User → Room → Round AND User → Room → RoomParticipant. The proper pattern is:
+    ```java
+    User user = createTestUser("voter@example.com", "google", "google-123");
+    userRepository.persist(user).await().indefinitely();
 
-Vote testVote = createTestVote(testRound, testParticipant, "5");
-voteRepository.persist(testVote).await().indefinitely();
-```
+    Room room = createTestRoom("room01", "Test Room", user);
+    roomRepository.persist(room).await().indefinitely();
 
-#### **TIP: Test Cleanup Best Practice**
-- In `@BeforeEach`, delete all test data in reverse dependency order:
-  ```java
-  voteRepository.deleteAll().await().indefinitely();
-  participantRepository.deleteAll().await().indefinitely();
-  roundRepository.deleteAll().await().indefinitely();
-  roomRepository.deleteAll().await().indefinitely();
-  userRepository.deleteAll().await().indefinitely();
-  ```
+    Round round = createTestRound(room, 1, "Test Story");
+    roundRepository.persist(round).await().indefinitely();
 
-#### **TIP: Testing Custom Finder Methods**
-- For each custom finder method, create test data that matches AND data that doesn't match
-- Example: To test `findByRoundId`, create votes in Round A and Round B, then query for Round A and verify only Round A votes returned
+    RoomParticipant participant = createTestParticipant(room, user, "Alice");
+    participantRepository.persist(participant).await().indefinitely();
 
-#### **NOTE: AssertJ Fluent Assertions**
-- The project uses AssertJ for all assertions (already imported in existing tests)
-- Use fluent API: `assertThat(found).isNotNull()`, `assertThat(list).hasSize(3)`
-- For collections: `assertThat(votes).extracting(v -> v.cardValue).containsExactlyInAnyOrder("5", "8", "13")`
+    Vote vote = createTestVote(round, participant, "5");
+    voteRepository.persist(vote).await().indefinitely();
+    ```
 
-#### **NOTE: Relationship Navigation**
-- When testing relationship navigation (e.g., `vote.round`), ensure parent entity is loaded
-- Use `@ManyToOne(fetch = FetchType.LAZY)` means relationships are lazy-loaded
-- In tests, simply accessing the relationship field will trigger loading (Hibernate will fetch it)
+*   **Warning:** The existing VoteRepositoryTest.java has CRITICAL SCOPING BUGS. Many test methods try to use `testRound` and `testParticipant` variables that don't exist in proper scope. You MUST either: (1) Create these as instance fields and initialize them in `@BeforeEach`, OR (2) Create all test data within each test method. I recommend option 1 for consistency with other tests.
 
-#### **WARNING: Test Execution Order**
-- Do NOT rely on test execution order - each test should be independent
-- Use `@BeforeEach` to set up clean state before EVERY test
-- Delete all test data in setup to ensure isolation
+*   **Tip:** For JSONB field testing (Room.config, UserPreference.default_room_config, Organization.sso_config), the pattern is simple string comparison:
+    ```java
+    String jsonConfig = "{\"deckType\":\"fibonacci\",\"timerEnabled\":true}";
+    room.config = jsonConfig;
+    roomRepository.persist(room).await().indefinitely();
 
-#### **WARNING: Async Operation Pitfall**
-- ALWAYS wait for async operations to complete: `.await().indefinitely()`
-- If you forget `.await()`, tests will fail with NullPointerException or incomplete data
+    Room found = roomRepository.findById(room.roomId).await().indefinitely();
+    assertThat(found.config).isEqualTo(jsonConfig);
+    ```
 
-#### **CRITICAL: Injection Pattern**
-- You MUST inject ALL required repositories in your test class:
-  ```java
-  @Inject VoteRepository voteRepository;
-  @Inject RoundRepository roundRepository;
-  @Inject RoomParticipantRepository participantRepository;
-  @Inject RoomRepository roomRepository;
-  @Inject UserRepository userRepository;
-  ```
+*   **Note:** Soft delete testing pattern (from UserRepositoryTest): Set `deletedAt = Instant.now()`, persist, verify entity still exists with deletedAt set, then verify custom "active" finders exclude the soft-deleted entity.
 
----
+*   **Tip:** Use AssertJ fluent assertions for collections:
+    ```java
+    assertThat(votes).hasSize(3);
+    assertThat(votes).extracting(v -> v.cardValue).containsExactlyInAnyOrder("3", "5", "8");
+    assertThat(votes).allMatch(v -> v.round.roundId.equals(testRound.roundId));
+    ```
 
-**END OF TASK BRIEFING PACKAGE**
+*   **Critical:** You MUST inject ALL required repositories for VoteRepositoryTest:
+    ```java
+    @Inject VoteRepository voteRepository;
+    @Inject RoundRepository roundRepository;
+    @Inject RoomParticipantRepository participantRepository;
+    @Inject RoomRepository roomRepository;
+    @Inject UserRepository userRepository;
+    ```
+
+*   **Tip:** Test cleanup in `@BeforeEach` should delete in reverse dependency order:
+    ```java
+    voteRepository.deleteAll().await().indefinitely();
+    roundRepository.deleteAll().await().indefinitely();
+    participantRepository.deleteAll().await().indefinitely();
+    roomRepository.deleteAll().await().indefinitely();
+    userRepository.deleteAll().await().indefinitely();
+    ```
+
+*   **Note:** The unique constraint on Vote (round_id, participant_id) means you CANNOT insert two votes for the same participant in the same round. To test this constraint, you can either: (1) Expect an exception when attempting duplicate, OR (2) Simply avoid creating duplicates in your test data setup.
+
+*   **Tip:** For testing special character card values (?, ∞, ☕), create separate test method that persists these values and verifies they round-trip correctly through PostgreSQL:
+    ```java
+    Vote questionVote = createTestVote(testRound, participant1, "?");
+    Vote infinityVote = createTestVote(testRound, participant2, "∞");
+    Vote coffeeVote = createTestVote(testRound, participant3, "☕");
+    ```
+
+*   **Warning:** Always use `.await().indefinitely()` on ALL reactive operations when using the blocking pattern. Forgetting this will cause NullPointerException or incomplete data in tests.
+
+*   **Critical:** The task mentions 12 repository test classes, but only 3 exist currently (UserRepositoryTest, RoomRepositoryTest, VoteRepositoryTest - though VoteRepositoryTest needs major fixes). The remaining 9 repositories need tests created from scratch. However, for THIS specific task (I1.T8), you should focus on FIXING VoteRepositoryTest since UserRepositoryTest and RoomRepositoryTest are already complete and passing.

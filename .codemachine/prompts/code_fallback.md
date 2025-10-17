@@ -8,6 +8,12 @@ The previous code submission did not pass verification. You must fix the followi
 
 Create integration tests for all Panache repositories using Testcontainers (PostgreSQL container). Write tests for: entity persistence (insert, update, delete), custom finder methods, relationship navigation, JSONB field serialization/deserialization, soft delete behavior (User, Room). Use Quarkus `@QuarkusTest` annotation with `@TestProfile` for test database configuration. Assert results using AssertJ or Rest Assured for fluent assertions.
 
+**Target Files:**
+- backend/src/test/java/com/scrumpoker/repository/UserRepositoryTest.java
+- backend/src/test/java/com/scrumpoker/repository/RoomRepositoryTest.java
+- backend/src/test/java/com/scrumpoker/repository/VoteRepositoryTest.java
+- backend/src/test/resources/application-test.properties
+
 **Acceptance Criteria:**
 - `mvn test` executes all repository tests successfully
 - Testcontainers starts PostgreSQL container automatically
@@ -21,171 +27,201 @@ Create integration tests for all Panache repositories using Testcontainers (Post
 
 ## Issues Detected
 
-**Compilation Errors in VoteRepositoryTest:**
+### **Critical Test Failures in RoomRepositoryTest (13 out of 14 tests failing)**
 
-The file `backend/src/test/java/com/scrumpoker/repository/VoteRepositoryTest.java` has been partially converted from `@Transactional` pattern to `@RunOnVertxContext` pattern, but **8 test methods** still reference instance variables (`testRound`, `testParticipant`, `testRoom`, `testUser`) that were removed from the class.
+**Error Type:** `org.hibernate.PersistentObjectException: detached entity passed to persist: com.scrumpoker.domain.user.User`
 
-**Affected test methods (lines 118-316):**
-1. `testRelationshipNavigationToParticipant` - line 121: references `testRound`, `testParticipant`
-2. `testFindByRoundId` - lines 138-140: references `testRound`, `testParticipant`
-3. `testFindByRoomIdAndRoundNumber` - lines 163-164: references `testRound`, `testParticipant`
-4. `testFindByParticipantId` - lines 182-183: references `testRound`, `testParticipant`
-5. `testFindByRoundIdAndParticipantId` - line 201: references `testRound`, `testParticipant`
-6. `testCountByRoundId` - lines 217-219: references `testRound`, `testParticipant`
-7. `testFindByRoundIdAndCardValue` - lines 236-238: references `testRound`, `testParticipant`
-8. `testVoteWithSpecialCardValues` - lines 257-259: references `testRound`, `testParticipant`
-9. `testVoteOrderingByVotedAt` - lines 278, 281, 284: references `testRound`, `testParticipant`
-10. `testDeleteVote` - line 305: references `testRound`, `testParticipant`
+**Root Cause:** The helper method `createTestUser()` in `RoomRepositoryTest.java` (line 411) is pre-assigning a UUID to the user entity:
+```java
+private User createTestUser(String email, String provider, String subject) {
+    User user = new User();
+    user.userId = UUID.randomUUID();  // ❌ THIS LINE CAUSES THE ISSUE
+    user.email = email;
+    // ...
+}
+```
 
-**Specific Compilation Errors:**
-- **Lines 121, 138-140, 163-164, 182-183, 201, 217-219, 236-238, 257-259, 278-285, 305:** Cannot find symbol: variable `testRound`, `testParticipant`, `testRoom`, `testUser`
-- **Lines 248, 268, 294:** Cannot find symbol: method `hasSize(int)` - This is because `votes` is typed as `Object` instead of `List<Vote>`
-- **Line 249:** Cannot find symbol: method `allMatch(...)` - Same typing issue
-- **Lines 269, 295-297:** Cannot find symbol: method `get(int)` or `extracting(...)` - Same typing issue
+When you pre-assign an ID to an entity and then call `userRepository.persist(user)` within a reactive transaction, Hibernate treats it as a **detached entity** (an entity that was previously managed but is now outside a persistence context) rather than a **new transient entity** (an entity that has never been persisted).
+
+**Affected Test Methods (ALL fail with the same error):**
+1. `testPersistAndFindById` - line 52
+2. `testJsonbConfigField` - line 77
+3. `testRelationshipNavigationToOwner` - line 99
+4. `testRelationshipNavigationToOrganization` - line 119
+5. `testFindActiveByOwnerId` - line 143
+6. `testFindByOrgId` - line 172
+7. `testFindPublicRooms` - line 205
+8. `testFindByPrivacyMode` - line 238
+9. `testFindInactiveSince` - line 265
+10. `testCountActiveByOwnerId` - line 296
+11. `testCountByOrgId` - line 323
+12. `testSoftDelete` - line 351
+13. `testUpdateRoom` - line 382
+
+**Important Context:** VoteRepositoryTest was successfully fixed with the SAME issue. The correct pattern is to NOT pre-assign UUIDs in helper methods - let Hibernate auto-generate them on persist. See VoteRepositoryTest.java lines 598-608 for the correct pattern.
 
 ---
 
 ## Best Approach to Fix
 
-You MUST fix `VoteRepositoryTest.java` by adding local test data creation to each failing test method, following the **exact same pattern** already used in `testPersistAndFindById` (lines 54-83) and `testRelationshipNavigationToRound` (lines 85-115).
+You MUST modify `RoomRepositoryTest.java` to remove UUID pre-assignment from helper methods. Follow the EXACT pattern used in `VoteRepositoryTest.java`.
 
-### Required Changes for Each Failing Test:
+### Required Changes:
 
-**For ALL 10 failing test methods**, add this exact setup code at the beginning (after the `// Given:` comment):
+**1. Fix the `createTestUser()` helper method (line 409-418):**
 
+**BEFORE (INCORRECT):**
 ```java
-User testUser = createTestUser("voter@example.com", "google", "google-voter");
-Room testRoom = createTestRoom("vote01", "Vote Test Room", testUser);
-Round testRound = createTestRound(testRoom, 1, "Test Story");
-RoomParticipant testParticipant = createTestParticipant(testRoom, testUser, "Test Voter");
-
-// Persist the test hierarchy
-asserter.execute(() -> Panache.withTransaction(() ->
-    userRepository.persist(testUser).flatMap(user ->
-        roomRepository.persist(testRoom).flatMap(room ->
-            roundRepository.persist(testRound).flatMap(round ->
-                participantRepository.persist(testParticipant)
-            )
-        )
-    )
-));
-```
-
-**CRITICAL:** After adding the setup code, each test method MUST persist its own Vote entities. For example, in `testFindByRoundId`, after the setup code above, the test creates and persists 3 votes:
-
-```java
-Vote vote1 = createTestVote(testRound, testParticipant, "3");
-Vote vote2 = createTestVote(testRound, testParticipant, "5");
-Vote vote3 = createTestVote(testRound, testParticipant, "8");
-
-vote1.votedAt = Instant.now().minusMillis(30);
-vote2.votedAt = Instant.now().minusMillis(20);
-vote3.votedAt = Instant.now().minusMillis(10);
-
-asserter.execute(() -> Panache.withTransaction(() -> voteRepository.persist(vote1)));
-asserter.execute(() -> Panache.withTransaction(() -> voteRepository.persist(vote2)));
-asserter.execute(() -> Panache.withTransaction(() -> voteRepository.persist(vote3)));
-```
-
-### Implementation Steps:
-
-1. **Fix `testRelationshipNavigationToParticipant` (line 118):** Add complete setup code before line 121
-2. **Fix `testFindByRoundId` (line 134):** Add setup code before line 138
-3. **Fix `testFindByRoomIdAndRoundNumber` (line 159):** Add setup code before line 163
-4. **Fix `testFindByParticipantId` (line 178):** Add setup code before line 182
-5. **Fix `testFindByRoundIdAndParticipantId` (line 197):** Add setup code before line 201
-6. **Fix `testCountByRoundId` (line 213):** Add setup code before line 217
-7. **Fix `testFindByRoundIdAndCardValue` (line 232):** Add setup code before line 236
-8. **Fix `testVoteWithSpecialCardValues` (line 253):** Add setup code before line 257
-9. **Fix `testVoteOrderingByVotedAt` (line 274):** Add setup code before line 278
-10. **Fix `testDeleteVote` (line 301):** Add setup code before line 305
-
-### Special Handling for Tests with Multiple Participants:
-
-For tests that require multiple participants (e.g., `testFindByRoundIdAndCardValue` creates 3 votes from potentially different participants), you may need to create additional participants:
-
-```java
-RoomParticipant participant1 = createTestParticipant(testRoom, testUser, "Alice");
-RoomParticipant participant2 = createTestParticipant(testRoom, createTestUser("bob@example.com", "google", "google-bob"), "Bob");
-
-asserter.execute(() -> Panache.withTransaction(() ->
-    participantRepository.persist(participant1).flatMap(p1 ->
-        participantRepository.persist(participant2)
-    )
-));
-```
-
-However, **reviewing the current test logic**, it appears all tests currently use a single `testParticipant`. The unique constraint on Vote is `(round_id, participant_id)`, so **you cannot create multiple votes in the same round from the same participant**.
-
-**CRITICAL FIX REQUIRED:** For tests that create multiple votes in the same round (e.g., `testFindByRoundId`, `testCountByRoundId`, `testFindByRoundIdAndCardValue`, `testVoteOrderingByVotedAt`), you MUST either:
-1. Create multiple participants (one per vote), OR
-2. Create multiple rounds (one per vote)
-
-**RECOMMENDED APPROACH:** Create multiple participants for these tests to match real-world voting scenarios where multiple people vote in the same round.
-
-### Example Fix for `testFindByRoundId`:
-
-```java
-@Test
-@RunOnVertxContext
-void testFindByRoundId(UniAsserter asserter) {
-    // Given: setup test hierarchy
-    User testUser = createTestUser("voter@example.com", "google", "google-voter");
-    Room testRoom = createTestRoom("vote01", "Vote Test Room", testUser);
-    Round testRound = createTestRound(testRoom, 1, "Test Story");
-
-    // Create 3 different participants for 3 votes
-    RoomParticipant participant1 = createTestParticipant(testRoom, testUser, "Alice");
-    RoomParticipant participant2 = createTestParticipant(testRoom, createTestUser("bob@example.com", "google", "google-bob"), "Bob");
-    RoomParticipant participant3 = createTestParticipant(testRoom, createTestUser("charlie@example.com", "google", "google-charlie"), "Charlie");
-
-    // Persist hierarchy
-    asserter.execute(() -> Panache.withTransaction(() ->
-        userRepository.persist(testUser).flatMap(u ->
-            roomRepository.persist(testRoom).flatMap(r ->
-                roundRepository.persist(testRound).flatMap(round ->
-                    participantRepository.persist(participant1).flatMap(p1 ->
-                        participantRepository.persist(participant2).flatMap(p2 ->
-                            participantRepository.persist(participant3)
-                        )
-                    )
-                )
-            )
-        )
-    ));
-
-    // Given: multiple votes in a round
-    Vote vote1 = createTestVote(testRound, participant1, "3");
-    Vote vote2 = createTestVote(testRound, participant2, "5");
-    Vote vote3 = createTestVote(testRound, participant3, "8");
-
-    vote1.votedAt = Instant.now().minusMillis(30);
-    vote2.votedAt = Instant.now().minusMillis(20);
-    vote3.votedAt = Instant.now().minusMillis(10);
-
-    asserter.execute(() -> Panache.withTransaction(() -> voteRepository.persist(vote1)));
-    asserter.execute(() -> Panache.withTransaction(() -> voteRepository.persist(vote2)));
-    asserter.execute(() -> Panache.withTransaction(() -> voteRepository.persist(vote3)));
-
-    // When: finding votes by round ID
-    // Then: all votes in the round are returned, ordered by votedAt
-    asserter.assertThat(() -> Panache.withTransaction(() -> voteRepository.findByRoundId(testRound.roundId)), votes -> {
-        assertThat(votes).hasSize(3);
-        assertThat(votes).extracting(v -> v.cardValue)
-                .containsExactly("3", "5", "8");
-    });
+private User createTestUser(String email, String provider, String subject) {
+    User user = new User();
+    user.userId = UUID.randomUUID();  // ❌ REMOVE THIS LINE
+    user.email = email;
+    user.oauthProvider = provider;
+    user.oauthSubject = subject;
+    user.displayName = "Test User";
+    user.subscriptionTier = SubscriptionTier.FREE;
+    return user;
 }
 ```
 
-### After Fixing Compilation Errors:
+**AFTER (CORRECT):**
+```java
+/**
+ * Helper method to create test users.
+ * Note: userId is NOT set here - it will be auto-generated by Hibernate on persist.
+ */
+private User createTestUser(String email, String provider, String subject) {
+    User user = new User();
+    // DO NOT SET user.userId - let Hibernate auto-generate it
+    user.email = email;
+    user.oauthProvider = provider;
+    user.oauthSubject = subject;
+    user.displayName = "Test User";
+    user.subscriptionTier = SubscriptionTier.FREE;
+    return user;
+}
+```
 
-1. Run `mvn test -Dtest=VoteRepositoryTest` to verify all tests compile and pass
-2. If any tests fail due to unique constraint violations, create additional participants or rounds as needed
-3. Ensure all 12 test methods in VoteRepositoryTest pass successfully
+**2. Fix the `createTestOrganization()` helper method (line 423-431):**
+
+**BEFORE (INCORRECT):**
+```java
+private Organization createTestOrganization(String name, String domain) {
+    Organization org = new Organization();
+    org.orgId = UUID.randomUUID();  // ❌ REMOVE THIS LINE
+    org.name = name;
+    org.domain = domain;
+    org.ssoConfig = "{}";
+    org.branding = "{}";
+    return org;
+}
+```
+
+**AFTER (CORRECT):**
+```java
+/**
+ * Helper method to create test organizations.
+ * Note: orgId is NOT set here - it will be auto-generated by Hibernate on persist.
+ */
+private Organization createTestOrganization(String name, String domain) {
+    Organization org = new Organization();
+    // DO NOT SET org.orgId - let Hibernate auto-generate it
+    org.name = name;
+    org.domain = domain;
+    org.ssoConfig = "{}";
+    org.branding = "{}";
+    return org;
+}
+```
+
+**3. Add missing timestamp fields to `createTestRoom()` helper method (line 436-444):**
+
+The Room entity likely has `@CreationTimestamp` or `@UpdateTimestamp` annotations that run AFTER validation. You need to manually set these timestamps in tests to avoid validation errors.
+
+**BEFORE (INCOMPLETE):**
+```java
+private Room createTestRoom(String roomId, String title, User owner) {
+    Room room = new Room();
+    room.roomId = roomId;
+    room.title = title;
+    room.owner = owner;
+    room.privacyMode = PrivacyMode.PUBLIC;
+    room.config = "{\"deckType\":\"fibonacci\",\"timerEnabled\":false}";
+    return room;
+}
+```
+
+**AFTER (COMPLETE):**
+```java
+/**
+ * Helper method to create test rooms with 6-character String IDs.
+ */
+private Room createTestRoom(String roomId, String title, User owner) {
+    Room room = new Room();
+    room.roomId = roomId;
+    room.title = title;
+    room.owner = owner;
+    room.privacyMode = PrivacyMode.PUBLIC;
+    room.config = "{\"deckType\":\"fibonacci\",\"timerEnabled\":false}";
+    // Set timestamps manually since @CreationTimestamp/@UpdateTimestamp run after validation
+    room.createdAt = Instant.now();
+    room.lastActiveAt = Instant.now();
+    return room;
+}
+```
+
+---
+
+## Verification Steps
+
+After making the changes above, verify the fixes:
+
+1. **Compile the tests:**
+   ```bash
+   mvn test-compile
+   ```
+   This should complete successfully with no compilation errors.
+
+2. **Run the three target repository tests:**
+   ```bash
+   mvn test -Dtest=UserRepositoryTest,RoomRepositoryTest,VoteRepositoryTest
+   ```
+   **Expected Result:** All 36 tests should PASS (11 UserRepositoryTest + 14 RoomRepositoryTest + 12 VoteRepositoryTest = 37 total, though one may have been counted differently).
+
+3. **Verify specific RoomRepositoryTest output:**
+   ```
+   [INFO] Tests run: 14, Failures: 0, Errors: 0, Skipped: 0
+   ```
+
+---
+
+## Why This Fix Works
+
+**The Problem:**
+- When you manually set `user.userId = UUID.randomUUID()`, Hibernate sees an entity with a non-null ID
+- In reactive transactions with `@RunOnVertxContext`, Hibernate assumes this entity was previously persisted and is now "detached"
+- Calling `persist()` on a detached entity throws `PersistentObjectException`
+
+**The Solution:**
+- Leave the ID field `null` in helper methods
+- Let Hibernate auto-generate the UUID when `persist()` is called
+- Hibernate recognizes entities with `null` IDs as "transient" (never persisted) and handles them correctly
+
+**Reference Implementation:**
+- VoteRepositoryTest.java successfully uses this pattern (see lines 598-641)
+- All 12 tests in VoteRepositoryTest PASS with this approach
 
 ---
 
 ## DO NOT:
-- Change the testing pattern from `@RunOnVertxContext` to `@Transactional`
+- Change the testing pattern from `@RunOnVertxContext` to any other pattern
 - Remove any existing test methods
-- Change the assertion logic (the assertions are correct, just missing the test data setup)
+- Change the assertion logic (the assertions are correct)
+- Modify entity classes or repository interfaces
+- Change database configuration or Testcontainers setup (it's working correctly)
+
+## DO:
+- Remove UUID pre-assignment from ALL helper methods in RoomRepositoryTest.java
+- Add timestamp initialization to createTestRoom() method
+- Add JavaDoc comments explaining that IDs are auto-generated by Hibernate
+- Run all three repository tests to verify they pass

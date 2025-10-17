@@ -7,6 +7,7 @@ import io.quarkus.hibernate.reactive.panache.Panache;
 import io.quarkus.test.junit.QuarkusTest;
 import io.quarkus.test.vertx.RunOnVertxContext;
 import io.quarkus.test.vertx.UniAsserter;
+import io.smallrye.mutiny.Uni;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -105,12 +106,18 @@ class VoteRepositoryTest {
 
         // When: retrieving the vote
         // Then: the round relationship can be navigated
-        asserter.assertThat(() -> Panache.withTransaction(() -> voteRepository.findById(vote.voteId)), found -> {
-            assertThat(found.round).isNotNull();
-            Round round = found.round;
-            assertThat(round.roundId).isEqualTo(testRound.roundId);
-            assertThat(round.roundNumber).isEqualTo(1);
-            assertThat(round.storyTitle).isEqualTo("Test Story");
+        asserter.assertThat(() -> Panache.withTransaction(() -> voteRepository.findById(vote.voteId).flatMap(found ->
+            // Fetch the round separately to verify the relationship
+            roundRepository.findById(testRound.roundId).map(round -> {
+                assertThat(found).isNotNull();
+                assertThat(found.round).isNotNull();
+                assertThat(found.round.roundId).isEqualTo(round.roundId);
+                assertThat(round.roundNumber).isEqualTo(1);
+                assertThat(round.storyTitle).isEqualTo("Test Story");
+                return true;
+            })
+        )), result -> {
+            assertThat(result).isTrue();
         });
     }
 
@@ -118,26 +125,77 @@ class VoteRepositoryTest {
     @RunOnVertxContext
     void testRelationshipNavigationToParticipant(UniAsserter asserter) {
         // Given: a persisted vote
+        User testUser = createTestUser("voter@example.com", "google", "google-voter");
+        Room testRoom = createTestRoom("vote01", "Vote Test Room", testUser);
+        Round testRound = createTestRound(testRoom, 1, "Test Story");
+        RoomParticipant testParticipant = createTestParticipant(testRoom, testUser, "Test Voter");
         Vote vote = createTestVote(testRound, testParticipant, "13");
-        asserter.execute(() -> Panache.withTransaction(() -> voteRepository.persist(vote)));
+
+        asserter.execute(() -> Panache.withTransaction(() ->
+            userRepository.persist(testUser).flatMap(user ->
+                roomRepository.persist(testRoom).flatMap(room ->
+                    roundRepository.persist(testRound).flatMap(round ->
+                        participantRepository.persist(testParticipant).flatMap(participant ->
+                            voteRepository.persist(vote)
+                        )
+                    )
+                )
+            )
+        ));
 
         // When: retrieving the vote
         // Then: the participant relationship can be navigated
-        asserter.assertThat(() -> Panache.withTransaction(() -> voteRepository.findById(vote.voteId)), found -> {
-            assertThat(found.participant).isNotNull();
-            RoomParticipant participant = found.participant;
-            assertThat(participant.participantId).isEqualTo(testParticipant.participantId);
-            assertThat(participant.displayName).isEqualTo("Test Voter");
+        asserter.assertThat(() -> Panache.withTransaction(() -> voteRepository.findById(vote.voteId).flatMap(found ->
+            // Fetch the participant separately to verify the relationship
+            participantRepository.findById(testParticipant.participantId).map(participant -> {
+                assertThat(found).isNotNull();
+                assertThat(found.participant).isNotNull();
+                assertThat(found.participant.participantId).isEqualTo(participant.participantId);
+                assertThat(participant.displayName).isEqualTo("Test Voter");
+                return true;
+            })
+        )), result -> {
+            assertThat(result).isTrue();
         });
     }
 
     @Test
     @RunOnVertxContext
     void testFindByRoundId(UniAsserter asserter) {
+        // Given: setup test hierarchy with 3 participants
+        User user1 = createTestUser("alice@example.com", "google", "google-alice");
+        User user2 = createTestUser("bob@example.com", "google", "google-bob");
+        User user3 = createTestUser("charlie@example.com", "google", "google-charlie");
+        Room testRoom = createTestRoom("vote01", "Vote Test Room", user1);
+        Round testRound = createTestRound(testRoom, 1, "Test Story");
+
+        RoomParticipant participant1 = createTestParticipant(testRoom, user1, "Alice");
+        RoomParticipant participant2 = createTestParticipant(testRoom, user2, "Bob");
+        RoomParticipant participant3 = createTestParticipant(testRoom, user3, "Charlie");
+
+        // Persist hierarchy - room owner first, then room, then round, then all users and participants
+        asserter.execute(() -> Panache.withTransaction(() ->
+            userRepository.persist(user1).flatMap(u1 ->
+                roomRepository.persist(testRoom).flatMap(room ->
+                    roundRepository.persist(testRound).flatMap(round ->
+                        userRepository.persist(user2).flatMap(u2 ->
+                            userRepository.persist(user3).flatMap(u3 ->
+                                participantRepository.persist(participant1).flatMap(p1 ->
+                                    participantRepository.persist(participant2).flatMap(p2 ->
+                                        participantRepository.persist(participant3)
+                                    )
+                                )
+                            )
+                        )
+                    )
+                )
+            )
+        ));
+
         // Given: multiple votes in a round
-        Vote vote1 = createTestVote(testRound, testParticipant, "3");
-        Vote vote2 = createTestVote(testRound, testParticipant, "5");
-        Vote vote3 = createTestVote(testRound, testParticipant, "8");
+        Vote vote1 = createTestVote(testRound, participant1, "3");
+        Vote vote2 = createTestVote(testRound, participant2, "5");
+        Vote vote3 = createTestVote(testRound, participant3, "8");
 
         vote1.votedAt = Instant.now().minusMillis(30);
         vote2.votedAt = Instant.now().minusMillis(20);
@@ -159,9 +217,33 @@ class VoteRepositoryTest {
     @Test
     @RunOnVertxContext
     void testFindByRoomIdAndRoundNumber(UniAsserter asserter) {
+        // Given: setup test hierarchy with 2 participants
+        User user1 = createTestUser("alice@example.com", "google", "google-alice");
+        User user2 = createTestUser("bob@example.com", "google", "google-bob");
+        Room testRoom = createTestRoom("vote01", "Vote Test Room", user1);
+        Round testRound = createTestRound(testRoom, 1, "Test Story");
+
+        RoomParticipant participant1 = createTestParticipant(testRoom, user1, "Alice");
+        RoomParticipant participant2 = createTestParticipant(testRoom, user2, "Bob");
+
+        // Persist hierarchy - room owner first, then room, then round, then other users and participants
+        asserter.execute(() -> Panache.withTransaction(() ->
+            userRepository.persist(user1).flatMap(u1 ->
+                roomRepository.persist(testRoom).flatMap(room ->
+                    roundRepository.persist(testRound).flatMap(round ->
+                        userRepository.persist(user2).flatMap(u2 ->
+                            participantRepository.persist(participant1).flatMap(p1 ->
+                                participantRepository.persist(participant2)
+                            )
+                        )
+                    )
+                )
+            )
+        ));
+
         // Given: votes in a specific round
-        Vote vote1 = createTestVote(testRound, testParticipant, "2");
-        Vote vote2 = createTestVote(testRound, testParticipant, "3");
+        Vote vote1 = createTestVote(testRound, participant1, "2");
+        Vote vote2 = createTestVote(testRound, participant2, "3");
 
         asserter.execute(() -> Panache.withTransaction(() -> voteRepository.persist(vote1)));
         asserter.execute(() -> Panache.withTransaction(() -> voteRepository.persist(vote2)));
@@ -178,9 +260,29 @@ class VoteRepositoryTest {
     @Test
     @RunOnVertxContext
     void testFindByParticipantId(UniAsserter asserter) {
-        // Given: multiple votes by the same participant
-        Vote vote1 = createTestVote(testRound, testParticipant, "5");
-        Vote vote2 = createTestVote(testRound, testParticipant, "8");
+        // Given: setup test hierarchy with 2 rounds for the same participant
+        User testUser = createTestUser("voter@example.com", "google", "google-voter");
+        Room testRoom = createTestRoom("vote01", "Vote Test Room", testUser);
+        Round round1 = createTestRound(testRoom, 1, "Story 1");
+        Round round2 = createTestRound(testRoom, 2, "Story 2");
+        RoomParticipant testParticipant = createTestParticipant(testRoom, testUser, "Test Voter");
+
+        // Persist hierarchy
+        asserter.execute(() -> Panache.withTransaction(() ->
+            userRepository.persist(testUser).flatMap(user ->
+                roomRepository.persist(testRoom).flatMap(room ->
+                    roundRepository.persist(round1).flatMap(r1 ->
+                        roundRepository.persist(round2).flatMap(r2 ->
+                            participantRepository.persist(testParticipant)
+                        )
+                    )
+                )
+            )
+        ));
+
+        // Given: multiple votes by the same participant in different rounds
+        Vote vote1 = createTestVote(round1, testParticipant, "5");
+        Vote vote2 = createTestVote(round2, testParticipant, "8");
 
         asserter.execute(() -> Panache.withTransaction(() -> voteRepository.persist(vote1)));
         asserter.execute(() -> Panache.withTransaction(() -> voteRepository.persist(vote2)));
@@ -197,6 +299,23 @@ class VoteRepositoryTest {
     @Test
     @RunOnVertxContext
     void testFindByRoundIdAndParticipantId(UniAsserter asserter) {
+        // Given: setup test hierarchy
+        User testUser = createTestUser("voter@example.com", "google", "google-voter");
+        Room testRoom = createTestRoom("vote01", "Vote Test Room", testUser);
+        Round testRound = createTestRound(testRoom, 1, "Test Story");
+        RoomParticipant testParticipant = createTestParticipant(testRoom, testUser, "Test Voter");
+
+        // Persist hierarchy
+        asserter.execute(() -> Panache.withTransaction(() ->
+            userRepository.persist(testUser).flatMap(user ->
+                roomRepository.persist(testRoom).flatMap(room ->
+                    roundRepository.persist(testRound).flatMap(round ->
+                        participantRepository.persist(testParticipant)
+                    )
+                )
+            )
+        ));
+
         // Given: a vote by a specific participant in a round
         Vote vote = createTestVote(testRound, testParticipant, "13");
         asserter.execute(() -> Panache.withTransaction(() -> voteRepository.persist(vote)));
@@ -213,10 +332,40 @@ class VoteRepositoryTest {
     @Test
     @RunOnVertxContext
     void testCountByRoundId(UniAsserter asserter) {
+        // Given: setup test hierarchy with 3 participants
+        User user1 = createTestUser("alice@example.com", "google", "google-alice");
+        User user2 = createTestUser("bob@example.com", "google", "google-bob");
+        User user3 = createTestUser("charlie@example.com", "google", "google-charlie");
+        Room testRoom = createTestRoom("vote01", "Vote Test Room", user1);
+        Round testRound = createTestRound(testRoom, 1, "Test Story");
+
+        RoomParticipant participant1 = createTestParticipant(testRoom, user1, "Alice");
+        RoomParticipant participant2 = createTestParticipant(testRoom, user2, "Bob");
+        RoomParticipant participant3 = createTestParticipant(testRoom, user3, "Charlie");
+
+        // Persist hierarchy - room owner first, then room, then round, then other users and participants
+        asserter.execute(() -> Panache.withTransaction(() ->
+            userRepository.persist(user1).flatMap(u1 ->
+                roomRepository.persist(testRoom).flatMap(room ->
+                    roundRepository.persist(testRound).flatMap(round ->
+                        userRepository.persist(user2).flatMap(u2 ->
+                            userRepository.persist(user3).flatMap(u3 ->
+                                participantRepository.persist(participant1).flatMap(p1 ->
+                                    participantRepository.persist(participant2).flatMap(p2 ->
+                                        participantRepository.persist(participant3)
+                                    )
+                                )
+                            )
+                        )
+                    )
+                )
+            )
+        ));
+
         // Given: multiple votes in a round
-        Vote vote1 = createTestVote(testRound, testParticipant, "1");
-        Vote vote2 = createTestVote(testRound, testParticipant, "2");
-        Vote vote3 = createTestVote(testRound, testParticipant, "3");
+        Vote vote1 = createTestVote(testRound, participant1, "1");
+        Vote vote2 = createTestVote(testRound, participant2, "2");
+        Vote vote3 = createTestVote(testRound, participant3, "3");
 
         asserter.execute(() -> Panache.withTransaction(() -> voteRepository.persist(vote1)));
         asserter.execute(() -> Panache.withTransaction(() -> voteRepository.persist(vote2)));
@@ -225,17 +374,47 @@ class VoteRepositoryTest {
         // When: counting votes in the round
         // Then: the correct count is returned
         asserter.assertThat(() -> Panache.withTransaction(() -> voteRepository.countByRoundId(testRound.roundId)), count -> {
-            assertThat(count).isEqualTo(3);
+            assertThat(count).isEqualTo(3L);
         });
     }
 
     @Test
     @RunOnVertxContext
     void testFindByRoundIdAndCardValue(UniAsserter asserter) {
+        // Given: setup test hierarchy with 3 participants
+        User user1 = createTestUser("alice@example.com", "google", "google-alice");
+        User user2 = createTestUser("bob@example.com", "google", "google-bob");
+        User user3 = createTestUser("charlie@example.com", "google", "google-charlie");
+        Room testRoom = createTestRoom("vote01", "Vote Test Room", user1);
+        Round testRound = createTestRound(testRoom, 1, "Test Story");
+
+        RoomParticipant participant1 = createTestParticipant(testRoom, user1, "Alice");
+        RoomParticipant participant2 = createTestParticipant(testRoom, user2, "Bob");
+        RoomParticipant participant3 = createTestParticipant(testRoom, user3, "Charlie");
+
+        // Persist hierarchy - room owner first, then room, then round, then other users and participants
+        asserter.execute(() -> Panache.withTransaction(() ->
+            userRepository.persist(user1).flatMap(u1 ->
+                roomRepository.persist(testRoom).flatMap(room ->
+                    roundRepository.persist(testRound).flatMap(round ->
+                        userRepository.persist(user2).flatMap(u2 ->
+                            userRepository.persist(user3).flatMap(u3 ->
+                                participantRepository.persist(participant1).flatMap(p1 ->
+                                    participantRepository.persist(participant2).flatMap(p2 ->
+                                        participantRepository.persist(participant3)
+                                    )
+                                )
+                            )
+                        )
+                    )
+                )
+            )
+        ));
+
         // Given: multiple votes with different card values
-        Vote vote1 = createTestVote(testRound, testParticipant, "5");
-        Vote vote2 = createTestVote(testRound, testParticipant, "5");
-        Vote vote3 = createTestVote(testRound, testParticipant, "8");
+        Vote vote1 = createTestVote(testRound, participant1, "5");
+        Vote vote2 = createTestVote(testRound, participant2, "5");
+        Vote vote3 = createTestVote(testRound, participant3, "8");
 
         asserter.execute(() -> Panache.withTransaction(() -> voteRepository.persist(vote1)));
         asserter.execute(() -> Panache.withTransaction(() -> voteRepository.persist(vote2)));
@@ -253,10 +432,40 @@ class VoteRepositoryTest {
     @Test
     @RunOnVertxContext
     void testVoteWithSpecialCardValues(UniAsserter asserter) {
+        // Given: setup test hierarchy with 3 participants
+        User user1 = createTestUser("alice@example.com", "google", "google-alice");
+        User user2 = createTestUser("bob@example.com", "google", "google-bob");
+        User user3 = createTestUser("charlie@example.com", "google", "google-charlie");
+        Room testRoom = createTestRoom("vote01", "Vote Test Room", user1);
+        Round testRound = createTestRound(testRoom, 1, "Test Story");
+
+        RoomParticipant participant1 = createTestParticipant(testRoom, user1, "Alice");
+        RoomParticipant participant2 = createTestParticipant(testRoom, user2, "Bob");
+        RoomParticipant participant3 = createTestParticipant(testRoom, user3, "Charlie");
+
+        // Persist hierarchy - room owner first, then room, then round, then other users and participants
+        asserter.execute(() -> Panache.withTransaction(() ->
+            userRepository.persist(user1).flatMap(u1 ->
+                roomRepository.persist(testRoom).flatMap(room ->
+                    roundRepository.persist(testRound).flatMap(round ->
+                        userRepository.persist(user2).flatMap(u2 ->
+                            userRepository.persist(user3).flatMap(u3 ->
+                                participantRepository.persist(participant1).flatMap(p1 ->
+                                    participantRepository.persist(participant2).flatMap(p2 ->
+                                        participantRepository.persist(participant3)
+                                    )
+                                )
+                            )
+                        )
+                    )
+                )
+            )
+        ));
+
         // Given: votes with special card values
-        Vote unknownVote = createTestVote(testRound, testParticipant, "?");
-        Vote infinityVote = createTestVote(testRound, testParticipant, "∞");
-        Vote coffeeVote = createTestVote(testRound, testParticipant, "☕");
+        Vote unknownVote = createTestVote(testRound, participant1, "?");
+        Vote infinityVote = createTestVote(testRound, participant2, "∞");
+        Vote coffeeVote = createTestVote(testRound, participant3, "☕");
 
         // When: persisting votes with special characters
         asserter.execute(() -> Panache.withTransaction(() -> voteRepository.persist(unknownVote)));
@@ -274,14 +483,44 @@ class VoteRepositoryTest {
     @Test
     @RunOnVertxContext
     void testVoteOrderingByVotedAt(UniAsserter asserter) {
+        // Given: setup test hierarchy with 3 participants
+        User user1 = createTestUser("alice@example.com", "google", "google-alice");
+        User user2 = createTestUser("bob@example.com", "google", "google-bob");
+        User user3 = createTestUser("charlie@example.com", "google", "google-charlie");
+        Room testRoom = createTestRoom("vote01", "Vote Test Room", user1);
+        Round testRound = createTestRound(testRoom, 1, "Test Story");
+
+        RoomParticipant participant1 = createTestParticipant(testRoom, user1, "Alice");
+        RoomParticipant participant2 = createTestParticipant(testRoom, user2, "Bob");
+        RoomParticipant participant3 = createTestParticipant(testRoom, user3, "Charlie");
+
+        // Persist hierarchy - room owner first, then room, then round, then other users and participants
+        asserter.execute(() -> Panache.withTransaction(() ->
+            userRepository.persist(user1).flatMap(u1 ->
+                roomRepository.persist(testRoom).flatMap(room ->
+                    roundRepository.persist(testRound).flatMap(round ->
+                        userRepository.persist(user2).flatMap(u2 ->
+                            userRepository.persist(user3).flatMap(u3 ->
+                                participantRepository.persist(participant1).flatMap(p1 ->
+                                    participantRepository.persist(participant2).flatMap(p2 ->
+                                        participantRepository.persist(participant3)
+                                    )
+                                )
+                            )
+                        )
+                    )
+                )
+            )
+        ));
+
         // Given: votes cast at different times
-        Vote vote1 = createTestVote(testRound, testParticipant, "1");
+        Vote vote1 = createTestVote(testRound, participant1, "1");
         vote1.votedAt = Instant.now().minusSeconds(30);
 
-        Vote vote2 = createTestVote(testRound, testParticipant, "2");
+        Vote vote2 = createTestVote(testRound, participant2, "2");
         vote2.votedAt = Instant.now().minusSeconds(20);
 
-        Vote vote3 = createTestVote(testRound, testParticipant, "3");
+        Vote vote3 = createTestVote(testRound, participant3, "3");
         vote3.votedAt = Instant.now().minusSeconds(10);
 
         asserter.execute(() -> Panache.withTransaction(() -> voteRepository.persist(vote1)));
@@ -301,26 +540,56 @@ class VoteRepositoryTest {
     @Test
     @RunOnVertxContext
     void testDeleteVote(UniAsserter asserter) {
-        // Given: a persisted vote
-        Vote vote = createTestVote(testRound, testParticipant, "21");
-        asserter.execute(() -> Panache.withTransaction(() -> voteRepository.persist(vote)));
-        UUID voteId = vote.voteId;
+        // Given: setup test hierarchy
+        User testUser = createTestUser("voter@example.com", "google", "google-voter");
+        Room testRoom = createTestRoom("vote01", "Vote Test Room", testUser);
+        Round testRound = createTestRound(testRoom, 1, "Test Story");
+        RoomParticipant testParticipant = createTestParticipant(testRoom, testUser, "Test Voter");
 
-        // When: deleting the vote
-        asserter.execute(() -> Panache.withTransaction(() -> voteRepository.delete(vote)));
+        // Persist hierarchy
+        asserter.execute(() -> Panache.withTransaction(() ->
+            userRepository.persist(testUser).flatMap(user ->
+                roomRepository.persist(testRoom).flatMap(room ->
+                    roundRepository.persist(testRound).flatMap(round ->
+                        participantRepository.persist(testParticipant)
+                    )
+                )
+            )
+        ));
+
+        // Given: a persisted vote - capture the ID from the returned entity
+        Vote vote = createTestVote(testRound, testParticipant, "21");
+
+        // Create a holder for the vote ID
+        final UUID[] voteIdHolder = new UUID[1];
+
+        asserter.execute(() -> Panache.withTransaction(() ->
+            voteRepository.persist(vote).map(persistedVote -> {
+                voteIdHolder[0] = persistedVote.voteId;
+                return persistedVote;
+            })
+        ));
+
+        // When: deleting the vote (fetch it first within the transaction)
+        asserter.execute(() -> Panache.withTransaction(() ->
+            voteRepository.findById(voteIdHolder[0]).flatMap(foundVote -> {
+                assertThat(foundVote).isNotNull(); // Verify it exists before delete
+                return voteRepository.delete(foundVote);
+            })
+        ));
 
         // Then: the vote no longer exists
-        asserter.assertThat(() -> Panache.withTransaction(() -> voteRepository.findById(voteId)), found -> {
+        asserter.assertThat(() -> Panache.withTransaction(() -> voteRepository.findById(voteIdHolder[0])), found -> {
             assertThat(found).isNull();
         });
     }
 
     /**
      * Helper method to create test users.
+     * Note: userId is NOT set here - it will be auto-generated by Hibernate on persist.
      */
     private User createTestUser(String email, String provider, String subject) {
         User user = new User();
-        user.userId = UUID.randomUUID();
         user.email = email;
         user.oauthProvider = provider;
         user.oauthSubject = subject;
@@ -339,15 +608,18 @@ class VoteRepositoryTest {
         room.owner = owner;
         room.privacyMode = PrivacyMode.PUBLIC;
         room.config = "{\"deckType\":\"fibonacci\"}";
+        // Set timestamps manually since @CreationTimestamp/@UpdateTimestamp run after validation
+        room.createdAt = Instant.now();
+        room.lastActiveAt = Instant.now();
         return room;
     }
 
     /**
      * Helper method to create test rounds.
+     * Note: roundId is NOT set here - it will be auto-generated by Hibernate on persist.
      */
     private Round createTestRound(Room room, Integer roundNumber, String storyTitle) {
         Round round = new Round();
-        round.roundId = UUID.randomUUID();
         round.room = room;
         round.roundNumber = roundNumber;
         round.storyTitle = storyTitle;
@@ -356,10 +628,10 @@ class VoteRepositoryTest {
 
     /**
      * Helper method to create test participants.
+     * Note: participantId is NOT set here - it will be auto-generated by Hibernate on persist.
      */
     private RoomParticipant createTestParticipant(Room room, User user, String displayName) {
         RoomParticipant participant = new RoomParticipant();
-        participant.participantId = UUID.randomUUID();
         participant.room = room;
         participant.user = user;
         participant.displayName = displayName;
@@ -369,10 +641,10 @@ class VoteRepositoryTest {
 
     /**
      * Helper method to create test votes.
+     * Note: voteId is NOT set here - it will be auto-generated by Hibernate on persist.
      */
     private Vote createTestVote(Round round, RoomParticipant participant, String cardValue) {
         Vote vote = new Vote();
-        vote.voteId = UUID.randomUUID();
         vote.round = round;
         vote.participant = participant;
         vote.cardValue = cardValue;
