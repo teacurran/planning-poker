@@ -283,4 +283,18 @@ public class ConnectionRegistry {
     public int getActiveRoomCount() {
         return roomConnections.size();
     }
+
+    /**
+     * Gets all active WebSocket sessions across all rooms.
+     * <p>
+     * Used by the heartbeat mechanism to send ping frames to all connections.
+     * </p>
+     *
+     * @return Set of all active sessions
+     */
+    public Set<Session> getAllSessions() {
+        Set<Session> allSessions = ConcurrentHashMap.newKeySet();
+        roomConnections.values().forEach(allSessions::addAll);
+        return allSessions;
+    }
 }

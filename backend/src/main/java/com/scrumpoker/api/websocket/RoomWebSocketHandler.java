@@ -70,6 +70,12 @@ public class RoomWebSocketHandler {
      */
     private final ConcurrentHashMap<String, Long> pendingJoins = new ConcurrentHashMap<>();
 
+    /**
+     * Maps session ID to WebSocket Session object for join timeout enforcement.
+     * Allows the scheduled task to look up and close sessions that exceed the join timeout.
+     */
+    private final ConcurrentHashMap<String, Session> sessionIdToSession = new ConcurrentHashMap<>();
+
     @Inject
     ConnectionRegistry connectionRegistry;
 
@@ -129,6 +135,9 @@ public class RoomWebSocketHandler {
             session.getUserProperties().put(USER_ID_KEY, claims.userId().toString());
             session.getUserProperties().put(ROOM_ID_KEY, roomId);
 
+            // Track session for join timeout enforcement
+            sessionIdToSession.put(session.getId(), session);
+
             // Register connection in registry
             connectionRegistry.addConnection(roomId, session);
 
@@ -167,6 +176,9 @@ public class RoomWebSocketHandler {
 
         // Clean up pending join timeout
         pendingJoins.remove(sessionId);
+
+        // Clean up session tracking
+        sessionIdToSession.remove(sessionId);
 
         if (roomId != null && userId != null) {
             // Broadcast participant_left event to remaining participants
@@ -319,14 +331,25 @@ public class RoomWebSocketHandler {
         int failureCount = 0;
 
         // Get all active sessions across all rooms
-        for (int i = 0; i < connectionRegistry.getActiveRoomCount(); i++) {
-            // Note: We need to iterate through all rooms
-            // This is a simplified implementation - in production, you'd want to optimize this
+        Set<Session> allSessions = connectionRegistry.getAllSessions();
+
+        for (Session session : allSessions) {
+            try {
+                if (session.isOpen()) {
+                    // Send WebSocket ping frame (empty payload)
+                    session.getAsyncRemote().sendPing(ByteBuffer.allocate(0));
+                    successCount++;
+                } else {
+                    Log.debugf("Session %s is closed, skipping ping", session.getId());
+                    failureCount++;
+                }
+            } catch (Exception e) {
+                Log.warnf(e, "Failed to send ping to session %s", session.getId());
+                failureCount++;
+            }
         }
 
-        // For now, we'll skip the ping sending since we need to refactor how we access all sessions
-        // TODO: Add method to ConnectionRegistry to get all sessions across all rooms
-        Log.debugf("Heartbeat ping cycle completed");
+        Log.debugf("Heartbeat ping cycle completed: %d succeeded, %d failed", successCount, failureCount);
     }
 
     /**
@@ -383,10 +406,30 @@ public class RoomWebSocketHandler {
             long deadline = entry.getValue();
 
             if (now > deadline) {
-                // Find session by ID and close it
-                // Note: This is a simplified implementation
-                // In production, you'd want to maintain a session ID -> Session mapping
-                Log.warnf("Session %s exceeded join timeout (10 seconds), closing connection", sessionId);
+                // Look up session and close it with POLICY_VIOLATION code
+                Session session = sessionIdToSession.get(sessionId);
+
+                if (session != null && session.isOpen()) {
+                    try {
+                        Log.warnf("Session %s exceeded join timeout (10 seconds), closing with code 4008 (POLICY_VIOLATION)", sessionId);
+
+                        // Custom close code 4008 for POLICY_VIOLATION
+                        CloseReason closeReason = new CloseReason(
+                                new CloseReason.CloseCode() {
+                                    @Override
+                                    public int getCode() {
+                                        return 4008;
+                                    }
+                                },
+                                "POLICY_VIOLATION: Failed to send room.join.v1 within 10 seconds"
+                        );
+
+                        session.close(closeReason);
+                    } catch (Exception e) {
+                        Log.errorf(e, "Failed to close session %s for join timeout", sessionId);
+                    }
+                }
+
                 return true; // Remove from pending joins
             }
 
@@ -470,7 +513,7 @@ public class RoomWebSocketHandler {
     }
 
     /**
-     * Handles the room.join.v1 message (placeholder for Task I4.T4).
+     * Handles the room.join.v1 message.
      *
      * @param session The WebSocket session
      * @param message The join message
@@ -485,13 +528,36 @@ public class RoomWebSocketHandler {
         Log.infof("Room join received: user %s, room %s, session %s",
                 userId, roomId, session.getId());
 
+        // Extract displayName from payload (or use default)
+        String displayName = "Anonymous";
+        if (message.getPayload() != null && message.getPayload().containsKey("displayName")) {
+            Object displayNameObj = message.getPayload().get("displayName");
+            if (displayNameObj instanceof String) {
+                displayName = (String) displayNameObj;
+            }
+        }
+
+        // Determine participant role (default to VOTER for now)
+        // Full role assignment logic will be implemented in Task I4.T4
+        String role = "VOTER";
+
+        // Broadcast participant_joined event to all participants in the room
+        String connectedAt = Instant.now().toString();
+        WebSocketMessage joinedMessage = WebSocketMessage.createParticipantJoined(
+                userId,
+                displayName,
+                role,
+                connectedAt
+        );
+
+        connectionRegistry.broadcastToRoom(roomId, joinedMessage);
+
+        Log.infof("Participant joined event broadcasted to room %s: user %s (%s, %s)",
+                roomId, userId, displayName, role);
+
         // TODO (I4.T4): Implement full room join logic:
         // 1. Create/update RoomParticipant record in database
-        // 2. Broadcast room.participant_joined.v1 to existing participants
-        // 3. Send room.state.v1 (initial state snapshot) to newly connected client
-
-        // For now, just acknowledge receipt
-        Log.infof("Join message processed for session %s", session.getId());
+        // 2. Send room.state.v1 (initial state snapshot) to newly connected client
     }
 
     /**
