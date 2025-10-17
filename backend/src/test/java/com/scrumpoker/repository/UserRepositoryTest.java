@@ -2,9 +2,11 @@ package com.scrumpoker.repository;
 
 import com.scrumpoker.domain.user.SubscriptionTier;
 import com.scrumpoker.domain.user.User;
+import io.quarkus.hibernate.reactive.panache.Panache;
 import io.quarkus.test.junit.QuarkusTest;
+import io.quarkus.test.vertx.RunOnVertxContext;
+import io.quarkus.test.vertx.UniAsserter;
 import jakarta.inject.Inject;
-import jakarta.transaction.Transactional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -26,196 +28,204 @@ class UserRepositoryTest {
     private User testUser;
 
     @BeforeEach
-    @Transactional
-    void setUp() {
+    @RunOnVertxContext
+    void setUp(UniAsserter asserter) {
         // Clean up any existing test data
-        userRepository.deleteAll().await().indefinitely();
+        asserter.execute(() -> Panache.withTransaction(() -> userRepository.deleteAll()));
 
         // Create a test user
         testUser = createTestUser("test@example.com", "google", "google-123");
     }
 
     @Test
-    @Transactional
-    void testPersistAndFindById() {
+    @RunOnVertxContext
+    void testPersistAndFindById(UniAsserter asserter) {
         // Given: a new user
         User user = createTestUser("john@example.com", "github", "github-456");
 
         // When: persisting the user
-        userRepository.persist(user).await().indefinitely();
+        asserter.execute(() -> Panache.withTransaction(() -> userRepository.persist(user)));
 
         // Then: the user can be retrieved by ID
-        User found = userRepository.findById(user.userId).await().indefinitely();
-        assertThat(found).isNotNull();
-        assertThat(found.email).isEqualTo("john@example.com");
-        assertThat(found.oauthProvider).isEqualTo("github");
-        assertThat(found.oauthSubject).isEqualTo("github-456");
-        assertThat(found.displayName).isEqualTo("Test User");
-        assertThat(found.subscriptionTier).isEqualTo(SubscriptionTier.FREE);
-        assertThat(found.createdAt).isNotNull();
-        assertThat(found.updatedAt).isNotNull();
-        assertThat(found.deletedAt).isNull();
+        asserter.assertThat(() -> Panache.withTransaction(() -> userRepository.findById(user.userId)), found -> {
+            assertThat(found).isNotNull();
+            assertThat(found.email).isEqualTo("john@example.com");
+            assertThat(found.oauthProvider).isEqualTo("github");
+            assertThat(found.oauthSubject).isEqualTo("github-456");
+            assertThat(found.displayName).isEqualTo("Test User");
+            assertThat(found.subscriptionTier).isEqualTo(SubscriptionTier.FREE);
+            assertThat(found.createdAt).isNotNull();
+            assertThat(found.updatedAt).isNotNull();
+            assertThat(found.deletedAt).isNull();
+        });
     }
 
     @Test
-    @Transactional
-    void testFindByEmail() {
+    @RunOnVertxContext
+    void testFindByEmail(UniAsserter asserter) {
         // Given: a persisted user
-        userRepository.persist(testUser).await().indefinitely();
+        asserter.execute(() -> userRepository.persist(testUser));
 
         // When: finding by email
-        User found = userRepository.findByEmail("test@example.com").await().indefinitely();
-
         // Then: the user is found
-        assertThat(found).isNotNull();
-        assertThat(found.userId).isEqualTo(testUser.userId);
-        assertThat(found.email).isEqualTo("test@example.com");
+        asserter.assertThat(() -> userRepository.findByEmail("test@example.com"), found -> {
+            assertThat(found).isNotNull();
+            assertThat(found.userId).isEqualTo(testUser.userId);
+            assertThat(found.email).isEqualTo("test@example.com");
+        });
     }
 
     @Test
-    @Transactional
-    void testFindByEmailNotFound() {
+    @RunOnVertxContext
+    void testFindByEmailNotFound(UniAsserter asserter) {
         // When: searching for non-existent email
-        User found = userRepository.findByEmail("nonexistent@example.com").await().indefinitely();
-
         // Then: null is returned
-        assertThat(found).isNull();
+        asserter.assertThat(() -> userRepository.findByEmail("nonexistent@example.com"), found -> {
+            assertThat(found).isNull();
+        });
     }
 
     @Test
-    @Transactional
-    void testFindByOAuthProviderAndSubject() {
+    @RunOnVertxContext
+    void testFindByOAuthProviderAndSubject(UniAsserter asserter) {
         // Given: a persisted user
-        userRepository.persist(testUser).await().indefinitely();
+        asserter.execute(() -> userRepository.persist(testUser));
 
         // When: finding by OAuth provider and subject
-        User found = userRepository.findByOAuthProviderAndSubject("google", "google-123")
-                .await().indefinitely();
-
         // Then: the user is found
-        assertThat(found).isNotNull();
-        assertThat(found.userId).isEqualTo(testUser.userId);
-        assertThat(found.oauthProvider).isEqualTo("google");
-        assertThat(found.oauthSubject).isEqualTo("google-123");
+        asserter.assertThat(() -> userRepository.findByOAuthProviderAndSubject("google", "google-123"), found -> {
+            assertThat(found).isNotNull();
+            assertThat(found.userId).isEqualTo(testUser.userId);
+            assertThat(found.oauthProvider).isEqualTo("google");
+            assertThat(found.oauthSubject).isEqualTo("google-123");
+        });
     }
 
     @Test
-    @Transactional
-    void testFindByOAuthProviderAndSubjectNotFound() {
+    @RunOnVertxContext
+    void testFindByOAuthProviderAndSubjectNotFound(UniAsserter asserter) {
         // When: searching for non-existent OAuth credentials
-        User found = userRepository.findByOAuthProviderAndSubject("github", "unknown")
-                .await().indefinitely();
-
         // Then: null is returned
-        assertThat(found).isNull();
+        asserter.assertThat(() -> userRepository.findByOAuthProviderAndSubject("github", "unknown"), found -> {
+            assertThat(found).isNull();
+        });
     }
 
     @Test
-    @Transactional
-    void testUpdateUser() {
+    @RunOnVertxContext
+    void testUpdateUser(UniAsserter asserter) {
         // Given: a persisted user
-        userRepository.persist(testUser).await().indefinitely();
+        asserter.execute(() -> userRepository.persist(testUser));
 
         // When: updating the user
-        testUser.displayName = "Updated Name";
-        testUser.avatarUrl = "https://example.com/avatar.jpg";
-        testUser.subscriptionTier = SubscriptionTier.PRO;
-        userRepository.persist(testUser).await().indefinitely();
+        asserter.execute(() -> {
+            testUser.displayName = "Updated Name";
+            testUser.avatarUrl = "https://example.com/avatar.jpg";
+            testUser.subscriptionTier = SubscriptionTier.PRO;
+            return userRepository.persist(testUser);
+        });
 
         // Then: the changes are persisted
-        User updated = userRepository.findById(testUser.userId).await().indefinitely();
-        assertThat(updated.displayName).isEqualTo("Updated Name");
-        assertThat(updated.avatarUrl).isEqualTo("https://example.com/avatar.jpg");
-        assertThat(updated.subscriptionTier).isEqualTo(SubscriptionTier.PRO);
+        asserter.assertThat(() -> userRepository.findById(testUser.userId), updated -> {
+            assertThat(updated.displayName).isEqualTo("Updated Name");
+            assertThat(updated.avatarUrl).isEqualTo("https://example.com/avatar.jpg");
+            assertThat(updated.subscriptionTier).isEqualTo(SubscriptionTier.PRO);
+        });
     }
 
     @Test
-    @Transactional
-    void testSoftDelete() {
+    @RunOnVertxContext
+    void testSoftDelete(UniAsserter asserter) {
         // Given: a persisted user
-        userRepository.persist(testUser).await().indefinitely();
+        asserter.execute(() -> userRepository.persist(testUser));
 
         // When: soft deleting the user
-        testUser.deletedAt = Instant.now();
-        userRepository.persist(testUser).await().indefinitely();
+        asserter.execute(() -> {
+            testUser.deletedAt = Instant.now();
+            return userRepository.persist(testUser);
+        });
 
         // Then: the user still exists but has deletedAt set
-        User found = userRepository.findById(testUser.userId).await().indefinitely();
-        assertThat(found).isNotNull();
-        assertThat(found.deletedAt).isNotNull();
+        asserter.assertThat(() -> userRepository.findById(testUser.userId), found -> {
+            assertThat(found).isNotNull();
+            assertThat(found.deletedAt).isNotNull();
+        });
     }
 
     @Test
-    @Transactional
-    void testFindActiveByEmail() {
+    @RunOnVertxContext
+    void testFindActiveByEmail(UniAsserter asserter) {
         // Given: an active user and a soft-deleted user
         User activeUser = createTestUser("active@example.com", "google", "google-active");
         User deletedUser = createTestUser("deleted@example.com", "google", "google-deleted");
         deletedUser.deletedAt = Instant.now();
 
-        userRepository.persist(activeUser).await().indefinitely();
-        userRepository.persist(deletedUser).await().indefinitely();
+        asserter.execute(() -> userRepository.persist(activeUser));
+        asserter.execute(() -> userRepository.persist(deletedUser));
 
         // When: finding active users by email
-        User foundActive = userRepository.findActiveByEmail("active@example.com").await().indefinitely();
-        User foundDeleted = userRepository.findActiveByEmail("deleted@example.com").await().indefinitely();
-
         // Then: only active user is returned
-        assertThat(foundActive).isNotNull();
-        assertThat(foundActive.email).isEqualTo("active@example.com");
-        assertThat(foundDeleted).isNull();
+        asserter.assertThat(() -> userRepository.findActiveByEmail("active@example.com"), foundActive -> {
+            assertThat(foundActive).isNotNull();
+            assertThat(foundActive.email).isEqualTo("active@example.com");
+        });
+
+        asserter.assertThat(() -> userRepository.findActiveByEmail("deleted@example.com"), foundDeleted -> {
+            assertThat(foundDeleted).isNull();
+        });
     }
 
     @Test
-    @Transactional
-    void testCountActive() {
+    @RunOnVertxContext
+    void testCountActive(UniAsserter asserter) {
         // Given: multiple users with some soft-deleted
         User user1 = createTestUser("user1@example.com", "google", "google-1");
         User user2 = createTestUser("user2@example.com", "google", "google-2");
         User user3 = createTestUser("user3@example.com", "google", "google-3");
         user3.deletedAt = Instant.now();
 
-        userRepository.persist(user1).await().indefinitely();
-        userRepository.persist(user2).await().indefinitely();
-        userRepository.persist(user3).await().indefinitely();
+        asserter.execute(() -> userRepository.persist(user1));
+        asserter.execute(() -> userRepository.persist(user2));
+        asserter.execute(() -> userRepository.persist(user3));
 
         // When: counting active users
-        Long activeCount = userRepository.countActive().await().indefinitely();
-
         // Then: only non-deleted users are counted
-        assertThat(activeCount).isEqualTo(2);
+        asserter.assertThat(() -> userRepository.countActive(), activeCount -> {
+            assertThat(activeCount).isEqualTo(2);
+        });
     }
 
     @Test
-    @Transactional
-    void testDeleteUser() {
+    @RunOnVertxContext
+    void testDeleteUser(UniAsserter asserter) {
         // Given: a persisted user
-        userRepository.persist(testUser).await().indefinitely();
+        asserter.execute(() -> userRepository.persist(testUser));
         UUID userId = testUser.userId;
 
         // When: hard deleting the user
-        userRepository.delete(testUser).await().indefinitely();
+        asserter.execute(() -> userRepository.delete(testUser));
 
         // Then: the user no longer exists
-        User found = userRepository.findById(userId).await().indefinitely();
-        assertThat(found).isNull();
+        asserter.assertThat(() -> userRepository.findById(userId), found -> {
+            assertThat(found).isNull();
+        });
     }
 
     @Test
-    @Transactional
-    void testCountAllUsers() {
+    @RunOnVertxContext
+    void testCountAllUsers(UniAsserter asserter) {
         // Given: multiple users
         User user1 = createTestUser("count1@example.com", "google", "google-count1");
         User user2 = createTestUser("count2@example.com", "github", "github-count2");
 
-        userRepository.persist(user1).await().indefinitely();
-        userRepository.persist(user2).await().indefinitely();
+        asserter.execute(() -> userRepository.persist(user1));
+        asserter.execute(() -> userRepository.persist(user2));
 
         // When: counting all users
-        Long totalCount = userRepository.count().await().indefinitely();
-
         // Then: all users are counted
-        assertThat(totalCount).isEqualTo(2);
+        asserter.assertThat(() -> userRepository.count(), totalCount -> {
+            assertThat(totalCount).isEqualTo(2);
+        });
     }
 
     /**

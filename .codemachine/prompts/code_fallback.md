@@ -16,37 +16,80 @@ Create integration tests for all Panache repositories using Testcontainers (Post
 
 ## Issues Detected
 
-*   **Test Failure:** All repository tests are failing with error "FATAL: role 'postgres' does not exist". Tests are NOT using Testcontainers at all - they are trying to connect to a hardcoded localhost PostgreSQL instance that doesn't exist.
-*   **Configuration Error:** The `application-test.properties` file sets `quarkus.datasource.devservices.enabled=true` but this is being overridden by explicit JDBC and reactive URLs defined in the main `application.properties` file. Quarkus Dev Services will NOT start if explicit datasource URLs are configured.
-*   **Missing Test Profile Configuration:** The tests do not properly override the datasource configuration from the main application.properties file.
+*   **Test Configuration Error:** Quarkus Dev Services (Testcontainers) is starting successfully and Flyway migrations are running, BUT the reactive datasource is failing to connect with error `FATAL: role "postgres" does not exist` or `FATAL: role "quarkus" does not exist`.
+*   **Root Cause:** The main `application.properties` file defines datasource URLs with default values (`jdbc:postgresql://localhost:5432/scrumpoker`). Even though Dev Services starts a Testcontainers PostgreSQL instance, the reactive datasource is not using the Dev Services connection - it's trying to connect to the default URL with the wrong credentials.
+*   **Configuration Conflict:** The test configuration attempts to override these URLs, but Quarkus property resolution is complex and the overrides are not working correctly.
 
 ---
 
 ## Best Approach to Fix
 
-You MUST modify `backend/src/test/resources/application-test.properties` to explicitly override the JDBC and reactive URLs from the main configuration file with empty values or Dev Services-specific configuration.
+You MUST properly configure the test profile to ensure BOTH the JDBC datasource (used by Flyway) AND the reactive datasource (used by Hibernate Reactive/Panache) use the Testcontainers database started by Dev Services.
 
-**The correct approach is to add the following configuration to `application-test.properties`:**
+**The correct solution is to remove the Testcontainers JDBC URL approach and instead use Quarkus Dev Services native behavior:**
+
+###  Step 1: Fix `backend/src/main/resources/application.properties`
+
+Remove the test profile configuration that sets explicit `jdbc:tc:` URLs. Instead, configure the test profile to completely avoid setting any datasource URLs, which will allow Dev Services to activate:
 
 ```properties
-# Override main datasource URLs to enable Dev Services Testcontainers
-# Setting these to empty or removing them allows Dev Services to work
-%test.quarkus.datasource.jdbc.url=
-%test.quarkus.datasource.reactive.url=
+# Remove these lines:
+#%test.quarkus.datasource.jdbc.url=jdbc:tc:postgresql:14:///quarkus
+#%test.quarkus.datasource.reactive.url=vertx-reactive:tc:postgresql:14:///quarkus
 
-# Enable Dev Services (Testcontainers)
-quarkus.datasource.devservices.enabled=true
-quarkus.datasource.devservices.image-name=postgres:15-alpine
+# Keep only this:
+%test.quarkus.datasource.devservices.enabled=true
 ```
 
-OR use the profile-specific override approach:
+### Step 2: Update `backend/src/test/resources/application.properties`
+
+The test resources configuration should override the datasource URL properties to prevent them from being set at all:
 
 ```properties
-# Explicitly unset the URLs for test profile to allow Dev Services
+# Test environment configuration for Quarkus tests
+
+# Completely unset datasource URLs to allow Dev Services to manage connections
+# Setting these properties without values prevents the main config defaults from being used
 quarkus.datasource.jdbc.url=
 quarkus.datasource.reactive.url=
+
+# Disable OIDC for tests
+quarkus.oidc.enabled=false
+
+# Flyway migrations for tests
+quarkus.flyway.migrate-at-start=true
+quarkus.flyway.clean-at-start=false
+
+# Test logging
+quarkus.log.level=INFO
+
+# Hibernate settings for tests
+quarkus.hibernate-orm.log.sql=false
+quarkus.hibernate-orm.database.generation=none
 ```
 
-After making this change, run `mvn test` again. The tests should now start a Testcontainers PostgreSQL instance automatically and all tests should pass.
+### Step 3: Verify Configuration
 
-**Alternative approach (if the above doesn't work):** You may need to explicitly configure the test profile to not inherit the datasource URLs. Review the Quarkus documentation for Dev Services and ensure that NO explicit datasource URL is configured in the test profile.
+After making these changes, run `mvn clean test -Dtest=UserRepositoryTest` and verify:
+
+1. Testcontainers PostgreSQL starts (look for log: `Dev Services for PostgreSQL started`)
+2. Flyway migrations execute successfully
+3. Tests can connect to the database (no role "postgres" or "quarkus" errors)
+4. All 11 tests in UserRepositoryTest pass
+
+### Alternative Approach (If Above Doesn't Work)
+
+If the above configuration still doesn't work due to Quarkus property precedence issues, you can use environment variables to prevent the default URLs from being set:
+
+```bash
+mvn clean test -DDB_JDBC_URL= -DDB_REACTIVE_URL=
+```
+
+Or create a Maven profile in `pom.xml` that sets these environment variables automatically during test execution.
+
+### Key Points
+
+* Quarkus Dev Services will ONLY activate if no datasource URL is configured
+* Setting `quarkus.datasource.jdbc.url=` (empty string) in test config is the correct way to "unset" a property that has a default value in the main config
+* Both JDBC and reactive URLs must be unset for Dev Services to work properly
+* The username/password will automatically be "quarkus"/"quarkus" when Dev Services starts
