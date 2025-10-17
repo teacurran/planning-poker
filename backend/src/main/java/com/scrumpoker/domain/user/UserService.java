@@ -271,6 +271,23 @@ public class UserService {
     }
 
     /**
+     * Retrieves user preferences by user ID.
+     *
+     * @param userId User ID
+     * @return Uni containing the UserPreference entity
+     * @throws UserNotFoundException if user or preferences not found
+     */
+    @WithSession
+    public Uni<UserPreference> getPreferences(final UUID userId) {
+        // Verify user exists first
+        return getUserById(userId)
+                .flatMap(user -> userPreferenceRepository.findById(userId)
+                        .onItem().ifNull().failWith(
+                                () -> new UserNotFoundException(userId))
+                );
+    }
+
+    /**
      * Updates user preferences including default room configuration
      * and notification settings.
      *
