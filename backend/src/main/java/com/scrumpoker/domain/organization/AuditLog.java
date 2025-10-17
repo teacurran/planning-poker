@@ -40,10 +40,11 @@ public class AuditLog extends PanacheEntityBase {
     public String resourceId;
 
     /**
-     * IP address stored as PostgreSQL INET type (supports IPv4/IPv6).
-     * Mapped as String in Java for simplicity.
+     * IP address stored as VARCHAR (supports IPv4/IPv6).
+     * Note: Changed from PostgreSQL INET type to VARCHAR due to Hibernate Reactive mapping issues.
      */
-    @Column(name = "ip_address", columnDefinition = "inet")
+    @Size(max = 45)  // Sufficient for IPv6 (39 chars) + potential future formats
+    @Column(name = "ip_address", length = 45)
     public String ipAddress;
 
     @Size(max = 500)

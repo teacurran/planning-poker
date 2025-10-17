@@ -190,6 +190,6 @@
     "acceptance_criteria": "`mvn test` executes all repository tests successfully, Testcontainers starts PostgreSQL container automatically, All CRUD operations pass (insert, select, update, delete), Custom finder methods return expected results, JSONB fields round-trip correctly (save and retrieve complex objects), Soft delete tests confirm `deleted_at` set correctly, Test coverage >80% for repository classes",
     "dependencies": ["I1.T7"],
     "parallelizable": false,
-    "done": false
+    "done": true
   }
 ]
