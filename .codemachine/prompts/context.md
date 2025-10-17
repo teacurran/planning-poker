@@ -10,26 +10,24 @@ This is the full specification of the task you must complete.
 
 ```json
 {
-  "task_id": "I2.T7",
+  "task_id": "I2.T8",
   "iteration_id": "I2",
   "iteration_goal": "Implement foundational domain services (Room Service, basic User Service), define REST API contracts (OpenAPI specification), and establish WebSocket protocol specification to enable frontend integration and parallel feature development.",
-  "description": "Create comprehensive unit tests for `RoomService` and `UserService` using JUnit 5 and Mockito. Mock repository dependencies. Test business logic: room creation with unique ID generation, config validation, soft delete behavior, user profile updates, preference persistence. Test exception scenarios (e.g., room not found, invalid email format). Use AssertJ for fluent assertions. Aim for >90% code coverage on service classes.",
+  "description": "Create integration tests for `RoomController` and `UserController` using `@QuarkusTest` and Rest Assured. Test HTTP endpoints end-to-end: request → controller → service → repository → database → response. Use Testcontainers for PostgreSQL. Test CRUD operations, DTO mapping, error responses (404, 400), authorization (403 for unauthorized access). Validate response JSON against OpenAPI schema where possible.",
   "agent_type_hint": "BackendAgent",
-  "inputs": "RoomService and UserService from I2.T3, I2.T4, JUnit 5 and Mockito testing patterns",
+  "inputs": "REST controllers from I2.T5, I2.T6, OpenAPI specification for expected responses",
   "input_files": [
-    "backend/src/main/java/com/scrumpoker/domain/room/RoomService.java",
-    "backend/src/main/java/com/scrumpoker/domain/user/UserService.java"
+    "backend/src/main/java/com/scrumpoker/api/rest/RoomController.java",
+    "backend/src/main/java/com/scrumpoker/api/rest/UserController.java",
+    "api/openapi.yaml"
   ],
   "target_files": [
-    "backend/src/test/java/com/scrumpoker/domain/room/RoomServiceTest.java",
-    "backend/src/test/java/com/scrumpoker/domain/user/UserServiceTest.java"
+    "backend/src/test/java/com/scrumpoker/api/rest/RoomControllerTest.java",
+    "backend/src/test/java/com/scrumpoker/api/rest/UserControllerTest.java"
   ],
-  "deliverables": "RoomServiceTest with 10+ test methods covering create, update, delete, find operations, UserServiceTest with 10+ test methods covering profile, preferences, soft delete, Mocked repository interactions using Mockito, Exception scenario tests (assertThrows for custom exceptions), AssertJ assertions for fluent readability",
-  "acceptance_criteria": "`mvn test` runs all unit tests successfully, Test coverage >90% for RoomService and UserService, All business validation scenarios tested (invalid input → exception), Happy path tests verify correct repository method calls, Exception tests verify custom exceptions thrown with correct messages",
-  "dependencies": [
-    "I2.T3",
-    "I2.T4"
-  ],
+  "deliverables": "RoomControllerTest with tests for all 5 endpoints, UserControllerTest with tests for all 4 endpoints, Testcontainers PostgreSQL setup for integration tests, Rest Assured assertions for status codes, headers, response bodies, Tests for error scenarios (404, 400, 403)",
+  "acceptance_criteria": "`mvn verify` runs integration tests successfully, POST /api/v1/rooms creates room in database, returns valid JSON, GET /api/v1/rooms/{roomId} retrieves persisted room, PUT endpoints update database and return updated DTOs, DELETE endpoints soft delete (verify `deleted_at` set), Unauthorized access returns 403 Forbidden, Response JSON structure matches OpenAPI spec",
+  "dependencies": ["I2.T5", "I2.T6"],
   "parallelizable": false,
   "done": false
 }
@@ -41,28 +39,26 @@ This is the full specification of the task you must complete.
 
 The following are the relevant sections from the architecture and plan documents, which I found by analyzing the task description.
 
-### Context: api-design-and-communication (from 04_Behavior_and_Communication.md)
+### Context: rest-api-endpoints (from 04_Behavior_and_Communication.md)
 
 ```markdown
-### 3.7. API Design & Communication
+#### REST API Endpoints Overview
 
-#### API Style
+**Authentication & User Management:**
+- `POST /api/v1/auth/oauth/callback` - Exchange OAuth2 code for JWT tokens
+- `POST /api/v1/auth/refresh` - Refresh expired access token
+- `POST /api/v1/auth/logout` - Revoke refresh token
+- `GET /api/v1/users/{userId}` - Retrieve user profile
+- `PUT /api/v1/users/{userId}` - Update profile (display name, avatar)
+- `GET /api/v1/users/{userId}/preferences` - Get user preferences
+- `PUT /api/v1/users/{userId}/preferences` - Update default room settings, theme
 
-**Primary API Style:** **RESTful JSON API (OpenAPI 3.1 Specification)**
-
-**Rationale:**
-- **Simplicity & Familiarity:** REST over HTTPS provides a well-understood contract for CRUD operations on resources (users, rooms, subscriptions)
-- **Tooling Ecosystem:** OpenAPI specification enables automatic client SDK generation (TypeScript for React frontend), API documentation (Swagger UI), and contract testing
-- **Caching Support:** HTTP semantics (ETags, Cache-Control headers) enable browser and CDN caching for read-heavy endpoints (room configurations, user profiles)
-- **Versioning Strategy:** URL-based versioning (`/api/v1/`) for backward compatibility during iterative releases
-
-**WebSocket Protocol:** **Custom JSON-RPC Style Over WebSocket**
-
-**Rationale:**
-- **Real-Time Bidirectional Communication:** WebSocket connections maintained for duration of estimation session, enabling sub-100ms latency for vote events and reveals
-- **Message Format:** JSON envelopes with `type`, `requestId`, and `payload` fields for request/response correlation
-- **Versioned Message Types:** Each message type (e.g., `vote.cast.v1`, `room.reveal.v1`) versioned independently for protocol evolution
-- **Fallback Strategy:** Graceful degradation to HTTP long-polling for environments with WebSocket restrictions (corporate proxies)
+**Room Management:**
+- `POST /api/v1/rooms` - Create new room (authenticated or anonymous)
+- `GET /api/v1/rooms/{roomId}` - Get room configuration and current state
+- `PUT /api/v1/rooms/{roomId}/config` - Update room settings (host only)
+- `DELETE /api/v1/rooms/{roomId}` - Delete room (owner only)
+- `GET /api/v1/users/{userId}/rooms` - List user's owned rooms
 ```
 
 ### Context: synchronous-rest-pattern (from 04_Behavior_and_Communication.md)
@@ -92,6 +88,33 @@ The following are the relevant sections from the architecture and plan documents
 - `GET /api/v1/reports/sessions?from=2025-01-01&to=2025-01-31` - Query session history
 ```
 
+### Context: OpenAPI Specification Excerpts (from openapi.yaml)
+
+Key endpoint definitions from the OpenAPI specification:
+
+**Room Endpoints:**
+- `POST /api/v1/rooms` - Returns 201 Created with RoomDTO
+- `GET /api/v1/rooms/{roomId}` - Returns 200 OK with RoomDTO or 404 Not Found
+- `PUT /api/v1/rooms/{roomId}/config` - Returns 200 OK with updated RoomDTO or 400/404
+- `DELETE /api/v1/rooms/{roomId}` - Returns 204 No Content or 403/404
+- `GET /api/v1/users/{userId}/rooms` - Returns 200 OK with RoomListResponse (paginated)
+
+**User Endpoints:**
+- `GET /api/v1/users/{userId}` - Returns 200 OK with UserDTO or 404
+- `PUT /api/v1/users/{userId}` - Returns 200 OK with updated UserDTO or 400/403/404
+- `GET /api/v1/users/{userId}/preferences` - Returns 200 OK with UserPreferenceDTO or 403/404
+- `PUT /api/v1/users/{userId}/preferences` - Returns 200 OK with updated UserPreferenceDTO or 400/403/404
+
+**Error Response Schema:**
+```json
+{
+  "error": "ERROR_CODE",
+  "message": "Human-readable error message",
+  "timestamp": "2025-01-15T10:30:00Z",
+  "details": {}
+}
+```
+
 ---
 
 ## 3. Codebase Analysis & Strategic Guidance
@@ -100,153 +123,163 @@ The following analysis is based on my direct review of the current codebase. Use
 
 ### Relevant Existing Code
 
-*   **File:** `backend/src/main/java/com/scrumpoker/domain/room/RoomService.java`
-    *   **Summary:** This file implements the complete RoomService domain service with 11 public methods for room CRUD operations. It uses reactive Uni/Multi return types, Mockito-injectable @Inject dependencies (RoomRepository, ObjectMapper), and comprehensive input validation. The service includes nanoid generation (6 chars, a-z0-9), JSONB serialization/deserialization, and soft delete functionality.
-    *   **Recommendation:** You MUST import and mock the RoomRepository and ObjectMapper dependencies in your tests. Focus on testing all 11 public methods, particularly the edge cases around validation (null/empty/too-long titles max 255 chars, null privacy modes), JSONB serialization failures, and soft delete behavior.
-    *   **Key Methods:** createRoom(), updateRoomConfig(), updateRoomTitle(), updatePrivacyMode(), deleteRoom(), findById(), findByOwnerId(), getRoomConfig()
-    *   **Validation Rules:** title max 255 chars, privacy mode required, config JSONB serialization
+*   **File:** `backend/src/main/java/com/scrumpoker/api/rest/RoomController.java`
+    *   **Summary:** This file implements the REST controller for room management with 5 endpoints (createRoom, getRoom, updateRoomConfig, deleteRoom, getUserRooms). It uses reactive Uni<Response> return types and includes OpenAPI annotations. Authentication is currently not enforced (marked with TODOs for Iteration 3).
+    *   **Recommendation:** You MUST test all 5 endpoints in this controller. The controller returns reactive Uni types, so your tests should work with Rest Assured's support for async responses. Pay special attention to the pagination logic in getUserRooms endpoint.
+    *   **Key Observations:**
+        - Creates rooms with nanoid 6-character IDs
+        - Supports anonymous room creation (owner can be null)
+        - Uses RoomMapper to convert between entities and DTOs
+        - Validates privacy mode enum values
+        - Implements manual pagination for getUserRooms
+        - Soft delete sets `deleted_at` timestamp
 
-*   **File:** `backend/src/main/java/com/scrumpoker/domain/user/UserService.java`
-    *   **Summary:** This file implements the UserService with 9 public methods handling OAuth user provisioning, profile updates, preference management, and soft deletes. It uses regex-based email validation (EMAIL_PATTERN: `^[A-Za-z0-9+_.-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$`), display name length validation (MAX_DISPLAY_NAME_LENGTH = 100), and JSONB config serialization. The service includes sophisticated logic like findOrCreateUser for JIT provisioning.
-    *   **Recommendation:** You MUST import and mock UserRepository, UserPreferenceRepository, and ObjectMapper. Test all validation patterns (email regex, display name length), the findOrCreateUser flow (both existing user and new user paths), preference JSONB serialization, and soft delete behavior with deletedAt timestamps.
-    *   **Key Methods:** createUser(), updateProfile(), getUserById(), findByEmail(), findOrCreateUser(), getPreferences(), updatePreferences(), deleteUser(), createDefaultPreferences() (private)
-    *   **Validation Rules:** email regex pattern, displayName max 100 chars, OAuth provider/subject required
+*   **File:** `backend/src/main/java/com/scrumpoker/api/rest/UserController.java`
+    *   **Summary:** This file implements the REST controller for user profile and preference management with 4 endpoints (getUserProfile, updateUserProfile, getUserPreferences, updateUserPreferences). Uses UserService and UserMapper for business logic and DTO conversion.
+    *   **Recommendation:** You MUST test all 4 endpoints. Note that authorization checks (403 Forbidden) are marked as TODOs and not yet enforced, so your tests should document this expected behavior for future implementation. Test JSONB serialization/deserialization for UserPreference fields.
+    *   **Key Observations:**
+        - Uses UUID for userId path parameter
+        - UserPreference contains JSONB fields (notification_settings, default_room_config)
+        - Currently allows any user to view/update any profile (TODO for Iteration 3)
 
-*   **File:** `backend/src/test/java/com/scrumpoker/domain/room/RoomServiceTest.java`
-    *   **Summary:** This is an EXCELLENT reference test file demonstrating the exact testing patterns you should follow. It uses @ExtendWith(MockitoExtension.class), @Mock/@InjectMocks annotations, comprehensive test coverage with 40+ test methods organized into logical sections (Create Room, Update Config, Update Title, etc.), AssertJ assertions, and proper Mockito verification patterns.
-    *   **Recommendation:** You MUST follow this exact pattern for UserServiceTest. Key patterns to replicate: (1) Use @BeforeEach setUp() to initialize test data, (2) Organize tests into sections with comments like `// ===== Create User Tests =====`, (3) Name tests descriptively: `testMethodName_Scenario_ExpectedOutcome()`, (4) Use `.await().indefinitely()` to unwrap Uni reactive types, (5) Verify repository method calls with `verify()`, (6) Use `assertThatThrownBy()` for exception tests.
-    *   **Pattern Example:** See lines 31-50 for setUp(), lines 61-82 for createRoom happy path test, lines 105-115 for null validation test with assertThatThrownBy()
+*   **File:** `backend/src/test/java/com/scrumpoker/repository/RoomRepositoryTest.java`
+    *   **Summary:** This existing repository test demonstrates the project's Testcontainers setup pattern using `@QuarkusTest` annotation with PostgreSQL container. It shows how to use Quarkus's reactive testing with `Uni.await()` pattern and `UniAsserter` for asynchronous assertions.
+    *   **Recommendation:** You SHOULD follow the same Testcontainers pattern established in repository tests. The test profile (`application-test.properties`) already configures the PostgreSQL container. Use `UniAsserter` or `.await().indefinitely()` for reactive assertions as shown in repository tests.
 
-*   **File:** `backend/src/main/java/com/scrumpoker/domain/user/User.java` (entity class)
-    *   **Summary:** Entity class defining User fields including userId (UUID), email, displayName, oauthProvider, oauthSubject, subscriptionTier (enum), deletedAt (Instant), createdAt, updatedAt.
-    *   **Recommendation:** You SHOULD create helper methods in your test class to instantiate User entities with test data, similar to the `createTestRoom()` helper in RoomServiceTest at line 650.
+*   **File:** `backend/src/test/resources/application-test.properties`
+    *   **Summary:** Contains test-specific configuration for database connection and Testcontainers setup.
+    *   **Recommendation:** You do NOT need to modify this file - Testcontainers is already configured. The test database will be automatically provisioned.
+
+*   **File:** `backend/pom.xml`
+    *   **Summary:** Contains project dependencies including Rest Assured (`io.rest-assured:rest-assured`) and Quarkus test dependencies.
+    *   **Recommendation:** You do NOT need to add any new dependencies. Rest Assured and Testcontainers are already configured.
 
 ### Implementation Tips & Notes
 
-*   **Tip:** I confirmed that RoomServiceTest already has comprehensive coverage (40+ test methods covering all public methods). Your UserServiceTest MUST achieve similar comprehensiveness. Target at least 15-20 test methods to cover all UserService methods and their edge cases.
+*   **Tip:** The project already has comprehensive integration tests for repositories (I1.T8 completed). You SHOULD examine `backend/src/test/java/com/scrumpoker/repository/RoomRepositoryTest.java` to understand the established testing patterns, particularly how to use `UniAsserter` or `.await().indefinitely()` for reactive assertions.
 
-*   **Tip:** The project uses reactive Mutiny types (Uni, Multi). All service methods return Uni<> or Multi<>. In tests, you MUST call `.await().indefinitely()` to unwrap the reactive result for synchronous assertion. Example: `User result = userService.getUserById(userId).await().indefinitely();`
-
-*   **Tip:** When mocking repository persist methods, use the pattern from RoomServiceTest line 89-92: `when(repository.persist(any(Entity.class))).thenAnswer(invocation -> { Entity entity = invocation.getArgument(0); return Uni.createFrom().item(entity); });` This returns the exact entity that was passed in, allowing you to verify field values.
-
-*   **Tip:** For testing JSONB serialization failures, throw JsonProcessingException from mocked ObjectMapper methods: `when(objectMapper.writeValueAsString(any())).thenThrow(new JsonProcessingException("error") {});` This is demonstrated in RoomServiceTest line 215.
-
-*   **Warning:** The UserService has a complex `findOrCreateUser` method (lines 243-271 in UserService.java) that conditionally creates a new user OR updates an existing one. You MUST test BOTH paths: (1) User exists → updates profile fields (lines 251-264), (2) User doesn't exist → creates new user with default preferences (lines 266-269). Mock `userRepository.findByOAuthProviderAndSubject()` to return `Uni.createFrom().item(existingUser)` for path 1, and `Uni.createFrom().nullItem()` for path 2.
-
-*   **Warning:** The `createDefaultPreferences` private method in UserService (lines 127-155) creates a UserPreference entity with default JSONB fields. When testing user creation, you MUST mock `userPreferenceRepository.persist()` to handle the chained preference creation. Use: `when(userPreferenceRepository.persist(any())).thenAnswer(invocation -> Uni.createFrom().item(invocation.getArgument(0)));`
-
-*   **Critical Pattern:** Soft delete tests MUST verify that the `deletedAt` timestamp is set correctly. Use: `assertThat(result.deletedAt).isNotNull();` and verify that subsequent calls to find methods throw UserNotFoundException when the entity is soft-deleted. See RoomServiceTest lines 432-451 for deleteRoom soft delete test pattern.
-
-*   **Coverage Target:** The acceptance criteria requires >90% coverage for RoomService and UserService. Given that RoomServiceTest already exists with excellent coverage, you only need to complete UserServiceTest. Ensure every public method has at least 2-3 test cases (happy path + edge cases).
-
-### Testing Checklist for UserServiceTest
-
-Based on the service methods, you MUST include tests for:
-
-1. **createUser() (lines 72-119)**: Valid input returns user, null/empty oauthProvider throws exception, null/empty oauthSubject throws exception, invalid email format throws exception, invalid displayName (null/empty/too long >100 chars) throws exception, JSONB serialization success, default preferences created and persisted
-2. **updateProfile() (lines 168-195)**: Valid update (displayName + avatarUrl), null displayName (should not update field), invalid displayName (too long >100 chars) throws exception, user not found throws UserNotFoundException, soft-deleted user throws UserNotFoundException
-3. **getUserById() (lines 204-215)**: Existing user returns correctly, non-existent user (null from repo) throws UserNotFoundException, soft-deleted user (deletedAt not null) throws UserNotFoundException
-4. **findByEmail() (lines 224-230)**: Valid email returns user, null/empty email returns null, non-existent email returns null
-5. **findOrCreateUser() (lines 243-271)**: Existing user path updates profile fields (email, displayName, avatarUrl), new user path creates user + preferences, profile fields updated correctly on existing user
-6. **getPreferences() (lines 280-288)**: Existing preferences returns correctly, user not found throws UserNotFoundException, preferences not found throws UserNotFoundException
-7. **updatePreferences() (lines 299-337)**: Valid update with JSONB serialization, null config throws IllegalArgumentException, user not found throws UserNotFoundException, JSONB serialization failure throws exception
-8. **deleteUser() (lines 347-362)**: Valid user soft delete sets deletedAt, user not found throws UserNotFoundException, already deleted user throws IllegalArgumentException
-9. **Helper methods**: isValidEmail() tested via createUser validation failures, isValidDisplayName() tested via validation failures
-
-### Code Style Requirements
-
-*   Use Mockito's `@ExtendWith(MockitoExtension.class)` at class level
-*   Use `@Mock` for repository dependencies, `@InjectMocks` for the service under test
-*   Group tests logically with comment separators: `// ===== Method Name Tests =====`
-*   Name tests: `testMethodName_Scenario_ExpectedOutcome()`
-*   Use AssertJ's `assertThat()` for fluent assertions (never use JUnit's assertEquals)
-*   Use `assertThatThrownBy()` for exception testing with `.isInstanceOf()` and `.hasMessageContaining()`
-*   Verify mock interactions with `verify(repository, times(n)).method()` or `verify(repository).method()` for once
-*   Use `never()` to verify methods NOT called in failure scenarios: `verify(repository, never()).persist(any())`
-*   Import static methods: `import static org.assertj.core.api.Assertions.*; import static org.mockito.Mockito.*;`
-*   Follow line reference from RoomServiceTest for exact patterns
-
-### Specific Test Patterns from RoomServiceTest
-
-**Pattern 1: Happy Path Test (lines 61-82)**
+*   **Tip:** Rest Assured is the standard tool for testing REST APIs in Quarkus projects. You MUST use Rest Assured's `given().when().then()` pattern. For Quarkus integration tests, use the pattern:
 ```java
-@Test
-void testCreateRoom_ValidInput_ReturnsRoom() throws JsonProcessingException {
-    // Given
-    String title = "Test Room";
-    String configJson = "{\"deckType\":\"FIBONACCI\"}";
-    Room expectedRoom = new Room();
-    expectedRoom.roomId = "abc123";
-    expectedRoom.title = title;
-
-    when(objectMapper.writeValueAsString(any(RoomConfig.class))).thenReturn(configJson);
-    when(roomRepository.persist(any(Room.class))).thenReturn(Uni.createFrom().item(expectedRoom));
-
-    // When
-    Room result = roomService.createRoom(title, PrivacyMode.PUBLIC, null, testConfig)
-            .await().indefinitely();
-
-    // Then
-    assertThat(result).isNotNull();
-    assertThat(result.roomId).isEqualTo("abc123");
-    assertThat(result.title).isEqualTo(title);
-    verify(roomRepository).persist(any(Room.class));
-    verify(objectMapper).writeValueAsString(testConfig);
-}
+given()
+    .contentType(ContentType.JSON)
+    .body(requestObject)
+.when()
+    .post("/api/v1/rooms")
+.then()
+    .statusCode(201)
+    .body("roomId", notNullValue())
+    .body("title", equalTo("Test Room"));
 ```
 
-**Pattern 2: Null Validation Test (lines 105-115)**
-```java
-@Test
-void testCreateRoom_NullTitle_ThrowsException() {
-    // When/Then
-    assertThatThrownBy(() ->
-            roomService.createRoom(null, PrivacyMode.PUBLIC, null, testConfig)
-                    .await().indefinitely()
-    )
-            .isInstanceOf(IllegalArgumentException.class)
-            .hasMessageContaining("title cannot be null");
+*   **Note:** The controllers currently have `@RolesAllowed("USER")` annotations but authentication is NOT enforced yet (JWT implementation is in Iteration 3). Your tests should NOT attempt to test authorization failures (403) at this stage since the security layer is not implemented. You can document in comments that authorization tests will be added in Iteration 3.
 
-    verify(roomRepository, never()).persist(any(Room.class));
-}
+*   **Note:** Both controllers use exception mappers for error handling (RoomNotFoundExceptionMapper, UserNotFoundExceptionMapper, IllegalArgumentExceptionMapper, ValidationExceptionMapper). These mappers convert exceptions to proper HTTP responses with ErrorResponse DTOs. Your tests MUST verify that 404 errors return the correct ErrorResponse structure with "error", "message", and "timestamp" fields.
+
+*   **Warning:** The RoomController's `getUserRooms` endpoint implements manual pagination in memory (loads all rooms then pages them). This is not optimal for production but is acceptable for this iteration. Your test should verify pagination parameters are validated (size max 100, page >= 0) and that the response includes pagination metadata (page, size, totalElements, totalPages).
+
+*   **Tip:** For testing room creation, you should verify that the generated room ID is a valid 6-character lowercase alphanumeric nanoid. You can use a regex pattern check: `matchesPattern("^[a-z0-9]{6}$")`.
+
+*   **Tip:** For testing soft delete, you MUST query the database directly after calling the DELETE endpoint to verify that `deleted_at` timestamp is set and the room is not physically removed. You can inject the RoomRepository into your test class and use it to verify the database state.
+
+*   **Note:** DTO serialization is handled by Jackson. The project uses standard Jackson annotations in DTO classes. Response JSON structure MUST match the OpenAPI schema definitions in `api/openapi.yaml`. Use Rest Assured's body matchers to verify field presence and types.
+
+*   **Critical:** Testcontainers for PostgreSQL is already configured in the test profile. You do NOT need to manually start containers. The `@QuarkusTest` annotation handles this automatically. Each test method will share the same database instance but you should ensure test data doesn't conflict between tests (use unique IDs, clean up after tests, or use transactions that roll back).
+
+*   **Tip:** For JSONB field testing (RoomConfig, UserPreferenceConfig), you should verify that complex nested objects serialize/deserialize correctly. Create requests with custom deck configurations and notification settings to ensure JSONB handling works end-to-end. Example:
+```java
+RoomConfigDTO config = new RoomConfigDTO();
+config.deckType = "fibonacci";
+config.timerEnabled = true;
+config.timerDurationSeconds = 120;
 ```
 
-**Pattern 3: Soft Delete Test (lines 432-451)**
+*   **Best Practice:** Use descriptive test method names following the pattern `test<Endpoint><Scenario>()` (e.g., `testCreateRoomReturnsCreatedStatus()`, `testGetRoomReturns404WhenNotFound()`). Each test should focus on one specific scenario.
+
+*   **Best Practice:** For each endpoint, you should test at minimum: happy path (successful response), 404 not found (for GET/PUT/DELETE), 400 bad request (for invalid input), and verify response DTO structure matches expected schema from OpenAPI spec.
+
+*   **Important:** Use `@QuarkusTest` annotation at the class level. This will start Quarkus in test mode with Testcontainers. Each test method runs against a real HTTP server and database. No mocking is needed for integration tests - you're testing the full stack.
+
+*   **Transaction Handling:** Quarkus test methods are NOT automatically transactional. If you need to verify database state, you can inject repositories and query them directly, or use `@TestTransaction` annotation to wrap test methods in transactions that roll back after each test.
+
+### Testing Strategy Summary
+
+For **RoomControllerTest**, implement tests for:
+1. POST /api/v1/rooms - Create room with valid request, returns 201 + RoomDTO with valid 6-char ID
+2. POST /api/v1/rooms - Create room with custom config (JSONB), verify config persisted correctly
+3. POST /api/v1/rooms - Create room with invalid privacy mode (not in enum), returns 400
+4. GET /api/v1/rooms/{roomId} - Retrieve existing room, returns 200 + RoomDTO
+5. GET /api/v1/rooms/{roomId} - Room not found, returns 404 + ErrorResponse
+6. PUT /api/v1/rooms/{roomId}/config - Update title only, returns 200 + updated RoomDTO
+7. PUT /api/v1/rooms/{roomId}/config - Update privacy mode, returns 200
+8. PUT /api/v1/rooms/{roomId}/config - Update with invalid privacy mode, returns 400
+9. PUT /api/v1/rooms/{roomId}/config - Room not found, returns 404
+10. DELETE /api/v1/rooms/{roomId} - Soft delete, returns 204, verify `deleted_at` set in DB
+11. DELETE /api/v1/rooms/{roomId} - Room not found, returns 404
+12. GET /api/v1/users/{userId}/rooms - List rooms with default pagination, returns 200 + RoomListResponse
+13. GET /api/v1/users/{userId}/rooms - Validate page size limit (>100), returns 400
+
+For **UserControllerTest**, implement tests for:
+1. GET /api/v1/users/{userId} - Retrieve existing user, returns 200 + UserDTO
+2. GET /api/v1/users/{userId} - User not found, returns 404 + ErrorResponse
+3. PUT /api/v1/users/{userId} - Update profile (displayName + avatarUrl), returns 200 + updated UserDTO
+4. PUT /api/v1/users/{userId} - Update with invalid displayName (too long >100 chars), returns 400
+5. PUT /api/v1/users/{userId} - User not found, returns 404
+6. GET /api/v1/users/{userId}/preferences - Retrieve preferences, returns 200 + UserPreferenceDTO with JSONB
+7. GET /api/v1/users/{userId}/preferences - User not found, returns 404
+8. PUT /api/v1/users/{userId}/preferences - Update preferences with JSONB fields (notification settings, default room config), returns 200 + updated DTO
+9. PUT /api/v1/users/{userId}/preferences - Verify JSONB persistence in database
+10. PUT /api/v1/users/{userId}/preferences - User not found, returns 404
+
+### Example Test Structure
+
 ```java
-@Test
-void testDeleteRoom_ValidRoom_SoftDeletes() {
-    // Given
-    String roomId = "room123";
-    Room existingRoom = createTestRoom(roomId, "Test Room");
+package com.scrumpoker.api.rest;
 
-    when(roomRepository.findById(roomId)).thenReturn(Uni.createFrom().item(existingRoom));
-    when(roomRepository.persist(any(Room.class))).thenAnswer(invocation -> {
-        Room room = invocation.getArgument(0);
-        return Uni.createFrom().item(room);
-    });
+import io.quarkus.test.junit.QuarkusTest;
+import io.restassured.http.ContentType;
+import org.junit.jupiter.api.Test;
 
-    // When
-    Room result = roomService.deleteRoom(roomId)
-            .await().indefinitely();
+import static io.restassured.RestAssured.given;
+import static org.hamcrest.Matchers.*;
 
-    // Then
-    assertThat(result.deletedAt).isNotNull();
-    verify(roomRepository).findById(roomId);
-    verify(roomRepository).persist(any(Room.class));
+@QuarkusTest
+public class RoomControllerTest {
+
+    @Test
+    public void testCreateRoom_ValidInput_Returns201() {
+        CreateRoomRequest request = new CreateRoomRequest();
+        request.title = "Test Room";
+        request.privacyMode = "PUBLIC";
+
+        given()
+            .contentType(ContentType.JSON)
+            .body(request)
+        .when()
+            .post("/api/v1/rooms")
+        .then()
+            .statusCode(201)
+            .body("roomId", matchesPattern("^[a-z0-9]{6}$"))
+            .body("title", equalTo("Test Room"))
+            .body("privacyMode", equalTo("PUBLIC"))
+            .body("createdAt", notNullValue());
+    }
+
+    @Test
+    public void testGetRoom_NotFound_Returns404() {
+        given()
+        .when()
+            .get("/api/v1/rooms/nonexistent")
+        .then()
+            .statusCode(404)
+            .body("error", notNullValue())
+            .body("message", notNullValue())
+            .body("timestamp", notNullValue());
+    }
 }
 ```
 
 ---
 
-**EXECUTION CHECKLIST:**
+## Summary
 
-1. ✓ RoomServiceTest already complete with 40+ tests
-2. **TODO:** Create comprehensive UserServiceTest with 15-20 tests
-3. **TODO:** Test all 9 public methods in UserService
-4. **TODO:** Test email validation with various formats (valid, invalid, null)
-5. **TODO:** Test display name validation (null, empty, too long >100)
-6. **TODO:** Test findOrCreateUser both paths (existing user, new user)
-7. **TODO:** Test createDefaultPreferences chain via createUser
-8. **TODO:** Test soft delete behavior (deletedAt timestamp)
-9. **TODO:** Test JSONB serialization success and failure scenarios
-10. **TODO:** Run `mvn test` and verify >90% coverage for UserService
+You are implementing integration tests for the RoomController and UserController REST endpoints. These tests will verify end-to-end functionality from HTTP request through to database persistence and response generation. Use Rest Assured for HTTP testing, leverage the existing Testcontainers setup, and ensure all test scenarios cover both happy paths and error conditions. Your tests must validate that responses match the OpenAPI specification structure. Focus on functional correctness - authentication and authorization testing will be added in Iteration 3.
