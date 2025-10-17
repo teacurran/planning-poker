@@ -705,23 +705,30 @@ class UserServiceTest {
     }
 
     @Test
-    void testGetPreferences_PreferencesNotFound_ThrowsException() {
+    void testGetPreferences_PreferencesNotFound_CreatesDefaults() throws JsonProcessingException {
         // Given
         UUID userId = UUID.randomUUID();
         User existingUser = createTestUser("test@example.com", "Test Name");
         existingUser.userId = userId;
 
+        UserPreference newPreference = new UserPreference();
+        newPreference.userId = userId;
+        newPreference.defaultDeckType = "fibonacci";
+
         when(userRepository.findById(userId)).thenReturn(Uni.createFrom().item(existingUser));
         when(userPreferenceRepository.findById(userId)).thenReturn(Uni.createFrom().nullItem());
+        when(objectMapper.writeValueAsString(any())).thenReturn("{}");
+        when(userPreferenceRepository.persist(any(UserPreference.class))).thenReturn(Uni.createFrom().item(newPreference));
 
-        // When/Then
-        assertThatThrownBy(() ->
-                userService.getPreferences(userId)
-                        .await().indefinitely()
-        )
-                .isInstanceOf(UserNotFoundException.class);
+        // When
+        UserPreference result = userService.getPreferences(userId)
+                .await().indefinitely();
 
+        // Then
+        assertThat(result).isNotNull();
+        assertThat(result.defaultDeckType).isEqualTo("fibonacci");
         verify(userPreferenceRepository).findById(userId);
+        verify(userPreferenceRepository).persist(any(UserPreference.class));
     }
 
     // ===== Get Preference Config Tests =====
@@ -868,7 +875,7 @@ class UserServiceTest {
         String configJson = "{\"deckType\":\"T_SHIRT\"}";
 
         when(userRepository.findById(userId)).thenReturn(Uni.createFrom().item(existingUser));
-        when(userPreferenceRepository.findById(userId)).thenReturn(Uni.createFrom().item(existingPref));
+        when(userPreferenceRepository.findByUserId(userId)).thenReturn(Uni.createFrom().item(existingPref));
         when(objectMapper.writeValueAsString(any())).thenReturn(configJson);
         when(userPreferenceRepository.persist(any(UserPreference.class))).thenAnswer(invocation -> {
             UserPreference pref = invocation.getArgument(0);
@@ -884,7 +891,7 @@ class UserServiceTest {
         assertThat(result.defaultDeckType).isEqualTo("FIBONACCI");
         assertThat(result.defaultRoomConfig).isEqualTo(configJson);
         verify(userRepository).findById(userId);
-        verify(userPreferenceRepository).findById(userId);
+        verify(userPreferenceRepository).findByUserId(userId);
         verify(objectMapper, times(2)).writeValueAsString(testConfig);
         verify(userPreferenceRepository).persist(any(UserPreference.class));
     }
@@ -930,7 +937,7 @@ class UserServiceTest {
         existingPref.userId = userId;
 
         when(userRepository.findById(userId)).thenReturn(Uni.createFrom().item(existingUser));
-        when(userPreferenceRepository.findById(userId)).thenReturn(Uni.createFrom().item(existingPref));
+        when(userPreferenceRepository.findByUserId(userId)).thenReturn(Uni.createFrom().item(existingPref));
         when(objectMapper.writeValueAsString(any())).thenThrow(new JsonProcessingException("Serialization error") {});
 
         // When/Then

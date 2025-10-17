@@ -125,20 +125,25 @@ public class UserMapper {
         }
 
         try {
-            // Deserialize to UserPreferenceConfig first
-            UserPreferenceConfig config = objectMapper.readValue(configJson, UserPreferenceConfig.class);
+            // Try to deserialize directly to RoomConfigDTO first (new format with customDeck support)
+            try {
+                return objectMapper.readValue(configJson, RoomConfigDTO.class);
+            } catch (JsonProcessingException directEx) {
+                // Fall back to old format (UserPreferenceConfig)
+                UserPreferenceConfig config = objectMapper.readValue(configJson, UserPreferenceConfig.class);
 
-            // Convert to RoomConfigDTO
-            RoomConfigDTO dto = new RoomConfigDTO();
-            dto.deckType = config.deckType;
-            dto.timerEnabled = config.timerEnabled;
-            dto.timerDurationSeconds = config.timerDurationSeconds;
-            dto.revealBehavior = config.revealBehavior;
-            dto.allowObservers = config.allowObservers;
-            dto.allowAnonymousVoters = true; // Default value
-            dto.customDeck = null; // Not yet implemented
+                // Convert to RoomConfigDTO
+                RoomConfigDTO dto = new RoomConfigDTO();
+                dto.deckType = config.deckType;
+                dto.timerEnabled = config.timerEnabled;
+                dto.timerDurationSeconds = config.timerDurationSeconds;
+                dto.revealBehavior = config.revealBehavior;
+                dto.allowObservers = config.allowObservers;
+                dto.allowAnonymousVoters = true; // Default value
+                dto.customDeck = null; // Not available in old format
 
-            return dto;
+                return dto;
+            }
         } catch (JsonProcessingException e) {
             // Log error but don't fail the entire mapping
             System.err.println("Failed to deserialize room configuration: " + e.getMessage());
@@ -158,15 +163,20 @@ public class UserMapper {
         }
 
         try {
-            // Deserialize to UserPreferenceConfig first
-            UserPreferenceConfig config = objectMapper.readValue(settingsJson, UserPreferenceConfig.class);
+            // Try to deserialize directly to NotificationSettingsDTO first (new format)
+            try {
+                return objectMapper.readValue(settingsJson, NotificationSettingsDTO.class);
+            } catch (JsonProcessingException directEx) {
+                // Fall back to old format (UserPreferenceConfig)
+                UserPreferenceConfig config = objectMapper.readValue(settingsJson, UserPreferenceConfig.class);
 
-            // Convert to NotificationSettingsDTO
-            NotificationSettingsDTO dto = new NotificationSettingsDTO();
-            dto.emailNotifications = config.emailNotifications;
-            dto.sessionReminders = config.roomInvites; // Map roomInvites to sessionReminders
+                // Convert to NotificationSettingsDTO
+                NotificationSettingsDTO dto = new NotificationSettingsDTO();
+                dto.emailNotifications = config.emailNotifications;
+                dto.sessionReminders = config.roomInvites; // Map roomInvites to sessionReminders
 
-            return dto;
+                return dto;
+            }
         } catch (JsonProcessingException e) {
             // Log error but don't fail the entire mapping
             System.err.println("Failed to deserialize notification settings: " + e.getMessage());

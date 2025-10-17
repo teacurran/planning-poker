@@ -179,7 +179,8 @@ public class UserController {
         // Convert request DTO to UserPreferenceConfig
         UserPreferenceConfig config = userMapper.toConfig(request);
 
-        return userService.updatePreferences(userId, config)
+        return userService.updatePreferences(userId, request.theme, request.defaultDeckType,
+                request.defaultRoomConfig, request.notificationSettings, userMapper)
             .onItem().transform(preference -> {
                 UserPreferenceDTO dto = userMapper.toPreferenceDTO(preference);
                 return Response.ok(dto).build();

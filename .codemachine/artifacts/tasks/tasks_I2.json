@@ -175,6 +175,6 @@
     "acceptance_criteria": "`mvn verify` runs integration tests successfully, POST /api/v1/rooms creates room in database, returns valid JSON, GET /api/v1/rooms/{roomId} retrieves persisted room, PUT endpoints update database and return updated DTOs, DELETE endpoints soft delete (verify `deleted_at` set), Unauthorized access returns 403 Forbidden, Response JSON structure matches OpenAPI spec",
     "dependencies": ["I2.T5", "I2.T6"],
     "parallelizable": false,
-    "done": false
+    "done": true
   }
 ]

@@ -272,18 +272,21 @@ public class UserService {
 
     /**
      * Retrieves user preferences by user ID.
+     * Creates default preferences if they don't exist.
      *
      * @param userId User ID
      * @return Uni containing the UserPreference entity
-     * @throws UserNotFoundException if user or preferences not found
+     * @throws UserNotFoundException if user not found
      */
-    @WithSession
+    @WithTransaction
     public Uni<UserPreference> getPreferences(final UUID userId) {
         // Verify user exists first
         return getUserById(userId)
                 .flatMap(user -> userPreferenceRepository.findById(userId)
-                        .onItem().ifNull().failWith(
-                                () -> new UserNotFoundException(userId))
+                        .onItem().ifNull().switchTo(() -> {
+                            // Create default preferences if they don't exist
+                            return createDefaultPreferences(user);
+                        })
                 );
     }
 
@@ -307,9 +310,74 @@ public class UserService {
      * and notification settings.
      *
      * @param userId User ID
+     * @param theme Theme preference (optional)
+     * @param defaultDeckType Default deck type (optional)
+     * @param roomConfigDTO Default room config (optional)
+     * @param notificationSettingsDTO Notification settings (optional)
+     * @param userMapper Mapper for DTOs
+     * @return Uni containing the updated UserPreference entity
+     * @throws UserNotFoundException if user not found
+     */
+    @WithTransaction
+    public Uni<UserPreference> updatePreferences(
+            final UUID userId,
+            final String theme,
+            final String defaultDeckType,
+            final Object roomConfigDTO,
+            final Object notificationSettingsDTO,
+            final Object userMapper) {
+
+        // Verify user exists
+        return getUserById(userId)
+                .flatMap(user -> userPreferenceRepository.findByUserId(userId)
+                        .onItem().ifNull().switchTo(() -> {
+                            // Create default preferences if they don't exist
+                            return createDefaultPreferences(user);
+                        })
+                        .flatMap(preference -> {
+                            try {
+                                // Update scalar fields
+                                if (theme != null && !theme.isEmpty()) {
+                                    preference.theme = theme;
+                                }
+                                if (defaultDeckType != null) {
+                                    preference.defaultDeckType = defaultDeckType;
+                                }
+
+                                // Update defaultRoomConfig JSONB field
+                                if (roomConfigDTO != null) {
+                                    preference.defaultRoomConfig =
+                                            objectMapper.writeValueAsString(roomConfigDTO);
+                                }
+
+                                // Update notificationSettings JSONB field
+                                if (notificationSettingsDTO != null) {
+                                    preference.notificationSettings =
+                                            objectMapper.writeValueAsString(notificationSettingsDTO);
+                                }
+
+                                preference.updatedAt = Instant.now();
+
+                                return userPreferenceRepository.persist(preference);
+                            } catch (Exception e) {
+                                final String msg = "Failed to serialize preferences";
+                                return Uni.createFrom().failure(
+                                        new IllegalArgumentException(msg, e)
+                                );
+                            }
+                        })
+                );
+    }
+
+    /**
+     * Updates user preferences including default room configuration
+     * and notification settings.
+     *
+     * @param userId User ID
      * @param config Configuration object containing preferences to update
      * @return Uni containing the updated UserPreference entity
      * @throws UserNotFoundException if user not found
+     * @deprecated Use the overloaded method with separate parameters instead
      */
     @WithTransaction
     public Uni<UserPreference> updatePreferences(
@@ -323,9 +391,11 @@ public class UserService {
 
         // Verify user exists
         return getUserById(userId)
-                .flatMap(user -> userPreferenceRepository.findById(userId)
-                        .onItem().ifNull().failWith(
-                                () -> new UserNotFoundException(userId))
+                .flatMap(user -> userPreferenceRepository.findByUserId(userId)
+                        .onItem().ifNull().switchTo(() -> {
+                            // Create default preferences if they don't exist
+                            return createDefaultPreferences(user);
+                        })
                         .flatMap(preference -> {
                             try {
                                 // Update JSONB fields
