@@ -1,646 +1,873 @@
 package com.scrumpoker.domain.user;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.scrumpoker.repository.UserPreferenceRepository;
 import com.scrumpoker.repository.UserRepository;
-import io.quarkus.hibernate.reactive.panache.Panache;
-import io.quarkus.test.junit.QuarkusTest;
-import io.quarkus.test.vertx.RunOnVertxContext;
-import io.quarkus.test.vertx.UniAsserter;
-import jakarta.inject.Inject;
+import io.smallrye.mutiny.Uni;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.time.Instant;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.*;
 
 /**
- * Unit tests for UserService.
- * Tests user creation from OAuth profiles, profile updates, preference management,
- * JSONB serialization, soft delete behavior, and business validation.
+ * Unit tests for UserService using Mockito mocks.
+ * Tests business logic in isolation without database dependencies.
  */
-@QuarkusTest
+@ExtendWith(MockitoExtension.class)
 class UserServiceTest {
 
-    @Inject
-    UserService userService;
-
-    @Inject
+    @Mock
     UserRepository userRepository;
 
-    @Inject
+    @Mock
     UserPreferenceRepository userPreferenceRepository;
 
+    @Mock
+    ObjectMapper objectMapper;
+
+    @InjectMocks
+    UserService userService;
+
+    private UserPreferenceConfig testConfig;
+
     @BeforeEach
-    @RunOnVertxContext
-    void setUp(UniAsserter asserter) {
-        // Clean up test data before each test
-        asserter.execute(() ->
-            Panache.withTransaction(() ->
-                userPreferenceRepository.deleteAll()
-                    .flatMap(v -> userRepository.deleteAll())
-            )
-        );
+    void setUp() {
+        testConfig = new UserPreferenceConfig();
+        testConfig.deckType = "FIBONACCI";
+        testConfig.timerEnabled = false;
+        testConfig.emailNotifications = true;
     }
 
-    // ===== User Creation Tests =====
+    // ===== Create User Tests =====
 
     @Test
-    @RunOnVertxContext
-    void testCreateUser_ValidOAuthProfile(UniAsserter asserter) {
-        // Given: valid OAuth profile data
-        String provider = "google";
-        String subject = "google-123456";
-        String email = "test@example.com";
-        String displayName = "Test User";
-        String avatarUrl = "https://example.com/avatar.jpg";
-
-        // When: creating user
-        asserter.assertThat(() ->
-            userService.createUser(provider, subject, email, displayName, avatarUrl)
-        , user -> {
-            // Then: user is created with correct fields
-            assertThat(user.userId).isNotNull();
-            assertThat(user.oauthProvider).isEqualTo("google");
-            assertThat(user.oauthSubject).isEqualTo("google-123456");
-            assertThat(user.email).isEqualTo("test@example.com");
-            assertThat(user.displayName).isEqualTo("Test User");
-            assertThat(user.avatarUrl).isEqualTo(avatarUrl);
-            assertThat(user.subscriptionTier).isEqualTo(SubscriptionTier.FREE);
-            assertThat(user.deletedAt).isNull();
-        });
-
-        // And: verify UserPreference was created
-        asserter.assertThat(() -> Panache.withSession(() ->
-            userPreferenceRepository.findAll().list()
-        ), prefs -> {
-            assertThat(prefs).hasSize(1);
-            assertThat(prefs.get(0).defaultDeckType).isEqualTo("fibonacci");
-            assertThat(prefs.get(0).theme).isEqualTo("light");
-            assertThat(prefs.get(0).defaultRoomConfig).isNotNull();
-            assertThat(prefs.get(0).notificationSettings).isNotNull();
-        });
-    }
-
-    @Test
-    @RunOnVertxContext
-    void testCreateUser_ValidatesEmail(UniAsserter asserter) {
-        // Given: valid OAuth data but invalid emails
-        String provider = "google";
-        String subject = "google-123";
-        String displayName = "Test User";
-
-        // When/Then: null email returns failed Uni
-        asserter.assertFailedWith(() ->
-            userService.createUser(provider, subject, null, displayName, null)
-        , thrown -> {
-            assertThat(thrown).isInstanceOf(IllegalArgumentException.class);
-            assertThat(thrown.getMessage()).contains("Invalid email format");
-        });
-
-        // When/Then: empty email returns failed Uni
-        asserter.assertFailedWith(() ->
-            userService.createUser(provider, subject, "   ", displayName, null)
-        , thrown -> {
-            assertThat(thrown).isInstanceOf(IllegalArgumentException.class);
-            assertThat(thrown.getMessage()).contains("Invalid email format");
-        });
-
-        // When/Then: invalid email format returns failed Uni
-        asserter.assertFailedWith(() ->
-            userService.createUser(provider, subject, "not-an-email", displayName, null)
-        , thrown -> {
-            assertThat(thrown).isInstanceOf(IllegalArgumentException.class);
-            assertThat(thrown.getMessage()).contains("Invalid email format");
-        });
-
-        // When/Then: email without domain returns failed Uni
-        asserter.assertFailedWith(() ->
-            userService.createUser(provider, subject, "user@", displayName, null)
-        , thrown -> {
-            assertThat(thrown).isInstanceOf(IllegalArgumentException.class);
-            assertThat(thrown.getMessage()).contains("Invalid email format");
-        });
-    }
-
-    @Test
-    @RunOnVertxContext
-    void testCreateUser_ValidatesDisplayName(UniAsserter asserter) {
-        // Given: valid OAuth data but invalid display names
+    void testCreateUser_ValidInput_ReturnsUser() throws JsonProcessingException {
+        // Given
         String provider = "google";
         String subject = "google-123";
         String email = "test@example.com";
-
-        // When/Then: null display name returns failed Uni
-        asserter.assertFailedWith(() ->
-            userService.createUser(provider, subject, email, null, null)
-        , thrown -> {
-            assertThat(thrown).isInstanceOf(IllegalArgumentException.class);
-            assertThat(thrown.getMessage()).contains("Display name must be between 1 and 100 characters");
-        });
-
-        // When/Then: empty display name returns failed Uni
-        asserter.assertFailedWith(() ->
-            userService.createUser(provider, subject, email, "   ", null)
-        , thrown -> {
-            assertThat(thrown).isInstanceOf(IllegalArgumentException.class);
-            assertThat(thrown.getMessage()).contains("Display name must be between 1 and 100 characters");
-        });
-
-        // When/Then: display name exceeding 100 characters returns failed Uni
-        String longDisplayName = "a".repeat(101);
-        asserter.assertFailedWith(() ->
-            userService.createUser(provider, subject, email, longDisplayName, null)
-        , thrown -> {
-            assertThat(thrown).isInstanceOf(IllegalArgumentException.class);
-            assertThat(thrown.getMessage()).contains("Display name must be between 1 and 100 characters");
-        });
-    }
-
-    @Test
-    @RunOnVertxContext
-    void testCreateUser_ValidatesOAuthProvider(UniAsserter asserter) {
-        // Given: valid email and display name but invalid OAuth provider
-        String subject = "google-123";
-        String email = "test@example.com";
         String displayName = "Test User";
+        String avatarUrl = "https://avatar.com/test.jpg";
+        String configJson = "{}";
 
-        // When/Then: null provider returns failed Uni
-        asserter.assertFailedWith(() ->
-            userService.createUser(null, subject, email, displayName, null)
-        , thrown -> {
-            assertThat(thrown).isInstanceOf(IllegalArgumentException.class);
-            assertThat(thrown.getMessage()).contains("OAuth provider cannot be null or empty");
-        });
+        UserPreference expectedPref = new UserPreference();
 
-        // When/Then: empty provider returns failed Uni
-        asserter.assertFailedWith(() ->
-            userService.createUser("   ", subject, email, displayName, null)
-        , thrown -> {
-            assertThat(thrown).isInstanceOf(IllegalArgumentException.class);
-            assertThat(thrown.getMessage()).contains("OAuth provider cannot be null or empty");
+        when(objectMapper.writeValueAsString(any())).thenReturn(configJson);
+        when(userRepository.persist(any(User.class))).thenAnswer(invocation -> {
+            User user = invocation.getArgument(0);
+            return Uni.createFrom().item(user);
         });
+        when(userPreferenceRepository.persist(any(UserPreference.class))).thenReturn(Uni.createFrom().item(expectedPref));
+
+        // When
+        User result = userService.createUser(provider, subject, email, displayName, avatarUrl)
+                .await().indefinitely();
+
+        // Then
+        assertThat(result).isNotNull();
+        assertThat(result.email).isEqualTo(email);
+        assertThat(result.displayName).isEqualTo(displayName);
+        assertThat(result.oauthProvider).isEqualTo(provider);
+        assertThat(result.oauthSubject).isEqualTo(subject);
+        assertThat(result.avatarUrl).isEqualTo(avatarUrl);
+        assertThat(result.subscriptionTier).isEqualTo(SubscriptionTier.FREE);
+        verify(userRepository).persist(any(User.class));
+        verify(userPreferenceRepository).persist(any(UserPreference.class));
     }
 
     @Test
-    @RunOnVertxContext
-    void testCreateUser_ValidatesOAuthSubject(UniAsserter asserter) {
-        // Given: valid email and display name but invalid OAuth subject
-        String provider = "google";
-        String email = "test@example.com";
-        String displayName = "Test User";
+    void testCreateUser_NullOAuthProvider_ThrowsException() {
+        // When/Then
+        assertThatThrownBy(() ->
+                userService.createUser(null, "subject", "test@example.com", "Name", null)
+                        .await().indefinitely()
+        )
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("OAuth provider cannot be null or empty");
 
-        // When/Then: null subject returns failed Uni
-        asserter.assertFailedWith(() ->
-            userService.createUser(provider, null, email, displayName, null)
-        , thrown -> {
-            assertThat(thrown).isInstanceOf(IllegalArgumentException.class);
-            assertThat(thrown.getMessage()).contains("OAuth subject cannot be null or empty");
-        });
-
-        // When/Then: empty subject returns failed Uni
-        asserter.assertFailedWith(() ->
-            userService.createUser(provider, "   ", email, displayName, null)
-        , thrown -> {
-            assertThat(thrown).isInstanceOf(IllegalArgumentException.class);
-            assertThat(thrown.getMessage()).contains("OAuth subject cannot be null or empty");
-        });
+        verify(userRepository, never()).persist(any(User.class));
     }
 
     @Test
-    @RunOnVertxContext
-    void testCreateUser_CreatesDefaultPreferences(UniAsserter asserter) {
-        // Given: valid OAuth profile data
-        String provider = "microsoft";
-        String subject = "microsoft-456";
-        String email = "user@company.com";
-        String displayName = "Corporate User";
+    void testCreateUser_EmptyOAuthProvider_ThrowsException() {
+        // When/Then
+        assertThatThrownBy(() ->
+                userService.createUser("   ", "subject", "test@example.com", "Name", null)
+                        .await().indefinitely()
+        )
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("OAuth provider cannot be null or empty");
 
-        // When: creating user
-        UUID[] userIdHolder = new UUID[1];
-        asserter.execute(() ->
-            userService.createUser(provider, subject, email, displayName, null)
-                .onItem().invoke(user -> userIdHolder[0] = user.userId)
-        );
-
-        // Then: verify UserPreference was created with correct JSONB values
-        asserter.assertThat(() -> Panache.withSession(() ->
-            userPreferenceRepository.findById(userIdHolder[0])
-        ), pref -> {
-            assertThat(pref).isNotNull();
-            assertThat(pref.userId).isEqualTo(userIdHolder[0]);
-            assertThat(pref.defaultDeckType).isEqualTo("fibonacci");
-            assertThat(pref.theme).isEqualTo("light");
-
-            // Verify JSONB fields are not null and contain valid JSON
-            assertThat(pref.defaultRoomConfig).isNotNull();
-            assertThat(pref.defaultRoomConfig).isNotBlank();
-            assertThat(pref.notificationSettings).isNotNull();
-            assertThat(pref.notificationSettings).isNotBlank();
-        });
-    }
-
-    // ===== Profile Update Tests =====
-
-    @Test
-    @RunOnVertxContext
-    void testUpdateProfile_UpdatesDisplayNameAndAvatar(UniAsserter asserter) {
-        // Given: an existing user
-        UUID[] userIdHolder = new UUID[1];
-        asserter.execute(() ->
-            userService.createUser("google", "google-789", "update@example.com", "Original Name", "https://old-avatar.jpg")
-                .onItem().invoke(user -> userIdHolder[0] = user.userId)
-        );
-
-        // When: updating display name and avatar URL
-        asserter.execute(() ->
-            userService.updateProfile(userIdHolder[0], "Updated Name", "https://new-avatar.jpg")
-        );
-
-        // Then: both fields are updated
-        asserter.assertThat(() ->
-            userService.getUserById(userIdHolder[0])
-        , user -> {
-            assertThat(user.displayName).isEqualTo("Updated Name");
-            assertThat(user.avatarUrl).isEqualTo("https://new-avatar.jpg");
-        });
+        verify(userRepository, never()).persist(any(User.class));
     }
 
     @Test
-    @RunOnVertxContext
-    void testUpdateProfile_ValidatesDisplayName(UniAsserter asserter) {
-        // Given: an existing user
-        UUID[] userIdHolder = new UUID[1];
-        asserter.execute(() ->
-            userService.createUser("google", "google-999", "validate@example.com", "Original", null)
-                .onItem().invoke(user -> userIdHolder[0] = user.userId)
-        );
+    void testCreateUser_NullOAuthSubject_ThrowsException() {
+        // When/Then
+        assertThatThrownBy(() ->
+                userService.createUser("google", null, "test@example.com", "Name", null)
+                        .await().indefinitely()
+        )
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("OAuth subject cannot be null or empty");
 
-        // When/Then: updating with invalid display name returns failed Uni
+        verify(userRepository, never()).persist(any(User.class));
+    }
+
+    @Test
+    void testCreateUser_EmptyOAuthSubject_ThrowsException() {
+        // When/Then
+        assertThatThrownBy(() ->
+                userService.createUser("google", "   ", "test@example.com", "Name", null)
+                        .await().indefinitely()
+        )
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("OAuth subject cannot be null or empty");
+
+        verify(userRepository, never()).persist(any(User.class));
+    }
+
+    @Test
+    void testCreateUser_InvalidEmailFormat_ThrowsException() {
+        // When/Then - null email
+        assertThatThrownBy(() ->
+                userService.createUser("google", "subject", null, "Name", null)
+                        .await().indefinitely()
+        )
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Invalid email format");
+
+        // When/Then - empty email
+        assertThatThrownBy(() ->
+                userService.createUser("google", "subject", "   ", "Name", null)
+                        .await().indefinitely()
+        )
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Invalid email format");
+
+        // When/Then - invalid format
+        assertThatThrownBy(() ->
+                userService.createUser("google", "subject", "not-an-email", "Name", null)
+                        .await().indefinitely()
+        )
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Invalid email format");
+
+        // When/Then - missing domain
+        assertThatThrownBy(() ->
+                userService.createUser("google", "subject", "user@", "Name", null)
+                        .await().indefinitely()
+        )
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Invalid email format");
+
+        verify(userRepository, never()).persist(any(User.class));
+    }
+
+    @Test
+    void testCreateUser_NullDisplayName_ThrowsException() {
+        // When/Then
+        assertThatThrownBy(() ->
+                userService.createUser("google", "subject", "test@example.com", null, null)
+                        .await().indefinitely()
+        )
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Display name must be between 1 and 100 characters");
+
+        verify(userRepository, never()).persist(any(User.class));
+    }
+
+    @Test
+    void testCreateUser_EmptyDisplayName_ThrowsException() {
+        // When/Then
+        assertThatThrownBy(() ->
+                userService.createUser("google", "subject", "test@example.com", "   ", null)
+                        .await().indefinitely()
+        )
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Display name must be between 1 and 100 characters");
+
+        verify(userRepository, never()).persist(any(User.class));
+    }
+
+    @Test
+    void testCreateUser_DisplayNameTooLong_ThrowsException() {
+        // Given
         String longName = "a".repeat(101);
-        asserter.assertFailedWith(() ->
-            userService.updateProfile(userIdHolder[0], longName, null)
-        , thrown -> {
-            assertThat(thrown).isInstanceOf(IllegalArgumentException.class);
-            assertThat(thrown.getMessage()).contains("Display name must be between 1 and 100 characters");
-        });
 
-        // When/Then: updating with empty display name returns failed Uni
-        asserter.assertFailedWith(() ->
-            userService.updateProfile(userIdHolder[0], "   ", null)
-        , thrown -> {
-            assertThat(thrown).isInstanceOf(IllegalArgumentException.class);
-            assertThat(thrown.getMessage()).contains("Display name must be between 1 and 100 characters");
-        });
+        // When/Then
+        assertThatThrownBy(() ->
+                userService.createUser("google", "subject", "test@example.com", longName, null)
+                        .await().indefinitely()
+        )
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Display name must be between 1 and 100 characters");
+
+        verify(userRepository, never()).persist(any(User.class));
     }
 
     @Test
-    @RunOnVertxContext
-    void testUpdateProfile_ThrowsExceptionForNonExistentUser(UniAsserter asserter) {
-        // Given: a non-existent user ID
-        UUID nonExistentId = UUID.randomUUID();
+    void testCreateUser_CreatesDefaultPreferences() throws JsonProcessingException {
+        // Given
+        String configJson = "{}";
+        User expectedUser = createTestUser("test@example.com", "Test User");
+        UserPreference expectedPref = new UserPreference();
 
-        // When/Then: updating non-existent user throws UserNotFoundException
-        asserter.assertFailedWith(() ->
-            userService.updateProfile(nonExistentId, "New Name", null)
-        , thrown -> {
-            assertThat(thrown).isInstanceOf(UserNotFoundException.class);
-            assertThat(thrown.getMessage()).contains(nonExistentId.toString());
-        });
-    }
-
-    // ===== Find User Tests =====
-
-    @Test
-    @RunOnVertxContext
-    void testGetUserById_ReturnsUser(UniAsserter asserter) {
-        // Given: an existing user
-        UUID[] userIdHolder = new UUID[1];
-        asserter.execute(() ->
-            userService.createUser("google", "google-find", "find@example.com", "Find Me", null)
-                .onItem().invoke(user -> userIdHolder[0] = user.userId)
-        );
-
-        // When: finding the user by ID
-        asserter.assertThat(() ->
-            userService.getUserById(userIdHolder[0])
-        , found -> {
-            // Then: user is found
-            assertThat(found).isNotNull();
-            assertThat(found.userId).isEqualTo(userIdHolder[0]);
-            assertThat(found.email).isEqualTo("find@example.com");
-            assertThat(found.displayName).isEqualTo("Find Me");
-            assertThat(found.deletedAt).isNull();
-        });
-    }
-
-    @Test
-    @RunOnVertxContext
-    void testGetUserById_ThrowsExceptionForDeletedUser(UniAsserter asserter) {
-        // Given: a deleted user
-        UUID[] userIdHolder = new UUID[1];
-        asserter.execute(() ->
-            userService.createUser("google", "google-deleted", "deleted@example.com", "Deleted User", null)
-                .onItem().invoke(user -> userIdHolder[0] = user.userId)
-        );
-
-        asserter.execute(() ->
-            userService.deleteUser(userIdHolder[0])
-        );
-
-        // When/Then: getting deleted user throws UserNotFoundException
-        asserter.assertFailedWith(() ->
-            userService.getUserById(userIdHolder[0])
-        , thrown -> {
-            assertThat(thrown).isInstanceOf(UserNotFoundException.class);
-            assertThat(thrown.getMessage()).contains(userIdHolder[0].toString());
-        });
-    }
-
-    @Test
-    @RunOnVertxContext
-    void testGetUserById_ThrowsExceptionForNonExistentUser(UniAsserter asserter) {
-        // Given: a non-existent user ID
-        UUID nonExistentId = UUID.randomUUID();
-
-        // When/Then: finding non-existent user throws UserNotFoundException
-        asserter.assertFailedWith(() ->
-            userService.getUserById(nonExistentId)
-        , thrown -> {
-            assertThat(thrown).isInstanceOf(UserNotFoundException.class);
-            assertThat(thrown.getMessage()).contains(nonExistentId.toString());
-        });
-    }
-
-    @Test
-    @RunOnVertxContext
-    void testFindByEmail_ReturnsActiveUser(UniAsserter asserter) {
-        // Given: an existing active user
-        asserter.execute(() ->
-            userService.createUser("google", "google-email", "findme@example.com", "Email User", null)
-        );
-
-        // When: finding user by email
-        asserter.assertThat(() ->
-            userService.findByEmail("findme@example.com")
-        , found -> {
-            // Then: user is found
-            assertThat(found).isNotNull();
-            assertThat(found.email).isEqualTo("findme@example.com");
-            assertThat(found.displayName).isEqualTo("Email User");
-            assertThat(found.deletedAt).isNull();
-        });
-    }
-
-    @Test
-    @RunOnVertxContext
-    void testFindByEmail_ReturnsNullForDeletedUser(UniAsserter asserter) {
-        // Given: a deleted user
-        UUID[] userIdHolder = new UUID[1];
-        asserter.execute(() ->
-            userService.createUser("google", "google-email-del", "deleted-email@example.com", "Deleted Email User", null)
-                .onItem().invoke(user -> userIdHolder[0] = user.userId)
-        );
-
-        asserter.execute(() ->
-            userService.deleteUser(userIdHolder[0])
-        );
-
-        // When: finding deleted user by email
-        asserter.assertThat(() ->
-            userService.findByEmail("deleted-email@example.com")
-        , found -> {
-            // Then: null is returned (deleted users are not found)
-            assertThat(found).isNull();
-        });
-    }
-
-    // ===== Preference Update Tests =====
-
-    @Test
-    @RunOnVertxContext
-    void testUpdatePreferences_UpdatesJSONBFields(UniAsserter asserter) {
-        // Given: an existing user with preferences
-        UUID[] userIdHolder = new UUID[1];
-        asserter.execute(() ->
-            userService.createUser("google", "google-prefs", "prefs@example.com", "Prefs User", null)
-                .onItem().invoke(user -> userIdHolder[0] = user.userId)
-        );
-
-        // When: updating preferences
-        UserPreferenceConfig config = new UserPreferenceConfig();
-        config.deckType = "T_SHIRT";
-        config.timerEnabled = true;
-        config.emailNotifications = false;
-
-        asserter.execute(() ->
-            userService.updatePreferences(userIdHolder[0], config)
-        );
-
-        // Then: JSONB fields are updated correctly
-        asserter.assertThat(() -> Panache.withSession(() ->
-            userPreferenceRepository.findById(userIdHolder[0])
-        ), pref -> {
-            assertThat(pref).isNotNull();
-            assertThat(pref.defaultDeckType).isEqualTo("T_SHIRT");
-
-            // Verify JSONB fields contain the updated values
+        when(objectMapper.writeValueAsString(any())).thenReturn(configJson);
+        when(userRepository.persist(any(User.class))).thenReturn(Uni.createFrom().item(expectedUser));
+        when(userPreferenceRepository.persist(any(UserPreference.class))).thenAnswer(invocation -> {
+            UserPreference pref = invocation.getArgument(0);
+            assertThat(pref.defaultDeckType).isEqualTo("fibonacci");
             assertThat(pref.defaultRoomConfig).isNotNull();
-            assertThat(pref.defaultRoomConfig).contains("T_SHIRT");
-            assertThat(pref.defaultRoomConfig).contains("timerEnabled"); // Jackson uses camelCase
-
             assertThat(pref.notificationSettings).isNotNull();
-            assertThat(pref.notificationSettings).contains("emailNotifications");
+            return Uni.createFrom().item(expectedPref);
         });
+
+        // When
+        User result = userService.createUser("google", "subject", "test@example.com", "Test", null)
+                .await().indefinitely();
+
+        // Then
+        assertThat(result).isNotNull();
+        verify(userPreferenceRepository).persist(any(UserPreference.class));
     }
 
     @Test
-    @RunOnVertxContext
-    void testUpdatePreferences_ThrowsExceptionForNullConfig(UniAsserter asserter) {
-        // Given: an existing user
-        UUID[] userIdHolder = new UUID[1];
-        asserter.execute(() ->
-            userService.createUser("google", "google-null-config", "null-config@example.com", "Config User", null)
-                .onItem().invoke(user -> userIdHolder[0] = user.userId)
-        );
+    void testCreateUser_PreferenceSerializationFailure_UsesEmptyJson() throws JsonProcessingException {
+        // Given
+        User expectedUser = createTestUser("test@example.com", "Test User");
+        UserPreference expectedPref = new UserPreference();
 
-        // When/Then: updating with null config throws exception
-        asserter.assertFailedWith(() ->
-            userService.updatePreferences(userIdHolder[0], null)
-        , thrown -> {
-            assertThat(thrown).isInstanceOf(IllegalArgumentException.class);
-            assertThat(thrown.getMessage()).contains("Configuration cannot be null");
+        when(objectMapper.writeValueAsString(any())).thenThrow(new RuntimeException("Serialization error"));
+        when(userRepository.persist(any(User.class))).thenReturn(Uni.createFrom().item(expectedUser));
+        when(userPreferenceRepository.persist(any(UserPreference.class))).thenAnswer(invocation -> {
+            UserPreference pref = invocation.getArgument(0);
+            // Should fallback to "{}"
+            assertThat(pref.defaultRoomConfig).isEqualTo("{}");
+            assertThat(pref.notificationSettings).isEqualTo("{}");
+            return Uni.createFrom().item(expectedPref);
         });
+
+        // When
+        User result = userService.createUser("google", "subject", "test@example.com", "Test", null)
+                .await().indefinitely();
+
+        // Then
+        assertThat(result).isNotNull();
+        verify(userPreferenceRepository).persist(any(UserPreference.class));
     }
 
-    // ===== Soft Delete Tests =====
+    // ===== Update Profile Tests =====
 
     @Test
-    @RunOnVertxContext
-    void testDeleteUser_SoftDeletesUser(UniAsserter asserter) {
-        // Given: an existing user
-        UUID[] userIdHolder = new UUID[1];
-        asserter.execute(() ->
-            userService.createUser("google", "google-soft-del", "soft-delete@example.com", "Delete Me", null)
-                .onItem().invoke(user -> userIdHolder[0] = user.userId)
-        );
+    void testUpdateProfile_ValidInput_UpdatesProfile() {
+        // Given
+        UUID userId = UUID.randomUUID();
+        User existingUser = createTestUser("old@example.com", "Old Name");
+        existingUser.userId = userId;
 
-        // When: deleting the user
-        asserter.execute(() ->
-            userService.deleteUser(userIdHolder[0])
-        );
-
-        // Then: user has deletedAt timestamp set
-        asserter.assertThat(() -> Panache.withSession(() ->
-            userRepository.findById(userIdHolder[0])
-        ), deleted -> {
-            assertThat(deleted).isNotNull(); // Still exists in DB
-            assertThat(deleted.deletedAt).isNotNull(); // But has deletedAt set
-            assertThat(deleted.email).isEqualTo("soft-delete@example.com"); // Data preserved
-        });
-    }
-
-    @Test
-    @RunOnVertxContext
-    void testDeleteUser_ExcludesFromQueries(UniAsserter asserter) {
-        // Given: a user
-        UUID[] userIdHolder = new UUID[1];
-        asserter.execute(() ->
-            userService.createUser("google", "google-exclude", "exclude@example.com", "Exclude Me", null)
-                .onItem().invoke(user -> userIdHolder[0] = user.userId)
-        );
-
-        // When: deleting the user
-        asserter.execute(() ->
-            userService.deleteUser(userIdHolder[0])
-        );
-
-        // Then: user is not returned by getUserById service method
-        asserter.assertFailedWith(() ->
-            userService.getUserById(userIdHolder[0])
-        , thrown -> {
-            assertThat(thrown).isInstanceOf(UserNotFoundException.class);
-            assertThat(thrown.getMessage()).contains(userIdHolder[0].toString());
+        when(userRepository.findById(userId)).thenReturn(Uni.createFrom().item(existingUser));
+        when(userRepository.persist(any(User.class))).thenAnswer(invocation -> {
+            User user = invocation.getArgument(0);
+            return Uni.createFrom().item(user);
         });
 
-        // And: user is not returned by findByEmail service method
-        asserter.assertThat(() ->
-            userService.findByEmail("exclude@example.com")
-        , found -> {
-            assertThat(found).isNull();
-        });
+        // When
+        User result = userService.updateProfile(userId, "New Name", "https://new-avatar.jpg")
+                .await().indefinitely();
+
+        // Then
+        assertThat(result.displayName).isEqualTo("New Name");
+        assertThat(result.avatarUrl).isEqualTo("https://new-avatar.jpg");
+        verify(userRepository).findById(userId);
+        verify(userRepository).persist(any(User.class));
     }
 
     @Test
-    @RunOnVertxContext
-    void testDeleteUser_ThrowsExceptionForAlreadyDeleted(UniAsserter asserter) {
-        // Given: a deleted user
-        UUID[] userIdHolder = new UUID[1];
-        asserter.execute(() ->
-            userService.createUser("google", "google-double-del", "double-delete@example.com", "Delete Twice", null)
-                .onItem().invoke(user -> userIdHolder[0] = user.userId)
-        );
+    void testUpdateProfile_OnlyDisplayName_UpdatesDisplayName() {
+        // Given
+        UUID userId = UUID.randomUUID();
+        User existingUser = createTestUser("test@example.com", "Old Name");
+        existingUser.userId = userId;
+        existingUser.avatarUrl = "https://old-avatar.jpg";
 
-        asserter.execute(() ->
-            userService.deleteUser(userIdHolder[0])
-        );
-
-        // When/Then: attempting to delete again throws exception
-        asserter.assertFailedWith(() ->
-            userService.deleteUser(userIdHolder[0])
-        , thrown -> {
-            assertThat(thrown).isInstanceOf(UserNotFoundException.class);
-            assertThat(thrown.getMessage()).contains(userIdHolder[0].toString());
+        when(userRepository.findById(userId)).thenReturn(Uni.createFrom().item(existingUser));
+        when(userRepository.persist(any(User.class))).thenAnswer(invocation -> {
+            User user = invocation.getArgument(0);
+            return Uni.createFrom().item(user);
         });
+
+        // When
+        User result = userService.updateProfile(userId, "New Name", null)
+                .await().indefinitely();
+
+        // Then
+        assertThat(result.displayName).isEqualTo("New Name");
+        assertThat(result.avatarUrl).isEqualTo("https://old-avatar.jpg"); // Unchanged
+        verify(userRepository).persist(any(User.class));
     }
 
-    // ===== OAuth JIT Provisioning Tests =====
+    @Test
+    void testUpdateProfile_OnlyAvatarUrl_UpdatesAvatar() {
+        // Given
+        UUID userId = UUID.randomUUID();
+        User existingUser = createTestUser("test@example.com", "Test Name");
+        existingUser.userId = userId;
+
+        when(userRepository.findById(userId)).thenReturn(Uni.createFrom().item(existingUser));
+        when(userRepository.persist(any(User.class))).thenAnswer(invocation -> {
+            User user = invocation.getArgument(0);
+            return Uni.createFrom().item(user);
+        });
+
+        // When
+        User result = userService.updateProfile(userId, null, "https://new-avatar.jpg")
+                .await().indefinitely();
+
+        // Then
+        assertThat(result.displayName).isEqualTo("Test Name"); // Unchanged
+        assertThat(result.avatarUrl).isEqualTo("https://new-avatar.jpg");
+        verify(userRepository).persist(any(User.class));
+    }
 
     @Test
-    @RunOnVertxContext
-    void testFindOrCreateUser_CreatesNewUser(UniAsserter asserter) {
-        // Given: OAuth profile for a new user
+    void testUpdateProfile_InvalidDisplayName_ThrowsException() {
+        // Given
+        UUID userId = UUID.randomUUID();
+        User existingUser = createTestUser("test@example.com", "Test Name");
+        existingUser.userId = userId;
+
+        when(userRepository.findById(userId)).thenReturn(Uni.createFrom().item(existingUser));
+
+        // When/Then - empty display name
+        assertThatThrownBy(() ->
+                userService.updateProfile(userId, "   ", null)
+                        .await().indefinitely()
+        )
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Display name must be between 1 and 100 characters");
+
+        // When/Then - too long display name
+        String longName = "a".repeat(101);
+        assertThatThrownBy(() ->
+                userService.updateProfile(userId, longName, null)
+                        .await().indefinitely()
+        )
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Display name must be between 1 and 100 characters");
+
+        verify(userRepository, never()).persist(any(User.class));
+    }
+
+    @Test
+    void testUpdateProfile_UserNotFound_ThrowsException() {
+        // Given
+        UUID userId = UUID.randomUUID();
+        when(userRepository.findById(userId)).thenReturn(Uni.createFrom().nullItem());
+
+        // When/Then
+        assertThatThrownBy(() ->
+                userService.updateProfile(userId, "New Name", null)
+                        .await().indefinitely()
+        )
+                .isInstanceOf(UserNotFoundException.class)
+                .hasMessageContaining(userId.toString());
+
+        verify(userRepository).findById(userId);
+        verify(userRepository, never()).persist(any(User.class));
+    }
+
+    @Test
+    void testUpdateProfile_DeletedUser_ThrowsException() {
+        // Given
+        UUID userId = UUID.randomUUID();
+        User deletedUser = createTestUser("test@example.com", "Test Name");
+        deletedUser.userId = userId;
+        deletedUser.deletedAt = Instant.now();
+
+        when(userRepository.findById(userId)).thenReturn(Uni.createFrom().item(deletedUser));
+
+        // When/Then
+        assertThatThrownBy(() ->
+                userService.updateProfile(userId, "New Name", null)
+                        .await().indefinitely()
+        )
+                .isInstanceOf(UserNotFoundException.class);
+
+        verify(userRepository).findById(userId);
+        verify(userRepository, never()).persist(any(User.class));
+    }
+
+    // ===== Get User By ID Tests =====
+
+    @Test
+    void testGetUserById_ExistingUser_ReturnsUser() {
+        // Given
+        UUID userId = UUID.randomUUID();
+        User existingUser = createTestUser("test@example.com", "Test Name");
+        existingUser.userId = userId;
+
+        when(userRepository.findById(userId)).thenReturn(Uni.createFrom().item(existingUser));
+
+        // When
+        User result = userService.getUserById(userId)
+                .await().indefinitely();
+
+        // Then
+        assertThat(result).isNotNull();
+        assertThat(result.userId).isEqualTo(userId);
+        assertThat(result.email).isEqualTo("test@example.com");
+        verify(userRepository).findById(userId);
+    }
+
+    @Test
+    void testGetUserById_NonExistentUser_ThrowsException() {
+        // Given
+        UUID userId = UUID.randomUUID();
+        when(userRepository.findById(userId)).thenReturn(Uni.createFrom().nullItem());
+
+        // When/Then
+        assertThatThrownBy(() ->
+                userService.getUserById(userId)
+                        .await().indefinitely()
+        )
+                .isInstanceOf(UserNotFoundException.class)
+                .hasMessageContaining(userId.toString());
+
+        verify(userRepository).findById(userId);
+    }
+
+    @Test
+    void testGetUserById_DeletedUser_ThrowsException() {
+        // Given
+        UUID userId = UUID.randomUUID();
+        User deletedUser = createTestUser("test@example.com", "Test Name");
+        deletedUser.userId = userId;
+        deletedUser.deletedAt = Instant.now();
+
+        when(userRepository.findById(userId)).thenReturn(Uni.createFrom().item(deletedUser));
+
+        // When/Then
+        assertThatThrownBy(() ->
+                userService.getUserById(userId)
+                        .await().indefinitely()
+        )
+                .isInstanceOf(UserNotFoundException.class)
+                .hasMessageContaining(userId.toString());
+
+        verify(userRepository).findById(userId);
+    }
+
+    // ===== Find By Email Tests =====
+
+    @Test
+    void testFindByEmail_ExistingUser_ReturnsUser() {
+        // Given
+        String email = "test@example.com";
+        User existingUser = createTestUser(email, "Test Name");
+
+        when(userRepository.findActiveByEmail(email)).thenReturn(Uni.createFrom().item(existingUser));
+
+        // When
+        User result = userService.findByEmail(email)
+                .await().indefinitely();
+
+        // Then
+        assertThat(result).isNotNull();
+        assertThat(result.email).isEqualTo(email);
+        verify(userRepository).findActiveByEmail(email);
+    }
+
+    @Test
+    void testFindByEmail_NonExistentUser_ReturnsNull() {
+        // Given
+        String email = "nonexistent@example.com";
+        when(userRepository.findActiveByEmail(email)).thenReturn(Uni.createFrom().nullItem());
+
+        // When
+        User result = userService.findByEmail(email)
+                .await().indefinitely();
+
+        // Then
+        assertThat(result).isNull();
+        verify(userRepository).findActiveByEmail(email);
+    }
+
+    @Test
+    void testFindByEmail_NullEmail_ReturnsNull() {
+        // When
+        User result = userService.findByEmail(null)
+                .await().indefinitely();
+
+        // Then
+        assertThat(result).isNull();
+        verify(userRepository, never()).findActiveByEmail(anyString());
+    }
+
+    @Test
+    void testFindByEmail_EmptyEmail_ReturnsNull() {
+        // When
+        User result = userService.findByEmail("   ")
+                .await().indefinitely();
+
+        // Then
+        assertThat(result).isNull();
+        verify(userRepository, never()).findActiveByEmail(anyString());
+    }
+
+    // ===== Find Or Create User Tests =====
+
+    @Test
+    void testFindOrCreateUser_NewUser_CreatesUser() throws JsonProcessingException {
+        // Given
         String provider = "google";
-        String subject = "google-new-jit";
-        String email = "jit-new@example.com";
-        String displayName = "JIT User";
-        String avatarUrl = "https://avatar.com/jit.jpg";
+        String subject = "google-new";
+        String email = "new@example.com";
+        String displayName = "New User";
+        String avatarUrl = "https://avatar.com/new.jpg";
+        String configJson = "{}";
 
-        // When: calling findOrCreateUser
-        asserter.assertThat(() ->
-            userService.findOrCreateUser(provider, subject, email, displayName, avatarUrl)
-        , user -> {
-            // Then: new user is created
-            assertThat(user).isNotNull();
-            assertThat(user.userId).isNotNull();
-            assertThat(user.oauthProvider).isEqualTo("google");
-            assertThat(user.oauthSubject).isEqualTo("google-new-jit");
-            assertThat(user.email).isEqualTo("jit-new@example.com");
-            assertThat(user.displayName).isEqualTo("JIT User");
-            assertThat(user.avatarUrl).isEqualTo(avatarUrl);
-        });
+        User newUser = createTestUser(email, displayName);
+        UserPreference newPref = new UserPreference();
 
-        // And: verify user was persisted
-        asserter.assertThat(() -> Panache.withSession(() ->
-            userRepository.findByOAuthProviderAndSubject(provider, subject)
-        ), found -> {
-            assertThat(found).isNotNull();
-            assertThat(found.email).isEqualTo("jit-new@example.com");
-        });
+        when(userRepository.findByOAuthProviderAndSubject(provider, subject))
+                .thenReturn(Uni.createFrom().nullItem());
+        when(objectMapper.writeValueAsString(any())).thenReturn(configJson);
+        when(userRepository.persist(any(User.class))).thenReturn(Uni.createFrom().item(newUser));
+        when(userPreferenceRepository.persist(any(UserPreference.class))).thenReturn(Uni.createFrom().item(newPref));
+
+        // When
+        User result = userService.findOrCreateUser(provider, subject, email, displayName, avatarUrl)
+                .await().indefinitely();
+
+        // Then
+        assertThat(result).isNotNull();
+        assertThat(result.email).isEqualTo(email);
+        assertThat(result.displayName).isEqualTo(displayName);
+        verify(userRepository).findByOAuthProviderAndSubject(provider, subject);
+        verify(userRepository).persist(any(User.class));
+        verify(userPreferenceRepository).persist(any(UserPreference.class));
     }
 
     @Test
-    @RunOnVertxContext
-    void testFindOrCreateUser_ReturnsExistingUser(UniAsserter asserter) {
-        // Given: an existing user
+    void testFindOrCreateUser_ExistingUser_ReturnsExistingUser() {
+        // Given
         String provider = "microsoft";
-        String subject = "microsoft-existing";
-        UUID[] userIdHolder = new UUID[1];
+        String subject = "microsoft-123";
+        User existingUser = createTestUser("existing@example.com", "Existing User");
+        existingUser.oauthProvider = provider;
+        existingUser.oauthSubject = subject;
 
-        asserter.execute(() ->
-            userService.createUser(provider, subject, "existing@example.com", "Existing User", "https://old.jpg")
-                .onItem().invoke(user -> userIdHolder[0] = user.userId)
-        );
+        when(userRepository.findByOAuthProviderAndSubject(provider, subject))
+                .thenReturn(Uni.createFrom().item(existingUser));
 
-        // When: calling findOrCreateUser with same OAuth credentials
-        asserter.assertThat(() ->
-            userService.findOrCreateUser(provider, subject, "existing@example.com", "Existing User", "https://old.jpg")
-        , user -> {
-            // Then: existing user is returned (same ID)
-            assertThat(user).isNotNull();
-            assertThat(user.userId).isEqualTo(userIdHolder[0]);
-            assertThat(user.oauthProvider).isEqualTo("microsoft");
-            assertThat(user.oauthSubject).isEqualTo("microsoft-existing");
-        });
+        // When
+        User result = userService.findOrCreateUser(provider, subject, "existing@example.com", "Existing User", null)
+                .await().indefinitely();
 
-        // And: verify no duplicate was created
-        asserter.assertThat(() -> Panache.withSession(() ->
-            userRepository.findAll().list()
-        ), users -> {
-            assertThat(users).hasSize(1);
-        });
+        // Then
+        assertThat(result).isNotNull();
+        assertThat(result.email).isEqualTo("existing@example.com");
+        assertThat(result.displayName).isEqualTo("Existing User");
+        verify(userRepository).findByOAuthProviderAndSubject(provider, subject);
+        verify(userRepository, never()).persist(any(User.class));
     }
 
     @Test
-    @RunOnVertxContext
-    void testFindOrCreateUser_UpdatesUserProfile(UniAsserter asserter) {
-        // Given: an existing user with old profile data
+    void testFindOrCreateUser_ExistingUserWithUpdatedProfile_UpdatesFields() {
+        // Given
         String provider = "google";
-        String subject = "google-update-jit";
+        String subject = "google-update";
+        User existingUser = createTestUser("old@example.com", "Old Name");
+        existingUser.oauthProvider = provider;
+        existingUser.oauthSubject = subject;
+        existingUser.avatarUrl = "https://old-avatar.jpg";
 
-        asserter.execute(() ->
-            userService.createUser(provider, subject, "old-email@example.com", "Old Name", "https://old-avatar.jpg")
-        );
+        when(userRepository.findByOAuthProviderAndSubject(provider, subject))
+                .thenReturn(Uni.createFrom().item(existingUser));
 
-        // When: calling findOrCreateUser with updated profile
-        asserter.assertThat(() ->
-            userService.findOrCreateUser(provider, subject, "new-email@example.com", "New Name", "https://new-avatar.jpg")
-        , user -> {
-            // Then: user profile is updated
-            assertThat(user).isNotNull();
-            assertThat(user.email).isEqualTo("new-email@example.com");
-            assertThat(user.displayName).isEqualTo("New Name");
-            assertThat(user.avatarUrl).isEqualTo("https://new-avatar.jpg");
+        // When
+        User result = userService.findOrCreateUser(provider, subject, "new@example.com", "New Name", "https://new-avatar.jpg")
+                .await().indefinitely();
+
+        // Then
+        assertThat(result.email).isEqualTo("new@example.com");
+        assertThat(result.displayName).isEqualTo("New Name");
+        assertThat(result.avatarUrl).isEqualTo("https://new-avatar.jpg");
+        verify(userRepository).findByOAuthProviderAndSubject(provider, subject);
+    }
+
+    @Test
+    void testFindOrCreateUser_ExistingUserWithSameProfile_NoChanges() {
+        // Given
+        String provider = "google";
+        String subject = "google-same";
+        String email = "same@example.com";
+        String displayName = "Same Name";
+        String avatarUrl = "https://same-avatar.jpg";
+
+        User existingUser = createTestUser(email, displayName);
+        existingUser.oauthProvider = provider;
+        existingUser.oauthSubject = subject;
+        existingUser.avatarUrl = avatarUrl;
+
+        when(userRepository.findByOAuthProviderAndSubject(provider, subject))
+                .thenReturn(Uni.createFrom().item(existingUser));
+
+        // When
+        User result = userService.findOrCreateUser(provider, subject, email, displayName, avatarUrl)
+                .await().indefinitely();
+
+        // Then
+        assertThat(result.email).isEqualTo(email);
+        assertThat(result.displayName).isEqualTo(displayName);
+        assertThat(result.avatarUrl).isEqualTo(avatarUrl);
+        verify(userRepository).findByOAuthProviderAndSubject(provider, subject);
+    }
+
+    // ===== Get Preferences Tests =====
+
+    @Test
+    void testGetPreferences_ExistingPreferences_ReturnsPreferences() {
+        // Given
+        UUID userId = UUID.randomUUID();
+        User existingUser = createTestUser("test@example.com", "Test Name");
+        existingUser.userId = userId;
+
+        UserPreference existingPref = new UserPreference();
+        existingPref.userId = userId;
+        existingPref.defaultDeckType = "T_SHIRT";
+
+        when(userRepository.findById(userId)).thenReturn(Uni.createFrom().item(existingUser));
+        when(userPreferenceRepository.findById(userId)).thenReturn(Uni.createFrom().item(existingPref));
+
+        // When
+        UserPreference result = userService.getPreferences(userId)
+                .await().indefinitely();
+
+        // Then
+        assertThat(result).isNotNull();
+        assertThat(result.userId).isEqualTo(userId);
+        assertThat(result.defaultDeckType).isEqualTo("T_SHIRT");
+        verify(userRepository).findById(userId);
+        verify(userPreferenceRepository).findById(userId);
+    }
+
+    @Test
+    void testGetPreferences_UserNotFound_ThrowsException() {
+        // Given
+        UUID userId = UUID.randomUUID();
+        when(userRepository.findById(userId)).thenReturn(Uni.createFrom().nullItem());
+
+        // When/Then
+        assertThatThrownBy(() ->
+                userService.getPreferences(userId)
+                        .await().indefinitely()
+        )
+                .isInstanceOf(UserNotFoundException.class);
+
+        verify(userRepository).findById(userId);
+        verify(userPreferenceRepository, never()).findById(any());
+    }
+
+    @Test
+    void testGetPreferences_PreferencesNotFound_ThrowsException() {
+        // Given
+        UUID userId = UUID.randomUUID();
+        User existingUser = createTestUser("test@example.com", "Test Name");
+        existingUser.userId = userId;
+
+        when(userRepository.findById(userId)).thenReturn(Uni.createFrom().item(existingUser));
+        when(userPreferenceRepository.findById(userId)).thenReturn(Uni.createFrom().nullItem());
+
+        // When/Then
+        assertThatThrownBy(() ->
+                userService.getPreferences(userId)
+                        .await().indefinitely()
+        )
+                .isInstanceOf(UserNotFoundException.class);
+
+        verify(userPreferenceRepository).findById(userId);
+    }
+
+    // ===== Update Preferences Tests =====
+
+    @Test
+    void testUpdatePreferences_ValidInput_UpdatesPreferences() throws JsonProcessingException {
+        // Given
+        UUID userId = UUID.randomUUID();
+        User existingUser = createTestUser("test@example.com", "Test Name");
+        existingUser.userId = userId;
+
+        UserPreference existingPref = new UserPreference();
+        existingPref.userId = userId;
+        existingPref.defaultDeckType = "FIBONACCI";
+
+        String configJson = "{\"deckType\":\"T_SHIRT\"}";
+
+        when(userRepository.findById(userId)).thenReturn(Uni.createFrom().item(existingUser));
+        when(userPreferenceRepository.findById(userId)).thenReturn(Uni.createFrom().item(existingPref));
+        when(objectMapper.writeValueAsString(any())).thenReturn(configJson);
+        when(userPreferenceRepository.persist(any(UserPreference.class))).thenAnswer(invocation -> {
+            UserPreference pref = invocation.getArgument(0);
+            return Uni.createFrom().item(pref);
         });
+
+        // When
+        UserPreference result = userService.updatePreferences(userId, testConfig)
+                .await().indefinitely();
+
+        // Then
+        assertThat(result).isNotNull();
+        assertThat(result.defaultDeckType).isEqualTo("FIBONACCI");
+        assertThat(result.defaultRoomConfig).isEqualTo(configJson);
+        verify(userRepository).findById(userId);
+        verify(userPreferenceRepository).findById(userId);
+        verify(objectMapper, times(2)).writeValueAsString(testConfig);
+        verify(userPreferenceRepository).persist(any(UserPreference.class));
+    }
+
+    @Test
+    void testUpdatePreferences_NullConfig_ThrowsException() {
+        // When/Then
+        assertThatThrownBy(() ->
+                userService.updatePreferences(UUID.randomUUID(), null)
+                        .await().indefinitely()
+        )
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Configuration cannot be null");
+
+        verify(userRepository, never()).findById(any());
+    }
+
+    @Test
+    void testUpdatePreferences_UserNotFound_ThrowsException() {
+        // Given
+        UUID userId = UUID.randomUUID();
+        when(userRepository.findById(userId)).thenReturn(Uni.createFrom().nullItem());
+
+        // When/Then
+        assertThatThrownBy(() ->
+                userService.updatePreferences(userId, testConfig)
+                        .await().indefinitely()
+        )
+                .isInstanceOf(UserNotFoundException.class);
+
+        verify(userRepository).findById(userId);
+        verify(userPreferenceRepository, never()).findById(any());
+    }
+
+    @Test
+    void testUpdatePreferences_SerializationFailure_ThrowsException() throws JsonProcessingException {
+        // Given
+        UUID userId = UUID.randomUUID();
+        User existingUser = createTestUser("test@example.com", "Test Name");
+        existingUser.userId = userId;
+
+        UserPreference existingPref = new UserPreference();
+        existingPref.userId = userId;
+
+        when(userRepository.findById(userId)).thenReturn(Uni.createFrom().item(existingUser));
+        when(userPreferenceRepository.findById(userId)).thenReturn(Uni.createFrom().item(existingPref));
+        when(objectMapper.writeValueAsString(any())).thenThrow(new JsonProcessingException("Serialization error") {});
+
+        // When/Then
+        assertThatThrownBy(() ->
+                userService.updatePreferences(userId, testConfig)
+                        .await().indefinitely()
+        )
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Failed to serialize preferences");
+
+        verify(userPreferenceRepository, never()).persist(any(UserPreference.class));
+    }
+
+    // ===== Delete User Tests =====
+
+    @Test
+    void testDeleteUser_ValidUser_SoftDeletes() {
+        // Given
+        UUID userId = UUID.randomUUID();
+        User existingUser = createTestUser("test@example.com", "Test Name");
+        existingUser.userId = userId;
+
+        when(userRepository.findById(userId)).thenReturn(Uni.createFrom().item(existingUser));
+        when(userRepository.persist(any(User.class))).thenAnswer(invocation -> {
+            User user = invocation.getArgument(0);
+            return Uni.createFrom().item(user);
+        });
+
+        // When
+        User result = userService.deleteUser(userId)
+                .await().indefinitely();
+
+        // Then
+        assertThat(result.deletedAt).isNotNull();
+        verify(userRepository).findById(userId);
+        verify(userRepository).persist(any(User.class));
+    }
+
+    @Test
+    void testDeleteUser_UserNotFound_ThrowsException() {
+        // Given
+        UUID userId = UUID.randomUUID();
+        when(userRepository.findById(userId)).thenReturn(Uni.createFrom().nullItem());
+
+        // When/Then
+        assertThatThrownBy(() ->
+                userService.deleteUser(userId)
+                        .await().indefinitely()
+        )
+                .isInstanceOf(UserNotFoundException.class);
+
+        verify(userRepository).findById(userId);
+        verify(userRepository, never()).persist(any(User.class));
+    }
+
+    @Test
+    void testDeleteUser_AlreadyDeleted_ThrowsException() {
+        // Given
+        UUID userId = UUID.randomUUID();
+        User deletedUser = createTestUser("test@example.com", "Test Name");
+        deletedUser.userId = userId;
+        deletedUser.deletedAt = Instant.now();
+
+        when(userRepository.findById(userId)).thenReturn(Uni.createFrom().item(deletedUser));
+
+        // When/Then
+        assertThatThrownBy(() ->
+                userService.deleteUser(userId)
+                        .await().indefinitely()
+        )
+                .isInstanceOf(UserNotFoundException.class);
+
+        verify(userRepository).findById(userId);
+        verify(userRepository, never()).persist(any(User.class));
+    }
+
+    // ===== Helper Methods =====
+
+    private User createTestUser(String email, String displayName) {
+        User user = new User();
+        user.userId = UUID.randomUUID();
+        user.email = email;
+        user.displayName = displayName;
+        user.oauthProvider = "google";
+        user.oauthSubject = "google-123";
+        user.subscriptionTier = SubscriptionTier.FREE;
+        user.deletedAt = null;
+        return user;
     }
 }
