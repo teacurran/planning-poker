@@ -21,168 +21,79 @@ Create integration tests for all Panache repositories using Testcontainers (Post
 
 ## Issues Detected
 
-### Critical Issue: @BeforeEach with UniAsserter Pattern
+**CRITICAL: You broke existing working tests!**
 
-All 12 repository test files are failing with the error:
-```
-java.lang.IllegalStateException: No current Vertx context found
-```
-
-**Affected Files:**
-- `UserRepositoryTest.java` (line 30-38)
-- `RoomRepositoryTest.java` (line 41-49)
-- `VoteRepositoryTest.java` (line 46-60)
-- `SessionHistoryRepositoryTest.java` (line 40-48)
-- `SubscriptionRepositoryTest.java` (line 36-44)
-- `PaymentHistoryRepositoryTest.java` (line 33-41)
-- `OrganizationRepositoryTest.java` (line 25-33)
-- `OrgMemberRepositoryTest.java` (line 39-49)
-- `RoomParticipantRepositoryTest.java` (line 39-49)
-- `RoundRepositoryTest.java` (line 38-48)
-- `UserPreferenceRepositoryTest.java` (line 31-39)
-- `AuditLogRepositoryTest.java` (line 40-48)
-
-**Root Cause:**
-The `@BeforeEach` lifecycle methods are annotated with `@RunOnVertxContext` and use `UniAsserter` as a parameter. This pattern is **NOT SUPPORTED** by Quarkus test framework. The `@RunOnVertxContext` and `UniAsserter` are only valid for test methods (`@Test`), not lifecycle methods (`@BeforeEach`, `@AfterEach`).
-
-**Current (Incorrect) Pattern:**
-```java
-@BeforeEach
-@RunOnVertxContext
-void setUp(UniAsserter asserter) {
-    asserter.execute(() -> Panache.withTransaction(() -> repository.deleteAll()));
-    testEntity = createTestEntity();
-}
-```
-
-**Error Message:**
-```
-[ERROR] UserRepositoryTest.setUp:34 » IllegalState No current Vertx context found
-```
-
-**Total Test Results:**
-- Tests run: 94
-- Failures: 0
-- Errors: 83
-- Skipped: 0
-
-83 out of 94 tests are failing due to this single pattern issue across all test files.
+*   **Test Execution Failure:** 66 errors, 94 tests run, only 27 passed
+*   **Pattern Mixing Error:** RoomRepositoryTest and OrganizationRepositoryTest were rewritten to use `@RunOnVertxContext` with `UniAsserter` pattern, causing "No current Vertx context found" errors in ALL repository tests
+*   **Lazy Loading Error:** RoomRepositoryTest lines 115 and 136 throw `LazyInitializationException` when accessing `User.email` and `Organization.name` outside transaction context
+*   **Missing UUID Assignment:** OrganizationRepositoryTest has NullPointerException because `org.orgId` is never set in `createTestOrganization()` helper
+*   **Incorrect Rewrite:** RoomRepositoryTest was ALREADY COMPLETE with 14 passing tests using `@Transactional` pattern (see git history commit 5683da2). You DELETED the working code and replaced it with broken reactive pattern code
 
 ---
 
 ## Best Approach to Fix
 
-### Solution: Remove @BeforeEach Setup and Initialize Data in Each Test
+**STOP and READ the existing working code first!**
 
-For reactive Panache tests with `UniAsserter`, you **MUST NOT** use `@BeforeEach` with `UniAsserter`. Instead, you have two options:
+1. **REVERT your changes to RoomRepositoryTest.java** - This file was working perfectly before your changes. Use `git diff HEAD backend/src/test/java/com/scrumpoker/repository/RoomRepositoryTest.java` to see what you broke, then restore the original version using `git checkout HEAD -- backend/src/test/java/com/scrumpoker/repository/RoomRepositoryTest.java`
 
-**Option 1 (RECOMMENDED): Initialize test data within each test method**
+2. **REVERT your changes to OrganizationRepositoryTest.java** - Same issue. Use `git checkout HEAD -- backend/src/test/java/com/scrumpoker/repository/OrganizationRepositoryTest.java`
 
-Remove the `@BeforeEach` method entirely and initialize test data as the first step in each test method using `asserter.execute()`.
+3. **Use ONLY the @Transactional pattern for ALL repository tests** - The working pattern is shown in VoteRepositoryTest (11 passing tests):
+   ```java
+   @QuarkusTest
+   class XxxRepositoryTest {
+       @BeforeEach
+       @Transactional
+       void setUp() {
+           repository.deleteAll().await().indefinitely();
+           // Create and persist test entities
+       }
 
-**Example Fix for UserRepositoryTest.java:**
+       @Test
+       @Transactional
+       void testSomething() {
+           Entity entity = createEntity();
+           repository.persist(entity).await().indefinitely();
+           Entity found = repository.findById(id).await().indefinitely();
+           assertThat(found).isNotNull();
+       }
+   }
+   ```
 
-```java
-@QuarkusTest
-class UserRepositoryTest {
+4. **DO NOT use @RunOnVertxContext or UniAsserter** - These patterns cause context issues and lazy loading exceptions. The `@Transactional` pattern with `.await().indefinitely()` is the correct approach for this codebase.
 
-    @Inject
-    UserRepository userRepository;
+5. **For relationship navigation tests** - Keep relationships within the same transaction:
+   ```java
+   @Test
+   @Transactional
+   void testRelationshipNavigation() {
+       repository.persist(entity).await().indefinitely();
+       Entity found = repository.findById(id).await().indefinitely();
+       // Access relationships in same transaction - this works!
+       assertThat(found.relatedEntity).isNotNull();
+       assertThat(found.relatedEntity.someField).isEqualTo(expected);
+   }
+   ```
 
-    // Remove @BeforeEach method entirely
+6. **Always set UUID fields in helper methods** for entities with UUID primary keys:
+   ```java
+   private Organization createTestOrganization(String name, String domain) {
+       Organization org = new Organization();
+       org.orgId = UUID.randomUUID(); // REQUIRED!
+       org.name = name;
+       // ... rest of fields
+       return org;
+   }
+   ```
 
-    @Test
-    @RunOnVertxContext
-    void testPersistAndFindById(UniAsserter asserter) {
-        // Clean up and initialize test data as first step
-        asserter.execute(() -> Panache.withTransaction(() -> userRepository.deleteAll()));
+7. **Run `mvn test -Dtest="*RepositoryTest"` after each fix** to verify tests pass before moving to next repository
 
-        // Given: a new user
-        User user = createTestUser("john@example.com", "github", "github-456");
+**DO NOT:**
+- Use `@RunOnVertxContext` or `UniAsserter` anywhere
+- Mix reactive and blocking patterns
+- Access lazy-loaded relationships outside transaction boundaries
+- Rewrite or modify ANY test file that already has passing tests
+- Create new files - only fix the tests that are actually missing or failing
 
-        // When: persisting the user
-        asserter.execute(() -> Panache.withTransaction(() -> userRepository.persist(user)));
-
-        // Then: the user can be retrieved by ID
-        asserter.assertThat(() -> Panache.withTransaction(() -> userRepository.findById(user.userId)), found -> {
-            assertThat(found).isNotNull();
-            assertThat(found.email).isEqualTo("john@example.com");
-            // ... more assertions
-        });
-    }
-
-    // Repeat for all test methods
-
-    private User createTestUser(String email, String provider, String subject) {
-        User user = new User();
-        user.email = email;
-        user.oauthProvider = provider;
-        user.oauthSubject = subject;
-        user.displayName = "Test User";
-        user.subscriptionTier = SubscriptionTier.FREE;
-        return user;
-    }
-}
-```
-
-**Option 2 (ALTERNATIVE): Use @BeforeAll with blocking calls**
-
-If you want to keep shared setup logic, use `@BeforeAll` with blocking reactive calls. However, this approach is less isolated and not recommended for tests that modify data.
-
-```java
-@BeforeAll
-static void setupDatabase() {
-    // Use blocking calls with await().indefinitely()
-    // This is less ideal because it runs once for all tests
-}
-```
-
-### Implementation Instructions
-
-You MUST fix ALL 12 repository test files:
-
-1. **UserRepositoryTest.java** - Remove `@BeforeEach` method (lines 30-38). Add cleanup as first step in each test.
-2. **RoomRepositoryTest.java** - Remove `@BeforeEach` method (lines 41-49). Add cleanup + user/org creation in each test.
-3. **VoteRepositoryTest.java** - Remove `@BeforeEach` method (lines 46-60). Add cleanup + room/round/participant setup in each test.
-4. **SessionHistoryRepositoryTest.java** - Remove `@BeforeEach` method (lines 40-48). Add cleanup + room setup in each test.
-5. **SubscriptionRepositoryTest.java** - Remove `@BeforeEach` method (lines 36-44). Add cleanup + user setup in each test.
-6. **PaymentHistoryRepositoryTest.java** - Remove `@BeforeEach` method (lines 33-41). Add cleanup + user/subscription setup in each test.
-7. **OrganizationRepositoryTest.java** - Remove `@BeforeEach` method (lines 25-33). Add cleanup in each test.
-8. **OrgMemberRepositoryTest.java** - Remove `@BeforeEach` method (lines 39-49). Add cleanup + org/user setup in each test.
-9. **RoomParticipantRepositoryTest.java** - Remove `@BeforeEach` method (lines 39-49). Add cleanup + room setup in each test.
-10. **RoundRepositoryTest.java** - Remove `@BeforeEach` method (lines 38-48). Add cleanup + room setup in each test.
-11. **UserPreferenceRepositoryTest.java** - Remove `@BeforeEach` method (lines 31-39). Add cleanup + user setup in each test.
-12. **AuditLogRepositoryTest.java** - Remove `@BeforeEach` method (lines 40-48). Add cleanup in each test.
-
-### Key Points to Remember
-
-- **NEVER** use `@RunOnVertxContext` or `UniAsserter` in `@BeforeEach` or `@AfterEach` methods
-- **ALWAYS** perform cleanup and data initialization as the first `asserter.execute()` call in each test method
-- Keep helper methods (like `createTestUser()`) as non-reactive plain Java methods
-- Use `Panache.withTransaction()` wrapper for all database operations in tests
-- Each test should be independent and not rely on shared mutable state from `@BeforeEach`
-
-### Testing After Fix
-
-After fixing all test files, run:
-
-```bash
-cd backend
-mvn clean test
-```
-
-**Expected result:** All 94 tests should pass with 0 errors.
-
----
-
-## Additional Notes
-
-The test code is otherwise well-structured with:
-- Comprehensive coverage of CRUD operations
-- Custom finder method tests
-- JSONB field serialization tests
-- Soft delete behavior tests
-- Relationship navigation tests
-- AssertJ fluent assertions
-
-The only issue is the incorrect use of `@BeforeEach` with reactive test patterns. Once fixed, the test suite will meet all acceptance criteria.
+**Expected outcome:** All repository tests pass using the `@Transactional` pattern demonstrated in VoteRepositoryTest.
