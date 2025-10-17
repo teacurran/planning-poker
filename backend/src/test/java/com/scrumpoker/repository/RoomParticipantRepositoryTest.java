@@ -6,12 +6,15 @@ import com.scrumpoker.domain.room.RoomParticipant;
 import com.scrumpoker.domain.room.RoomRole;
 import com.scrumpoker.domain.user.SubscriptionTier;
 import com.scrumpoker.domain.user.User;
+import io.quarkus.hibernate.reactive.panache.Panache;
 import io.quarkus.test.junit.QuarkusTest;
+import io.quarkus.test.vertx.RunOnVertxContext;
+import io.quarkus.test.vertx.UniAsserter;
 import jakarta.inject.Inject;
-import jakarta.transaction.Transactional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
@@ -37,119 +40,166 @@ class RoomParticipantRepositoryTest {
     private User testUser;
 
     @BeforeEach
-    @Transactional
-    void setUp() {
-        participantRepository.deleteAll().await().indefinitely();
-        roomRepository.deleteAll().await().indefinitely();
-        userRepository.deleteAll().await().indefinitely();
+    @RunOnVertxContext
+    void setUp(UniAsserter asserter) {
+        asserter.execute(() -> Panache.withTransaction(() -> participantRepository.deleteAll()));
+        asserter.execute(() -> Panache.withTransaction(() -> roomRepository.deleteAll()));
+        asserter.execute(() -> Panache.withTransaction(() -> userRepository.deleteAll()));
 
-        testUser = createTestUser("participant@example.com", "google", "google-part");
-        userRepository.persist(testUser).await().indefinitely();
-
-        testRoom = createTestRoom("prt001", "Participant Test Room", testUser);
-        roomRepository.persist(testRoom).await().indefinitely();
+        // Create and persist test data within a single transaction
+        asserter.execute(() -> Panache.withTransaction(() -> {
+            testUser = createTestUser("participant@example.com", "google", "google-part");
+            return userRepository.persist(testUser).flatMap(u -> {
+                testRoom = createTestRoom("prt001", "Participant Test Room", u);
+                return roomRepository.persist(testRoom);
+            });
+        }));
     }
 
     @Test
-    @Transactional
-    void testPersistAndFindById() {
+    @RunOnVertxContext
+    void testPersistAndFindById(UniAsserter asserter) {
         // Given: a new participant
-        RoomParticipant participant = createTestParticipant(testRoom, testUser, "Test Participant", RoomRole.VOTER);
+        final UUID[] participantId = new UUID[1];
 
         // When: persisting the participant
-        participantRepository.persist(participant).await().indefinitely();
+        asserter.execute(() -> Panache.withTransaction(() ->
+            roomRepository.findById("prt001").flatMap(room ->
+                userRepository.findByEmail("participant@example.com").flatMap(user -> {
+                    RoomParticipant participant = createTestParticipant(room, user, "Test Participant", RoomRole.VOTER);
+                    return participantRepository.persist(participant).map(p -> {
+                        participantId[0] = p.participantId;
+                        return p;
+                    });
+                })
+            )
+        ));
 
         // Then: the participant can be retrieved
-        RoomParticipant found = participantRepository.findById(participant.participantId).await().indefinitely();
-        assertThat(found).isNotNull();
-        assertThat(found.displayName).isEqualTo("Test Participant");
-        assertThat(found.role).isEqualTo(RoomRole.VOTER);
+        asserter.assertThat(() -> Panache.withTransaction(() -> participantRepository.findById(participantId[0])), found -> {
+            assertThat(found).isNotNull();
+            assertThat(found.displayName).isEqualTo("Test Participant");
+            assertThat(found.role).isEqualTo(RoomRole.VOTER);
+        });
     }
 
     @Test
-    @Transactional
-    void testFindByRoomId() {
+    @RunOnVertxContext
+    void testFindByRoomId(UniAsserter asserter) {
         // Given: multiple participants in a room
-        RoomParticipant p1 = createTestParticipant(testRoom, testUser, "Participant 1", RoomRole.HOST);
-        RoomParticipant p2 = createTestParticipant(testRoom, testUser, "Participant 2", RoomRole.VOTER);
-
-        participantRepository.persist(p1).await().indefinitely();
-        participantRepository.persist(p2).await().indefinitely();
+        asserter.execute(() -> Panache.withTransaction(() ->
+            roomRepository.findById("prt001").flatMap(room ->
+                userRepository.findByEmail("participant@example.com").flatMap(user -> {
+                    RoomParticipant p1 = createTestParticipant(room, user, "Participant 1", RoomRole.HOST);
+                    RoomParticipant p2 = createTestParticipant(room, user, "Participant 2", RoomRole.VOTER);
+                    return participantRepository.persist(p1)
+                        .flatMap(v -> participantRepository.persist(p2));
+                })
+            )
+        ));
 
         // When: finding participants by room ID
-        List<RoomParticipant> participants = participantRepository.findByRoomId("prt001").await().indefinitely();
-
         // Then: all participants are returned
-        assertThat(participants).hasSize(2);
+        asserter.assertThat(() -> Panache.withTransaction(() -> participantRepository.findByRoomId("prt001")), participants -> {
+            assertThat(participants).hasSize(2);
+        });
     }
 
     @Test
-    @Transactional
-    void testFindByRoomIdAndRole() {
+    @RunOnVertxContext
+    void testFindByRoomIdAndRole(UniAsserter asserter) {
         // Given: participants with different roles
-        RoomParticipant host = createTestParticipant(testRoom, testUser, "Host", RoomRole.HOST);
-        RoomParticipant voter = createTestParticipant(testRoom, testUser, "Voter", RoomRole.VOTER);
-        RoomParticipant observer = createTestParticipant(testRoom, testUser, "Observer", RoomRole.OBSERVER);
-
-        participantRepository.persist(host).await().indefinitely();
-        participantRepository.persist(voter).await().indefinitely();
-        participantRepository.persist(observer).await().indefinitely();
+        asserter.execute(() -> Panache.withTransaction(() ->
+            roomRepository.findById("prt001").flatMap(room ->
+                userRepository.findByEmail("participant@example.com").flatMap(user -> {
+                    RoomParticipant host = createTestParticipant(room, user, "Host", RoomRole.HOST);
+                    RoomParticipant voter = createTestParticipant(room, user, "Voter", RoomRole.VOTER);
+                    RoomParticipant observer = createTestParticipant(room, user, "Observer", RoomRole.OBSERVER);
+                    return participantRepository.persist(host)
+                        .flatMap(v -> participantRepository.persist(voter))
+                        .flatMap(v -> participantRepository.persist(observer));
+                })
+            )
+        ));
 
         // When: finding voters
-        List<RoomParticipant> voters = participantRepository.findByRoomIdAndRole("prt001", RoomRole.VOTER)
-                .await().indefinitely();
-
         // Then: only voters are returned
-        assertThat(voters).hasSize(1);
-        assertThat(voters.get(0).displayName).isEqualTo("Voter");
+        asserter.assertThat(() -> Panache.withTransaction(() -> participantRepository.findByRoomIdAndRole("prt001", RoomRole.VOTER)), voters -> {
+            assertThat(voters).hasSize(1);
+            assertThat(voters.get(0).displayName).isEqualTo("Voter");
+        });
     }
 
     @Test
-    @Transactional
-    void testFindVotersByRoomId() {
+    @RunOnVertxContext
+    void testFindVotersByRoomId(UniAsserter asserter) {
         // Given: participants with different roles
-        participantRepository.persist(createTestParticipant(testRoom, testUser, "Voter1", RoomRole.VOTER)).await().indefinitely();
-        participantRepository.persist(createTestParticipant(testRoom, testUser, "Voter2", RoomRole.VOTER)).await().indefinitely();
-        participantRepository.persist(createTestParticipant(testRoom, testUser, "Observer", RoomRole.OBSERVER)).await().indefinitely();
+        asserter.execute(() -> Panache.withTransaction(() ->
+            roomRepository.findById("prt001").flatMap(room ->
+                userRepository.findByEmail("participant@example.com").flatMap(user -> {
+                    RoomParticipant voter1 = createTestParticipant(room, user, "Voter1", RoomRole.VOTER);
+                    RoomParticipant voter2 = createTestParticipant(room, user, "Voter2", RoomRole.VOTER);
+                    RoomParticipant observer = createTestParticipant(room, user, "Observer", RoomRole.OBSERVER);
+                    return participantRepository.persist(voter1)
+                        .flatMap(v -> participantRepository.persist(voter2))
+                        .flatMap(v -> participantRepository.persist(observer));
+                })
+            )
+        ));
 
         // When: finding voters
-        List<RoomParticipant> voters = participantRepository.findVotersByRoomId("prt001").await().indefinitely();
-
         // Then: only voters are returned
-        assertThat(voters).hasSize(2);
+        asserter.assertThat(() -> Panache.withTransaction(() -> participantRepository.findVotersByRoomId("prt001")), voters -> {
+            assertThat(voters).hasSize(2);
+        });
     }
 
     @Test
-    @Transactional
-    void testCountByRoomId() {
+    @RunOnVertxContext
+    void testCountByRoomId(UniAsserter asserter) {
         // Given: multiple participants
-        participantRepository.persist(createTestParticipant(testRoom, testUser, "P1", RoomRole.VOTER)).await().indefinitely();
-        participantRepository.persist(createTestParticipant(testRoom, testUser, "P2", RoomRole.VOTER)).await().indefinitely();
+        asserter.execute(() -> Panache.withTransaction(() ->
+            roomRepository.findById("prt001").flatMap(room ->
+                userRepository.findByEmail("participant@example.com").flatMap(user -> {
+                    RoomParticipant p1 = createTestParticipant(room, user, "P1", RoomRole.VOTER);
+                    RoomParticipant p2 = createTestParticipant(room, user, "P2", RoomRole.VOTER);
+                    return participantRepository.persist(p1)
+                        .flatMap(v -> participantRepository.persist(p2));
+                })
+            )
+        ));
 
         // When: counting participants
-        Long count = participantRepository.countByRoomId("prt001").await().indefinitely();
-
         // Then: correct count is returned
-        assertThat(count).isEqualTo(2);
+        asserter.assertThat(() -> Panache.withTransaction(() -> participantRepository.countByRoomId("prt001")), count -> {
+            assertThat(count).isEqualTo(2);
+        });
     }
 
     @Test
-    @Transactional
-    void testCountVotersByRoomId() {
+    @RunOnVertxContext
+    void testCountVotersByRoomId(UniAsserter asserter) {
         // Given: participants with different roles
-        participantRepository.persist(createTestParticipant(testRoom, testUser, "Voter", RoomRole.VOTER)).await().indefinitely();
-        participantRepository.persist(createTestParticipant(testRoom, testUser, "Observer", RoomRole.OBSERVER)).await().indefinitely();
+        asserter.execute(() -> Panache.withTransaction(() ->
+            roomRepository.findById("prt001").flatMap(room ->
+                userRepository.findByEmail("participant@example.com").flatMap(user -> {
+                    RoomParticipant voter = createTestParticipant(room, user, "Voter", RoomRole.VOTER);
+                    RoomParticipant observer = createTestParticipant(room, user, "Observer", RoomRole.OBSERVER);
+                    return participantRepository.persist(voter)
+                        .flatMap(v -> participantRepository.persist(observer));
+                })
+            )
+        ));
 
         // When: counting voters
-        Long voterCount = participantRepository.countVotersByRoomId("prt001").await().indefinitely();
-
         // Then: only voters are counted
-        assertThat(voterCount).isEqualTo(1);
+        asserter.assertThat(() -> Panache.withTransaction(() -> participantRepository.countVotersByRoomId("prt001")), voterCount -> {
+            assertThat(voterCount).isEqualTo(1);
+        });
     }
 
     private User createTestUser(String email, String provider, String subject) {
         User user = new User();
-        user.userId = UUID.randomUUID();
         user.email = email;
         user.oauthProvider = provider;
         user.oauthSubject = subject;
@@ -165,12 +215,13 @@ class RoomParticipantRepositoryTest {
         room.owner = owner;
         room.privacyMode = PrivacyMode.PUBLIC;
         room.config = "{}";
+        room.createdAt = Instant.now();
+        room.lastActiveAt = Instant.now();
         return room;
     }
 
     private RoomParticipant createTestParticipant(Room room, User user, String displayName, RoomRole role) {
         RoomParticipant participant = new RoomParticipant();
-        participant.participantId = UUID.randomUUID();
         participant.room = room;
         participant.user = user;
         participant.displayName = displayName;

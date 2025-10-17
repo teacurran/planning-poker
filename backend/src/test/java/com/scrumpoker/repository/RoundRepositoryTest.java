@@ -5,9 +5,11 @@ import com.scrumpoker.domain.room.Room;
 import com.scrumpoker.domain.room.Round;
 import com.scrumpoker.domain.user.SubscriptionTier;
 import com.scrumpoker.domain.user.User;
+import io.quarkus.hibernate.reactive.panache.Panache;
 import io.quarkus.test.junit.QuarkusTest;
+import io.quarkus.test.vertx.RunOnVertxContext;
+import io.quarkus.test.vertx.UniAsserter;
 import jakarta.inject.Inject;
-import jakarta.transaction.Transactional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -33,121 +35,166 @@ class RoundRepositoryTest {
     @Inject
     UserRepository userRepository;
 
-    private Room testRoom;
-
     @BeforeEach
-    @Transactional
-    void setUp() {
-        roundRepository.deleteAll().await().indefinitely();
-        roomRepository.deleteAll().await().indefinitely();
-        userRepository.deleteAll().await().indefinitely();
-
-        User testUser = createTestUser("rounduser@example.com", "google", "google-round");
-        userRepository.persist(testUser).await().indefinitely();
-
-        testRoom = createTestRoom("rnd001", "Round Test Room", testUser);
-        roomRepository.persist(testRoom).await().indefinitely();
+    @RunOnVertxContext
+    void setUp(UniAsserter asserter) {
+        asserter.execute(() -> Panache.withTransaction(() -> roundRepository.deleteAll()));
+        asserter.execute(() -> Panache.withTransaction(() -> roomRepository.deleteAll()));
+        asserter.execute(() -> Panache.withTransaction(() -> userRepository.deleteAll()));
     }
 
     @Test
-    @Transactional
-    void testPersistAndFindById() {
+    @RunOnVertxContext
+    void testPersistAndFindById(UniAsserter asserter) {
         // Given: a new round
+        User testUser = createTestUser("rounduser@example.com", "google", "google-round");
+        Room testRoom = createTestRoom("rnd001", "Round Test Room", testUser);
         Round round = createTestRound(testRoom, 1, "First Story");
 
         // When: persisting the round
-        roundRepository.persist(round).await().indefinitely();
+        asserter.execute(() -> Panache.withTransaction(() ->
+            userRepository.persist(testUser).flatMap(user ->
+                roomRepository.persist(testRoom).flatMap(room ->
+                    roundRepository.persist(round)
+                )
+            )
+        ));
 
         // Then: the round can be retrieved
-        Round found = roundRepository.findById(round.roundId).await().indefinitely();
-        assertThat(found).isNotNull();
-        assertThat(found.roundNumber).isEqualTo(1);
-        assertThat(found.storyTitle).isEqualTo("First Story");
+        asserter.assertThat(() -> Panache.withTransaction(() -> roundRepository.findById(round.roundId)), found -> {
+            assertThat(found).isNotNull();
+            assertThat(found.roundNumber).isEqualTo(1);
+            assertThat(found.storyTitle).isEqualTo("First Story");
+        });
     }
 
     @Test
-    @Transactional
-    void testFindByRoomId() {
+    @RunOnVertxContext
+    void testFindByRoomId(UniAsserter asserter) {
         // Given: multiple rounds in a room
+        User testUser = createTestUser("rounduser@example.com", "google", "google-round");
+        Room testRoom = createTestRoom("rnd001", "Round Test Room", testUser);
         Round round1 = createTestRound(testRoom, 1, "Story 1");
         Round round2 = createTestRound(testRoom, 2, "Story 2");
-        roundRepository.persist(round1).await().indefinitely();
-        roundRepository.persist(round2).await().indefinitely();
+        asserter.execute(() -> Panache.withTransaction(() ->
+            userRepository.persist(testUser).flatMap(user ->
+                roomRepository.persist(testRoom).flatMap(room ->
+                    roundRepository.persist(round1).flatMap(r1 ->
+                        roundRepository.persist(round2)
+                    )
+                )
+            )
+        ));
 
         // When: finding rounds by room ID
-        List<Round> rounds = roundRepository.findByRoomId("rnd001").await().indefinitely();
-
         // Then: all rounds are returned in order
-        assertThat(rounds).hasSize(2);
-        assertThat(rounds.get(0).roundNumber).isEqualTo(1);
-        assertThat(rounds.get(1).roundNumber).isEqualTo(2);
+        asserter.assertThat(() -> Panache.withTransaction(() -> roundRepository.findByRoomId("rnd001")), rounds -> {
+            assertThat(rounds).hasSize(2);
+            assertThat(rounds.get(0).roundNumber).isEqualTo(1);
+            assertThat(rounds.get(1).roundNumber).isEqualTo(2);
+        });
     }
 
     @Test
-    @Transactional
-    void testFindByRoomIdAndRoundNumber() {
+    @RunOnVertxContext
+    void testFindByRoomIdAndRoundNumber(UniAsserter asserter) {
         // Given: rounds in a room
+        User testUser = createTestUser("rounduser@example.com", "google", "google-round");
+        Room testRoom = createTestRoom("rnd001", "Round Test Room", testUser);
         Round round = createTestRound(testRoom, 5, "Story 5");
-        roundRepository.persist(round).await().indefinitely();
+        asserter.execute(() -> Panache.withTransaction(() ->
+            userRepository.persist(testUser).flatMap(user ->
+                roomRepository.persist(testRoom).flatMap(room ->
+                    roundRepository.persist(round)
+                )
+            )
+        ));
 
         // When: finding specific round
-        Round found = roundRepository.findByRoomIdAndRoundNumber("rnd001", 5).await().indefinitely();
-
         // Then: the round is found
-        assertThat(found).isNotNull();
-        assertThat(found.storyTitle).isEqualTo("Story 5");
+        asserter.assertThat(() -> Panache.withTransaction(() -> roundRepository.findByRoomIdAndRoundNumber("rnd001", 5)), found -> {
+            assertThat(found).isNotNull();
+            assertThat(found.storyTitle).isEqualTo("Story 5");
+        });
     }
 
     @Test
-    @Transactional
-    void testFindRevealedByRoomId() {
+    @RunOnVertxContext
+    void testFindRevealedByRoomId(UniAsserter asserter) {
         // Given: revealed and unrevealed rounds
+        User testUser = createTestUser("rounduser@example.com", "google", "google-round");
+        Room testRoom = createTestRoom("rnd001", "Round Test Room", testUser);
         Round revealed = createTestRound(testRoom, 1, "Revealed Story");
         revealed.revealedAt = Instant.now();
         Round unrevealed = createTestRound(testRoom, 2, "Unrevealed Story");
 
-        roundRepository.persist(revealed).await().indefinitely();
-        roundRepository.persist(unrevealed).await().indefinitely();
+        asserter.execute(() -> Panache.withTransaction(() ->
+            userRepository.persist(testUser).flatMap(user ->
+                roomRepository.persist(testRoom).flatMap(room ->
+                    roundRepository.persist(revealed).flatMap(r1 ->
+                        roundRepository.persist(unrevealed)
+                    )
+                )
+            )
+        ));
 
         // When: finding revealed rounds
-        List<Round> revealedRounds = roundRepository.findRevealedByRoomId("rnd001").await().indefinitely();
-
         // Then: only revealed rounds are returned
-        assertThat(revealedRounds).hasSize(1);
-        assertThat(revealedRounds.get(0).storyTitle).isEqualTo("Revealed Story");
+        asserter.assertThat(() -> Panache.withTransaction(() -> roundRepository.findRevealedByRoomId("rnd001")), revealedRounds -> {
+            assertThat(revealedRounds).hasSize(1);
+            assertThat(revealedRounds.get(0).storyTitle).isEqualTo("Revealed Story");
+        });
     }
 
     @Test
-    @Transactional
-    void testFindConsensusRoundsByRoomId() {
+    @RunOnVertxContext
+    void testFindConsensusRoundsByRoomId(UniAsserter asserter) {
         // Given: rounds with and without consensus
+        User testUser = createTestUser("rounduser@example.com", "google", "google-round");
+        Room testRoom = createTestRoom("rnd001", "Round Test Room", testUser);
         Round consensus = createTestRound(testRoom, 1, "Consensus Story");
         consensus.consensusReached = true;
         Round noConsensus = createTestRound(testRoom, 2, "No Consensus Story");
 
-        roundRepository.persist(consensus).await().indefinitely();
-        roundRepository.persist(noConsensus).await().indefinitely();
+        asserter.execute(() -> Panache.withTransaction(() ->
+            userRepository.persist(testUser).flatMap(user ->
+                roomRepository.persist(testRoom).flatMap(room ->
+                    roundRepository.persist(consensus).flatMap(r1 ->
+                        roundRepository.persist(noConsensus)
+                    )
+                )
+            )
+        ));
 
         // When: finding consensus rounds
-        List<Round> consensusRounds = roundRepository.findConsensusRoundsByRoomId("rnd001").await().indefinitely();
-
         // Then: only consensus rounds are returned
-        assertThat(consensusRounds).hasSize(1);
-        assertThat(consensusRounds.get(0).storyTitle).isEqualTo("Consensus Story");
+        asserter.assertThat(() -> Panache.withTransaction(() -> roundRepository.findConsensusRoundsByRoomId("rnd001")), consensusRounds -> {
+            assertThat(consensusRounds).hasSize(1);
+            assertThat(consensusRounds.get(0).storyTitle).isEqualTo("Consensus Story");
+        });
     }
 
     @Test
-    @Transactional
-    void testCountByRoomId() {
+    @RunOnVertxContext
+    void testCountByRoomId(UniAsserter asserter) {
         // Given: multiple rounds
-        roundRepository.persist(createTestRound(testRoom, 1, "Story 1")).await().indefinitely();
-        roundRepository.persist(createTestRound(testRoom, 2, "Story 2")).await().indefinitely();
+        User testUser = createTestUser("rounduser@example.com", "google", "google-round");
+        Room testRoom = createTestRoom("rnd001", "Round Test Room", testUser);
+        asserter.execute(() -> Panache.withTransaction(() ->
+            userRepository.persist(testUser).flatMap(user ->
+                roomRepository.persist(testRoom).flatMap(room ->
+                    roundRepository.persist(createTestRound(testRoom, 1, "Story 1")).flatMap(r1 ->
+                        roundRepository.persist(createTestRound(testRoom, 2, "Story 2"))
+                    )
+                )
+            )
+        ));
 
         // When: counting rounds
-        Long count = roundRepository.countByRoomId("rnd001").await().indefinitely();
-
         // Then: correct count is returned
-        assertThat(count).isEqualTo(2);
+        asserter.assertThat(() -> Panache.withTransaction(() -> roundRepository.countByRoomId("rnd001")), count -> {
+            assertThat(count).isEqualTo(2);
+        });
     }
 
     private User createTestUser(String email, String provider, String subject) {

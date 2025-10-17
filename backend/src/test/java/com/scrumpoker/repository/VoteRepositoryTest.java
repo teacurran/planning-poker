@@ -40,70 +40,78 @@ class VoteRepositoryTest {
     @Inject
     UserRepository userRepository;
 
-    private Room testRoom;
-    private Round testRound;
-    private RoomParticipant testParticipant;
-    private User testUser;
-
     @BeforeEach
     @RunOnVertxContext
     void setUp(UniAsserter asserter) {
-        // Clean up any existing test data
-        voteRepository.deleteAll().await().indefinitely();
-        roundRepository.deleteAll().await().indefinitely();
-        participantRepository.deleteAll().await().indefinitely();
-        roomRepository.deleteAll().await().indefinitely();
-        userRepository.deleteAll().await().indefinitely();
-
-        // Create test user
-        testUser = createTestUser("voter@example.com", "google", "google-voter");
-        userRepository.persist(testUser).await().indefinitely();
-
-        // Create test room
-        testRoom = createTestRoom("vote01", "Vote Test Room", testUser);
-        roomRepository.persist(testRoom).await().indefinitely();
-
-        // Create test round
-        testRound = createTestRound(testRoom, 1, "Test Story");
-        roundRepository.persist(testRound).await().indefinitely();
-
-        // Create test participant
-        testParticipant = createTestParticipant(testRoom, testUser, "Test Voter");
-        participantRepository.persist(testParticipant).await().indefinitely();
+        // Clean up any existing test data (children first, then parents)
+        asserter.execute(() -> Panache.withTransaction(() -> voteRepository.deleteAll()));
+        asserter.execute(() -> Panache.withTransaction(() -> roundRepository.deleteAll()));
+        asserter.execute(() -> Panache.withTransaction(() -> participantRepository.deleteAll()));
+        asserter.execute(() -> Panache.withTransaction(() -> roomRepository.deleteAll()));
+        asserter.execute(() -> Panache.withTransaction(() -> userRepository.deleteAll()));
     }
 
     @Test
     @RunOnVertxContext
     void testPersistAndFindById(UniAsserter asserter) {
         // Given: a new vote
+        User testUser = createTestUser("voter@example.com", "google", "google-voter");
+        Room testRoom = createTestRoom("vote01", "Vote Test Room", testUser);
+        Round testRound = createTestRound(testRoom, 1, "Test Story");
+        RoomParticipant testParticipant = createTestParticipant(testRoom, testUser, "Test Voter");
         Vote vote = createTestVote(testRound, testParticipant, "5");
 
         // When: persisting the vote
-        voteRepository.persist(vote).await().indefinitely();
+        asserter.execute(() -> Panache.withTransaction(() ->
+            userRepository.persist(testUser).flatMap(user ->
+                roomRepository.persist(testRoom).flatMap(room ->
+                    roundRepository.persist(testRound).flatMap(round ->
+                        participantRepository.persist(testParticipant).flatMap(participant ->
+                            voteRepository.persist(vote)
+                        )
+                    )
+                )
+            )
+        ));
 
         // Then: the vote can be retrieved by ID
-        Vote found = voteRepository.findById(vote.voteId).await().indefinitely();
-        assertThat(found).isNotNull();
-        assertThat(found.cardValue).isEqualTo("5");
-        assertThat(found.votedAt).isNotNull();
+        asserter.assertThat(() -> Panache.withTransaction(() -> voteRepository.findById(vote.voteId)), found -> {
+            assertThat(found).isNotNull();
+            assertThat(found.cardValue).isEqualTo("5");
+            assertThat(found.votedAt).isNotNull();
+        });
     }
 
     @Test
     @RunOnVertxContext
     void testRelationshipNavigationToRound(UniAsserter asserter) {
         // Given: a persisted vote
+        User testUser = createTestUser("voter@example.com", "google", "google-voter");
+        Room testRoom = createTestRoom("vote01", "Vote Test Room", testUser);
+        Round testRound = createTestRound(testRoom, 1, "Test Story");
+        RoomParticipant testParticipant = createTestParticipant(testRoom, testUser, "Test Voter");
         Vote vote = createTestVote(testRound, testParticipant, "8");
-        voteRepository.persist(vote).await().indefinitely();
+        asserter.execute(() -> Panache.withTransaction(() ->
+            userRepository.persist(testUser).flatMap(user ->
+                roomRepository.persist(testRoom).flatMap(room ->
+                    roundRepository.persist(testRound).flatMap(round ->
+                        participantRepository.persist(testParticipant).flatMap(participant ->
+                            voteRepository.persist(vote)
+                        )
+                    )
+                )
+            )
+        ));
 
         // When: retrieving the vote
-        Vote found = voteRepository.findById(vote.voteId).await().indefinitely();
-
         // Then: the round relationship can be navigated
-        assertThat(found.round).isNotNull();
-        Round round = found.round;
-        assertThat(round.roundId).isEqualTo(testRound.roundId);
-        assertThat(round.roundNumber).isEqualTo(1);
-        assertThat(round.storyTitle).isEqualTo("Test Story");
+        asserter.assertThat(() -> Panache.withTransaction(() -> voteRepository.findById(vote.voteId)), found -> {
+            assertThat(found.round).isNotNull();
+            Round round = found.round;
+            assertThat(round.roundId).isEqualTo(testRound.roundId);
+            assertThat(round.roundNumber).isEqualTo(1);
+            assertThat(round.storyTitle).isEqualTo("Test Story");
+        });
     }
 
     @Test
@@ -111,16 +119,16 @@ class VoteRepositoryTest {
     void testRelationshipNavigationToParticipant(UniAsserter asserter) {
         // Given: a persisted vote
         Vote vote = createTestVote(testRound, testParticipant, "13");
-        voteRepository.persist(vote).await().indefinitely();
+        asserter.execute(() -> Panache.withTransaction(() -> voteRepository.persist(vote)));
 
         // When: retrieving the vote
-        Vote found = voteRepository.findById(vote.voteId).await().indefinitely();
-
         // Then: the participant relationship can be navigated
-        assertThat(found.participant).isNotNull();
-        RoomParticipant participant = found.participant;
-        assertThat(participant.participantId).isEqualTo(testParticipant.participantId);
-        assertThat(participant.displayName).isEqualTo("Test Voter");
+        asserter.assertThat(() -> Panache.withTransaction(() -> voteRepository.findById(vote.voteId)), found -> {
+            assertThat(found.participant).isNotNull();
+            RoomParticipant participant = found.participant;
+            assertThat(participant.participantId).isEqualTo(testParticipant.participantId);
+            assertThat(participant.displayName).isEqualTo("Test Voter");
+        });
     }
 
     @Test
@@ -135,17 +143,17 @@ class VoteRepositoryTest {
         vote2.votedAt = Instant.now().minusMillis(20);
         vote3.votedAt = Instant.now().minusMillis(10);
 
-        voteRepository.persist(vote1).await().indefinitely();
-        voteRepository.persist(vote2).await().indefinitely();
-        voteRepository.persist(vote3).await().indefinitely();
+        asserter.execute(() -> Panache.withTransaction(() -> voteRepository.persist(vote1)));
+        asserter.execute(() -> Panache.withTransaction(() -> voteRepository.persist(vote2)));
+        asserter.execute(() -> Panache.withTransaction(() -> voteRepository.persist(vote3)));
 
         // When: finding votes by round ID
-        List<Vote> votes = voteRepository.findByRoundId(testRound.roundId).await().indefinitely();
-
         // Then: all votes in the round are returned, ordered by votedAt
-        assertThat(votes).hasSize(3);
-        assertThat(votes).extracting(v -> v.cardValue)
-                .containsExactly("3", "5", "8");
+        asserter.assertThat(() -> Panache.withTransaction(() -> voteRepository.findByRoundId(testRound.roundId)), votes -> {
+            assertThat(votes).hasSize(3);
+            assertThat(votes).extracting(v -> v.cardValue)
+                    .containsExactly("3", "5", "8");
+        });
     }
 
     @Test
@@ -155,17 +163,16 @@ class VoteRepositoryTest {
         Vote vote1 = createTestVote(testRound, testParticipant, "2");
         Vote vote2 = createTestVote(testRound, testParticipant, "3");
 
-        voteRepository.persist(vote1).await().indefinitely();
-        voteRepository.persist(vote2).await().indefinitely();
+        asserter.execute(() -> Panache.withTransaction(() -> voteRepository.persist(vote1)));
+        asserter.execute(() -> Panache.withTransaction(() -> voteRepository.persist(vote2)));
 
         // When: finding votes by room ID and round number
-        List<Vote> votes = voteRepository.findByRoomIdAndRoundNumber("vote01", 1)
-                .await().indefinitely();
-
         // Then: votes from the specified round are returned
-        assertThat(votes).hasSize(2);
-        assertThat(votes).extracting(v -> v.cardValue)
-                .containsExactlyInAnyOrder("2", "3");
+        asserter.assertThat(() -> Panache.withTransaction(() -> voteRepository.findByRoomIdAndRoundNumber("vote01", 1)), votes -> {
+            assertThat(votes).hasSize(2);
+            assertThat(votes).extracting(v -> v.cardValue)
+                    .containsExactlyInAnyOrder("2", "3");
+        });
     }
 
     @Test
@@ -175,17 +182,16 @@ class VoteRepositoryTest {
         Vote vote1 = createTestVote(testRound, testParticipant, "5");
         Vote vote2 = createTestVote(testRound, testParticipant, "8");
 
-        voteRepository.persist(vote1).await().indefinitely();
-        voteRepository.persist(vote2).await().indefinitely();
+        asserter.execute(() -> Panache.withTransaction(() -> voteRepository.persist(vote1)));
+        asserter.execute(() -> Panache.withTransaction(() -> voteRepository.persist(vote2)));
 
         // When: finding votes by participant ID
-        List<Vote> votes = voteRepository.findByParticipantId(testParticipant.participantId)
-                .await().indefinitely();
-
         // Then: all votes by the participant are returned
-        assertThat(votes).hasSize(2);
-        assertThat(votes).extracting(v -> v.cardValue)
-                .containsExactlyInAnyOrder("5", "8");
+        asserter.assertThat(() -> Panache.withTransaction(() -> voteRepository.findByParticipantId(testParticipant.participantId)), votes -> {
+            assertThat(votes).hasSize(2);
+            assertThat(votes).extracting(v -> v.cardValue)
+                    .containsExactlyInAnyOrder("5", "8");
+        });
     }
 
     @Test
@@ -193,15 +199,15 @@ class VoteRepositoryTest {
     void testFindByRoundIdAndParticipantId(UniAsserter asserter) {
         // Given: a vote by a specific participant in a round
         Vote vote = createTestVote(testRound, testParticipant, "13");
-        voteRepository.persist(vote).await().indefinitely();
+        asserter.execute(() -> Panache.withTransaction(() -> voteRepository.persist(vote)));
 
         // When: finding the specific vote
-        Vote found = voteRepository.findByRoundIdAndParticipantId(
-                testRound.roundId, testParticipant.participantId).await().indefinitely();
-
         // Then: the vote is found
-        assertThat(found).isNotNull();
-        assertThat(found.cardValue).isEqualTo("13");
+        asserter.assertThat(() -> Panache.withTransaction(() ->
+                voteRepository.findByRoundIdAndParticipantId(testRound.roundId, testParticipant.participantId)), found -> {
+            assertThat(found).isNotNull();
+            assertThat(found.cardValue).isEqualTo("13");
+        });
     }
 
     @Test
@@ -212,15 +218,15 @@ class VoteRepositoryTest {
         Vote vote2 = createTestVote(testRound, testParticipant, "2");
         Vote vote3 = createTestVote(testRound, testParticipant, "3");
 
-        voteRepository.persist(vote1).await().indefinitely();
-        voteRepository.persist(vote2).await().indefinitely();
-        voteRepository.persist(vote3).await().indefinitely();
+        asserter.execute(() -> Panache.withTransaction(() -> voteRepository.persist(vote1)));
+        asserter.execute(() -> Panache.withTransaction(() -> voteRepository.persist(vote2)));
+        asserter.execute(() -> Panache.withTransaction(() -> voteRepository.persist(vote3)));
 
         // When: counting votes in the round
-        Long count = voteRepository.countByRoundId(testRound.roundId).await().indefinitely();
-
         // Then: the correct count is returned
-        assertThat(count).isEqualTo(3);
+        asserter.assertThat(() -> Panache.withTransaction(() -> voteRepository.countByRoundId(testRound.roundId)), count -> {
+            assertThat(count).isEqualTo(3);
+        });
     }
 
     @Test
@@ -231,17 +237,17 @@ class VoteRepositoryTest {
         Vote vote2 = createTestVote(testRound, testParticipant, "5");
         Vote vote3 = createTestVote(testRound, testParticipant, "8");
 
-        voteRepository.persist(vote1).await().indefinitely();
-        voteRepository.persist(vote2).await().indefinitely();
-        voteRepository.persist(vote3).await().indefinitely();
+        asserter.execute(() -> Panache.withTransaction(() -> voteRepository.persist(vote1)));
+        asserter.execute(() -> Panache.withTransaction(() -> voteRepository.persist(vote2)));
+        asserter.execute(() -> Panache.withTransaction(() -> voteRepository.persist(vote3)));
 
         // When: finding votes with a specific card value
-        List<Vote> fiveVotes = voteRepository.findByRoundIdAndCardValue(testRound.roundId, "5")
-                .await().indefinitely();
-
         // Then: only votes with the specified card value are returned
-        assertThat(fiveVotes).hasSize(2);
-        assertThat(fiveVotes).allMatch(v -> v.cardValue.equals("5"));
+        asserter.assertThat(() -> Panache.withTransaction(() ->
+                voteRepository.findByRoundIdAndCardValue(testRound.roundId, "5")), fiveVotes -> {
+            assertThat(fiveVotes).hasSize(2);
+            assertThat(fiveVotes).allMatch(v -> v.cardValue.equals("5"));
+        });
     }
 
     @Test
@@ -253,15 +259,16 @@ class VoteRepositoryTest {
         Vote coffeeVote = createTestVote(testRound, testParticipant, "☕");
 
         // When: persisting votes with special characters
-        voteRepository.persist(unknownVote).await().indefinitely();
-        voteRepository.persist(infinityVote).await().indefinitely();
-        voteRepository.persist(coffeeVote).await().indefinitely();
+        asserter.execute(() -> Panache.withTransaction(() -> voteRepository.persist(unknownVote)));
+        asserter.execute(() -> Panache.withTransaction(() -> voteRepository.persist(infinityVote)));
+        asserter.execute(() -> Panache.withTransaction(() -> voteRepository.persist(coffeeVote)));
 
         // Then: special card values are persisted correctly
-        List<Vote> votes = voteRepository.findByRoundId(testRound.roundId).await().indefinitely();
-        assertThat(votes).hasSize(3);
-        assertThat(votes).extracting(v -> v.cardValue)
-                .containsExactlyInAnyOrder("?", "∞", "☕");
+        asserter.assertThat(() -> Panache.withTransaction(() -> voteRepository.findByRoundId(testRound.roundId)), votes -> {
+            assertThat(votes).hasSize(3);
+            assertThat(votes).extracting(v -> v.cardValue)
+                    .containsExactlyInAnyOrder("?", "∞", "☕");
+        });
     }
 
     @Test
@@ -277,18 +284,18 @@ class VoteRepositoryTest {
         Vote vote3 = createTestVote(testRound, testParticipant, "3");
         vote3.votedAt = Instant.now().minusSeconds(10);
 
-        voteRepository.persist(vote1).await().indefinitely();
-        voteRepository.persist(vote2).await().indefinitely();
-        voteRepository.persist(vote3).await().indefinitely();
+        asserter.execute(() -> Panache.withTransaction(() -> voteRepository.persist(vote1)));
+        asserter.execute(() -> Panache.withTransaction(() -> voteRepository.persist(vote2)));
+        asserter.execute(() -> Panache.withTransaction(() -> voteRepository.persist(vote3)));
 
         // When: finding votes by round ID
-        List<Vote> votes = voteRepository.findByRoundId(testRound.roundId).await().indefinitely();
-
         // Then: votes are ordered by votedAt (earliest first)
-        assertThat(votes).hasSize(3);
-        assertThat(votes.get(0).cardValue).isEqualTo("1");
-        assertThat(votes.get(1).cardValue).isEqualTo("2");
-        assertThat(votes.get(2).cardValue).isEqualTo("3");
+        asserter.assertThat(() -> Panache.withTransaction(() -> voteRepository.findByRoundId(testRound.roundId)), votes -> {
+            assertThat(votes).hasSize(3);
+            assertThat(votes.get(0).cardValue).isEqualTo("1");
+            assertThat(votes.get(1).cardValue).isEqualTo("2");
+            assertThat(votes.get(2).cardValue).isEqualTo("3");
+        });
     }
 
     @Test
@@ -296,15 +303,16 @@ class VoteRepositoryTest {
     void testDeleteVote(UniAsserter asserter) {
         // Given: a persisted vote
         Vote vote = createTestVote(testRound, testParticipant, "21");
-        voteRepository.persist(vote).await().indefinitely();
+        asserter.execute(() -> Panache.withTransaction(() -> voteRepository.persist(vote)));
         UUID voteId = vote.voteId;
 
         // When: deleting the vote
-        voteRepository.delete(vote).await().indefinitely();
+        asserter.execute(() -> Panache.withTransaction(() -> voteRepository.delete(vote)));
 
         // Then: the vote no longer exists
-        Vote found = voteRepository.findById(voteId).await().indefinitely();
-        assertThat(found).isNull();
+        asserter.assertThat(() -> Panache.withTransaction(() -> voteRepository.findById(voteId)), found -> {
+            assertThat(found).isNull();
+        });
     }
 
     /**

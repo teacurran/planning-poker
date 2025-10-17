@@ -5,15 +5,16 @@ import com.scrumpoker.domain.billing.Subscription;
 import com.scrumpoker.domain.billing.SubscriptionStatus;
 import com.scrumpoker.domain.user.SubscriptionTier;
 import com.scrumpoker.domain.user.User;
+import io.quarkus.hibernate.reactive.panache.Panache;
 import io.quarkus.test.junit.QuarkusTest;
+import io.quarkus.test.vertx.RunOnVertxContext;
+import io.quarkus.test.vertx.UniAsserter;
 import jakarta.inject.Inject;
-import jakarta.transaction.Transactional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
-import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -31,126 +32,145 @@ class SubscriptionRepositoryTest {
     @Inject
     UserRepository userRepository;
 
-    private User testUser;
-
     @BeforeEach
-    @Transactional
-    void setUp() {
-        subscriptionRepository.deleteAll().await().indefinitely();
-        userRepository.deleteAll().await().indefinitely();
-
-        testUser = createTestUser("subuser@example.com", "google", "google-sub");
-        userRepository.persist(testUser).await().indefinitely();
+    @RunOnVertxContext
+    void setUp(UniAsserter asserter) {
+        asserter.execute(() -> Panache.withTransaction(() -> subscriptionRepository.deleteAll()));
+        asserter.execute(() -> Panache.withTransaction(() -> userRepository.deleteAll()));
     }
 
     @Test
-    @Transactional
-    void testPersistAndFindById() {
+    @RunOnVertxContext
+    void testPersistAndFindById(UniAsserter asserter) {
         // Given: a new subscription
+        User testUser = createTestUser("subuser@example.com", "google", "google-sub");
         Subscription sub = createTestSubscription(testUser.userId, EntityType.USER);
 
-        // When: persisting the subscription
-        subscriptionRepository.persist(sub).await().indefinitely();
+        // When: persisting the user and subscription
+        asserter.execute(() -> Panache.withTransaction(() ->
+            userRepository.persist(testUser).flatMap(user -> subscriptionRepository.persist(sub))
+        ));
 
         // Then: the subscription can be retrieved
-        Subscription found = subscriptionRepository.findById(sub.subscriptionId).await().indefinitely();
-        assertThat(found).isNotNull();
-        assertThat(found.tier).isEqualTo(SubscriptionTier.PRO);
-        assertThat(found.status).isEqualTo(SubscriptionStatus.ACTIVE);
+        asserter.assertThat(() -> Panache.withTransaction(() -> subscriptionRepository.findById(sub.subscriptionId)), found -> {
+            assertThat(found).isNotNull();
+            assertThat(found.tier).isEqualTo(SubscriptionTier.PRO);
+            assertThat(found.status).isEqualTo(SubscriptionStatus.ACTIVE);
+        });
     }
 
     @Test
-    @Transactional
-    void testFindActiveByEntityIdAndType() {
+    @RunOnVertxContext
+    void testFindActiveByEntityIdAndType(UniAsserter asserter) {
         // Given: an active subscription
+        User testUser = createTestUser("subuser@example.com", "google", "google-sub");
         Subscription sub = createTestSubscription(testUser.userId, EntityType.USER);
-        subscriptionRepository.persist(sub).await().indefinitely();
+        asserter.execute(() -> Panache.withTransaction(() ->
+            userRepository.persist(testUser).flatMap(user -> subscriptionRepository.persist(sub))
+        ));
 
         // When: finding active subscription
-        Subscription found = subscriptionRepository.findActiveByEntityIdAndType(testUser.userId, EntityType.USER)
-                .await().indefinitely();
-
         // Then: the active subscription is returned
-        assertThat(found).isNotNull();
-        assertThat(found.status).isEqualTo(SubscriptionStatus.ACTIVE);
+        asserter.assertThat(() -> Panache.withTransaction(() -> subscriptionRepository.findActiveByEntityIdAndType(testUser.userId, EntityType.USER)), found -> {
+            assertThat(found).isNotNull();
+            assertThat(found.status).isEqualTo(SubscriptionStatus.ACTIVE);
+        });
     }
 
     @Test
-    @Transactional
-    void testFindByStripeSubscriptionId() {
+    @RunOnVertxContext
+    void testFindByStripeSubscriptionId(UniAsserter asserter) {
         // Given: subscription with Stripe ID
+        User testUser = createTestUser("subuser@example.com", "google", "google-sub");
         Subscription sub = createTestSubscription(testUser.userId, EntityType.USER);
-        subscriptionRepository.persist(sub).await().indefinitely();
+        asserter.execute(() -> Panache.withTransaction(() ->
+            userRepository.persist(testUser).flatMap(user -> subscriptionRepository.persist(sub))
+        ));
 
         // When: finding by Stripe ID
-        Subscription found = subscriptionRepository.findByStripeSubscriptionId("stripe_sub_123")
-                .await().indefinitely();
-
         // Then: the subscription is found
-        assertThat(found).isNotNull();
-        assertThat(found.stripeSubscriptionId).isEqualTo("stripe_sub_123");
+        asserter.assertThat(() -> Panache.withTransaction(() -> subscriptionRepository.findByStripeSubscriptionId("stripe_sub_123")), found -> {
+            assertThat(found).isNotNull();
+            assertThat(found.stripeSubscriptionId).isEqualTo("stripe_sub_123");
+        });
     }
 
     @Test
-    @Transactional
-    void testFindByStatus() {
+    @RunOnVertxContext
+    void testFindByStatus(UniAsserter asserter) {
         // Given: subscriptions with different statuses
+        User testUser = createTestUser("subuser@example.com", "google", "google-sub");
         Subscription active = createTestSubscription(testUser.userId, EntityType.USER);
         Subscription canceled = createTestSubscription(UUID.randomUUID(), EntityType.USER);
         canceled.status = SubscriptionStatus.CANCELED;
 
-        subscriptionRepository.persist(active).await().indefinitely();
-        subscriptionRepository.persist(canceled).await().indefinitely();
+        asserter.execute(() -> Panache.withTransaction(() ->
+            userRepository.persist(testUser).flatMap(user ->
+                subscriptionRepository.persist(active).flatMap(s1 ->
+                    subscriptionRepository.persist(canceled)
+                )
+            )
+        ));
 
         // When: finding active subscriptions
-        List<Subscription> activeSubscriptions = subscriptionRepository.findByStatus(SubscriptionStatus.ACTIVE)
-                .await().indefinitely();
-
         // Then: only active subscriptions are returned
-        assertThat(activeSubscriptions).hasSize(1);
-        assertThat(activeSubscriptions.get(0).status).isEqualTo(SubscriptionStatus.ACTIVE);
+        asserter.assertThat(() -> Panache.withTransaction(() -> subscriptionRepository.findByStatus(SubscriptionStatus.ACTIVE)), activeSubscriptions -> {
+            assertThat(activeSubscriptions).hasSize(1);
+            assertThat(activeSubscriptions.get(0).status).isEqualTo(SubscriptionStatus.ACTIVE);
+        });
     }
 
     @Test
-    @Transactional
-    void testFindByTier() {
+    @RunOnVertxContext
+    void testFindByTier(UniAsserter asserter) {
         // Given: subscriptions with different tiers
+        User testUser = createTestUser("subuser@example.com", "google", "google-sub");
         Subscription pro = createTestSubscription(testUser.userId, EntityType.USER);
         pro.tier = SubscriptionTier.PRO;
 
         Subscription proPlus = createTestSubscription(UUID.randomUUID(), EntityType.USER);
         proPlus.tier = SubscriptionTier.PRO_PLUS;
 
-        subscriptionRepository.persist(pro).await().indefinitely();
-        subscriptionRepository.persist(proPlus).await().indefinitely();
+        asserter.execute(() -> Panache.withTransaction(() ->
+            userRepository.persist(testUser).flatMap(user ->
+                subscriptionRepository.persist(pro).flatMap(s1 ->
+                    subscriptionRepository.persist(proPlus)
+                )
+            )
+        ));
 
         // When: finding PRO tier subscriptions
-        List<Subscription> proSubscriptions = subscriptionRepository.findByTier(SubscriptionTier.PRO)
-                .await().indefinitely();
-
         // Then: only PRO tier subscriptions are returned
-        assertThat(proSubscriptions).hasSize(1);
-        assertThat(proSubscriptions.get(0).tier).isEqualTo(SubscriptionTier.PRO);
+        asserter.assertThat(() -> Panache.withTransaction(() -> subscriptionRepository.findByTier(SubscriptionTier.PRO)), proSubscriptions -> {
+            assertThat(proSubscriptions).hasSize(1);
+            assertThat(proSubscriptions.get(0).tier).isEqualTo(SubscriptionTier.PRO);
+        });
     }
 
     @Test
-    @Transactional
-    void testCountActiveByTier() {
+    @RunOnVertxContext
+    void testCountActiveByTier(UniAsserter asserter) {
         // Given: active subscriptions of different tiers
+        User testUser = createTestUser("subuser@example.com", "google", "google-sub");
         Subscription pro1 = createTestSubscription(testUser.userId, EntityType.USER);
         pro1.tier = SubscriptionTier.PRO;
 
         Subscription pro2 = createTestSubscription(UUID.randomUUID(), EntityType.USER);
         pro2.tier = SubscriptionTier.PRO;
 
-        subscriptionRepository.persist(pro1).await().indefinitely();
-        subscriptionRepository.persist(pro2).await().indefinitely();
+        asserter.execute(() -> Panache.withTransaction(() ->
+            userRepository.persist(testUser).flatMap(user ->
+                subscriptionRepository.persist(pro1).flatMap(s1 ->
+                    subscriptionRepository.persist(pro2)
+                )
+            )
+        ));
 
         // When: counting active PRO subscriptions
-        Long count = subscriptionRepository.countActiveByTier(SubscriptionTier.PRO).await().indefinitely();
-
         // Then: correct count is returned
-        assertThat(count).isEqualTo(2);
+        asserter.assertThat(() -> Panache.withTransaction(() -> subscriptionRepository.countActiveByTier(SubscriptionTier.PRO)), count -> {
+            assertThat(count).isEqualTo(2);
+        });
     }
 
     private User createTestUser(String email, String provider, String subject) {

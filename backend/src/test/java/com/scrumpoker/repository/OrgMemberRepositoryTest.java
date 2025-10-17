@@ -6,9 +6,11 @@ import com.scrumpoker.domain.organization.OrgRole;
 import com.scrumpoker.domain.organization.Organization;
 import com.scrumpoker.domain.user.SubscriptionTier;
 import com.scrumpoker.domain.user.User;
+import io.quarkus.hibernate.reactive.panache.Panache;
 import io.quarkus.test.junit.QuarkusTest;
+import io.quarkus.test.vertx.RunOnVertxContext;
+import io.quarkus.test.vertx.UniAsserter;
 import jakarta.inject.Inject;
-import jakarta.transaction.Transactional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -37,135 +39,135 @@ class OrgMemberRepositoryTest {
     private User testUser;
 
     @BeforeEach
-    @Transactional
-    void setUp() {
-        orgMemberRepository.deleteAll().await().indefinitely();
-        organizationRepository.deleteAll().await().indefinitely();
-        userRepository.deleteAll().await().indefinitely();
+    @RunOnVertxContext
+    void setUp(UniAsserter asserter) {
+        asserter.execute(() -> Panache.withTransaction(() -> orgMemberRepository.deleteAll()));
+        asserter.execute(() -> Panache.withTransaction(() -> organizationRepository.deleteAll()));
+        asserter.execute(() -> Panache.withTransaction(() -> userRepository.deleteAll()));
 
         testOrg = createTestOrganization("Test Org", "test.com");
-        organizationRepository.persist(testOrg).await().indefinitely();
+        asserter.execute(() -> Panache.withTransaction(() -> organizationRepository.persist(testOrg)));
 
         testUser = createTestUser("orgmember@example.com", "google", "google-orgmember");
-        userRepository.persist(testUser).await().indefinitely();
+        asserter.execute(() -> Panache.withTransaction(() -> userRepository.persist(testUser)));
     }
 
     @Test
-    @Transactional
-    void testPersistAndFindByCompositeId() {
+    @RunOnVertxContext
+    void testPersistAndFindByCompositeId(UniAsserter asserter) {
         // Given: a new org member with composite key
         OrgMember member = createTestOrgMember(testOrg, testUser, OrgRole.MEMBER);
 
         // When: persisting the org member
-        orgMemberRepository.persist(member).await().indefinitely();
+        asserter.execute(() -> Panache.withTransaction(() -> orgMemberRepository.persist(member)));
 
         // Then: the org member can be retrieved by composite ID
         OrgMemberId id = new OrgMemberId(testOrg.orgId, testUser.userId);
-        OrgMember found = orgMemberRepository.findById(id).await().indefinitely();
-        assertThat(found).isNotNull();
-        assertThat(found.role).isEqualTo(OrgRole.MEMBER);
+        asserter.assertThat(() -> Panache.withTransaction(() -> orgMemberRepository.findById(id)), found -> {
+            assertThat(found).isNotNull();
+            assertThat(found.role).isEqualTo(OrgRole.MEMBER);
+        });
     }
 
     @Test
-    @Transactional
-    void testFindByOrgId() {
+    @RunOnVertxContext
+    void testFindByOrgId(UniAsserter asserter) {
         // Given: multiple members in an organization
         User user1 = createTestUser("user1@example.com", "google", "google-1");
         User user2 = createTestUser("user2@example.com", "google", "google-2");
-        userRepository.persist(user1).await().indefinitely();
-        userRepository.persist(user2).await().indefinitely();
+        asserter.execute(() -> Panache.withTransaction(() -> userRepository.persist(user1)));
+        asserter.execute(() -> Panache.withTransaction(() -> userRepository.persist(user2)));
 
-        orgMemberRepository.persist(createTestOrgMember(testOrg, user1, OrgRole.ADMIN)).await().indefinitely();
-        orgMemberRepository.persist(createTestOrgMember(testOrg, user2, OrgRole.MEMBER)).await().indefinitely();
+        asserter.execute(() -> Panache.withTransaction(() -> orgMemberRepository.persist(createTestOrgMember(testOrg, user1, OrgRole.ADMIN))));
+        asserter.execute(() -> Panache.withTransaction(() -> orgMemberRepository.persist(createTestOrgMember(testOrg, user2, OrgRole.MEMBER))));
 
         // When: finding members by org ID
-        List<OrgMember> members = orgMemberRepository.findByOrgId(testOrg.orgId).await().indefinitely();
-
         // Then: all members are returned
-        assertThat(members).hasSize(2);
+        asserter.assertThat(() -> Panache.withTransaction(() -> orgMemberRepository.findByOrgId(testOrg.orgId)), members -> {
+            assertThat(members).hasSize(2);
+        });
     }
 
     @Test
-    @Transactional
-    void testFindByUserId() {
+    @RunOnVertxContext
+    void testFindByUserId(UniAsserter asserter) {
         // Given: user is member of multiple organizations
         Organization org2 = createTestOrganization("Org 2", "org2.com");
-        organizationRepository.persist(org2).await().indefinitely();
+        asserter.execute(() -> Panache.withTransaction(() -> organizationRepository.persist(org2)));
 
-        orgMemberRepository.persist(createTestOrgMember(testOrg, testUser, OrgRole.MEMBER)).await().indefinitely();
-        orgMemberRepository.persist(createTestOrgMember(org2, testUser, OrgRole.ADMIN)).await().indefinitely();
+        asserter.execute(() -> Panache.withTransaction(() -> orgMemberRepository.persist(createTestOrgMember(testOrg, testUser, OrgRole.MEMBER))));
+        asserter.execute(() -> Panache.withTransaction(() -> orgMemberRepository.persist(createTestOrgMember(org2, testUser, OrgRole.ADMIN))));
 
         // When: finding memberships by user ID
-        List<OrgMember> memberships = orgMemberRepository.findByUserId(testUser.userId).await().indefinitely();
-
         // Then: all memberships are returned
-        assertThat(memberships).hasSize(2);
+        asserter.assertThat(() -> Panache.withTransaction(() -> orgMemberRepository.findByUserId(testUser.userId)), memberships -> {
+            assertThat(memberships).hasSize(2);
+        });
     }
 
     @Test
-    @Transactional
-    void testFindByOrgIdAndRole() {
+    @RunOnVertxContext
+    void testFindByOrgIdAndRole(UniAsserter asserter) {
         // Given: members with different roles
         User admin = createTestUser("admin@example.com", "google", "google-admin");
         User member = createTestUser("member@example.com", "google", "google-member");
-        userRepository.persist(admin).await().indefinitely();
-        userRepository.persist(member).await().indefinitely();
+        asserter.execute(() -> Panache.withTransaction(() -> userRepository.persist(admin)));
+        asserter.execute(() -> Panache.withTransaction(() -> userRepository.persist(member)));
 
-        orgMemberRepository.persist(createTestOrgMember(testOrg, admin, OrgRole.ADMIN)).await().indefinitely();
-        orgMemberRepository.persist(createTestOrgMember(testOrg, member, OrgRole.MEMBER)).await().indefinitely();
+        asserter.execute(() -> Panache.withTransaction(() -> orgMemberRepository.persist(createTestOrgMember(testOrg, admin, OrgRole.ADMIN))));
+        asserter.execute(() -> Panache.withTransaction(() -> orgMemberRepository.persist(createTestOrgMember(testOrg, member, OrgRole.MEMBER))));
 
         // When: finding admins
-        List<OrgMember> admins = orgMemberRepository.findByOrgIdAndRole(testOrg.orgId, OrgRole.ADMIN)
-                .await().indefinitely();
-
         // Then: only admins are returned
-        assertThat(admins).hasSize(1);
-        assertThat(admins.get(0).role).isEqualTo(OrgRole.ADMIN);
+        asserter.assertThat(() -> Panache.withTransaction(() -> orgMemberRepository.findByOrgIdAndRole(testOrg.orgId, OrgRole.ADMIN)), admins -> {
+            assertThat(admins).hasSize(1);
+            assertThat(admins.get(0).role).isEqualTo(OrgRole.ADMIN);
+        });
     }
 
     @Test
-    @Transactional
-    void testIsAdmin() {
+    @RunOnVertxContext
+    void testIsAdmin(UniAsserter asserter) {
         // Given: an admin member
-        orgMemberRepository.persist(createTestOrgMember(testOrg, testUser, OrgRole.ADMIN)).await().indefinitely();
+        asserter.execute(() -> Panache.withTransaction(() -> orgMemberRepository.persist(createTestOrgMember(testOrg, testUser, OrgRole.ADMIN))));
 
         // When: checking if user is admin
-        Boolean isAdmin = orgMemberRepository.isAdmin(testOrg.orgId, testUser.userId).await().indefinitely();
-
         // Then: true is returned
-        assertThat(isAdmin).isTrue();
+        asserter.assertThat(() -> Panache.withTransaction(() -> orgMemberRepository.isAdmin(testOrg.orgId, testUser.userId)), isAdmin -> {
+            assertThat(isAdmin).isTrue();
+        });
     }
 
     @Test
-    @Transactional
-    void testIsAdminReturnsFalseForMember() {
+    @RunOnVertxContext
+    void testIsAdminReturnsFalseForMember(UniAsserter asserter) {
         // Given: a non-admin member
-        orgMemberRepository.persist(createTestOrgMember(testOrg, testUser, OrgRole.MEMBER)).await().indefinitely();
+        asserter.execute(() -> Panache.withTransaction(() -> orgMemberRepository.persist(createTestOrgMember(testOrg, testUser, OrgRole.MEMBER))));
 
         // When: checking if user is admin
-        Boolean isAdmin = orgMemberRepository.isAdmin(testOrg.orgId, testUser.userId).await().indefinitely();
-
         // Then: false is returned
-        assertThat(isAdmin).isFalse();
+        asserter.assertThat(() -> Panache.withTransaction(() -> orgMemberRepository.isAdmin(testOrg.orgId, testUser.userId)), isAdmin -> {
+            assertThat(isAdmin).isFalse();
+        });
     }
 
     @Test
-    @Transactional
-    void testCountByOrgId() {
+    @RunOnVertxContext
+    void testCountByOrgId(UniAsserter asserter) {
         // Given: multiple members
         User user1 = createTestUser("count1@example.com", "google", "google-count1");
         User user2 = createTestUser("count2@example.com", "google", "google-count2");
-        userRepository.persist(user1).await().indefinitely();
-        userRepository.persist(user2).await().indefinitely();
+        asserter.execute(() -> Panache.withTransaction(() -> userRepository.persist(user1)));
+        asserter.execute(() -> Panache.withTransaction(() -> userRepository.persist(user2)));
 
-        orgMemberRepository.persist(createTestOrgMember(testOrg, user1, OrgRole.MEMBER)).await().indefinitely();
-        orgMemberRepository.persist(createTestOrgMember(testOrg, user2, OrgRole.MEMBER)).await().indefinitely();
+        asserter.execute(() -> Panache.withTransaction(() -> orgMemberRepository.persist(createTestOrgMember(testOrg, user1, OrgRole.MEMBER))));
+        asserter.execute(() -> Panache.withTransaction(() -> orgMemberRepository.persist(createTestOrgMember(testOrg, user2, OrgRole.MEMBER))));
 
         // When: counting members
-        Long count = orgMemberRepository.countByOrgId(testOrg.orgId).await().indefinitely();
-
         // Then: correct count is returned
-        assertThat(count).isEqualTo(2);
+        asserter.assertThat(() -> Panache.withTransaction(() -> orgMemberRepository.countByOrgId(testOrg.orgId)), count -> {
+            assertThat(count).isEqualTo(2);
+        });
     }
 
     private User createTestUser(String email, String provider, String subject) {

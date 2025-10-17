@@ -2,15 +2,16 @@ package com.scrumpoker.repository;
 
 import com.scrumpoker.domain.billing.*;
 import com.scrumpoker.domain.user.SubscriptionTier;
+import io.quarkus.hibernate.reactive.panache.Panache;
 import io.quarkus.test.junit.QuarkusTest;
+import io.quarkus.test.vertx.RunOnVertxContext;
+import io.quarkus.test.vertx.UniAsserter;
 import jakarta.inject.Inject;
-import jakarta.transaction.Transactional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
-import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -28,114 +29,157 @@ class PaymentHistoryRepositoryTest {
     @Inject
     SubscriptionRepository subscriptionRepository;
 
-    private Subscription testSubscription;
-
     @BeforeEach
-    @Transactional
-    void setUp() {
-        paymentRepository.deleteAll().await().indefinitely();
-        subscriptionRepository.deleteAll().await().indefinitely();
-
-        testSubscription = createTestSubscription();
-        subscriptionRepository.persist(testSubscription).await().indefinitely();
+    @RunOnVertxContext
+    void setUp(UniAsserter asserter) {
+        asserter.execute(() -> Panache.withTransaction(() -> paymentRepository.deleteAll()));
+        asserter.execute(() -> Panache.withTransaction(() -> subscriptionRepository.deleteAll()));
     }
 
     @Test
-    @Transactional
-    void testPersistAndFindById() {
-        // Given: a new payment
+    @RunOnVertxContext
+    void testPersistAndFindById(UniAsserter asserter) {
+        // Given: a subscription and payment
+        Subscription testSubscription = createTestSubscription();
         PaymentHistory payment = createTestPayment(testSubscription, 1999);
 
-        // When: persisting the payment
-        paymentRepository.persist(payment).await().indefinitely();
+        // When: persisting both
+        asserter.execute(() -> Panache.withTransaction(() ->
+            subscriptionRepository.persist(testSubscription).flatMap(sub ->
+                paymentRepository.persist(payment)
+            )
+        ));
 
         // Then: the payment can be retrieved
-        PaymentHistory found = paymentRepository.findById(payment.paymentId).await().indefinitely();
-        assertThat(found).isNotNull();
-        assertThat(found.amount).isEqualTo(1999);
-        assertThat(found.status).isEqualTo(PaymentStatus.SUCCEEDED);
+        asserter.assertThat(() -> Panache.withTransaction(() -> paymentRepository.findById(payment.paymentId)), found -> {
+            assertThat(found).isNotNull();
+            assertThat(found.amount).isEqualTo(1999);
+            assertThat(found.status).isEqualTo(PaymentStatus.SUCCEEDED);
+        });
     }
 
     @Test
-    @Transactional
-    void testFindBySubscriptionId() {
+    @RunOnVertxContext
+    void testFindBySubscriptionId(UniAsserter asserter) {
         // Given: multiple payments for a subscription
-        paymentRepository.persist(createTestPayment(testSubscription, 1999)).await().indefinitely();
-        paymentRepository.persist(createTestPayment(testSubscription, 1999)).await().indefinitely();
+        Subscription testSubscription = createTestSubscription();
+
+        asserter.execute(() -> Panache.withTransaction(() ->
+            subscriptionRepository.persist(testSubscription).flatMap(sub -> {
+                PaymentHistory p1 = createTestPayment(sub, 1999);
+                PaymentHistory p2 = createTestPayment(sub, 1999);
+                p2.paymentId = UUID.randomUUID(); // Ensure unique IDs
+                p2.stripeInvoiceId = "stripe_inv_124";
+                return paymentRepository.persist(p1).flatMap(payment1 ->
+                    paymentRepository.persist(p2)
+                );
+            })
+        ));
 
         // When: finding payments by subscription ID
-        List<PaymentHistory> payments = paymentRepository.findBySubscriptionId(testSubscription.subscriptionId)
-                .await().indefinitely();
-
         // Then: all payments are returned
-        assertThat(payments).hasSize(2);
+        asserter.assertThat(() -> Panache.withTransaction(() -> paymentRepository.findBySubscriptionId(testSubscription.subscriptionId)), payments -> {
+            assertThat(payments).hasSize(2);
+        });
     }
 
     @Test
-    @Transactional
-    void testFindByStripeInvoiceId() {
+    @RunOnVertxContext
+    void testFindByStripeInvoiceId(UniAsserter asserter) {
         // Given: payment with Stripe invoice ID
+        Subscription testSubscription = createTestSubscription();
         PaymentHistory payment = createTestPayment(testSubscription, 1999);
-        paymentRepository.persist(payment).await().indefinitely();
+
+        asserter.execute(() -> Panache.withTransaction(() ->
+            subscriptionRepository.persist(testSubscription).flatMap(sub ->
+                paymentRepository.persist(payment)
+            )
+        ));
 
         // When: finding by Stripe invoice ID
-        PaymentHistory found = paymentRepository.findByStripeInvoiceId("stripe_inv_123")
-                .await().indefinitely();
-
         // Then: the payment is found
-        assertThat(found).isNotNull();
-        assertThat(found.stripeInvoiceId).isEqualTo("stripe_inv_123");
+        asserter.assertThat(() -> Panache.withTransaction(() -> paymentRepository.findByStripeInvoiceId("stripe_inv_123")), found -> {
+            assertThat(found).isNotNull();
+            assertThat(found.stripeInvoiceId).isEqualTo("stripe_inv_123");
+        });
     }
 
     @Test
-    @Transactional
-    void testFindByStatus() {
+    @RunOnVertxContext
+    void testFindByStatus(UniAsserter asserter) {
         // Given: payments with different statuses
+        Subscription testSubscription = createTestSubscription();
         PaymentHistory succeeded = createTestPayment(testSubscription, 1999);
         succeeded.status = PaymentStatus.SUCCEEDED;
 
         PaymentHistory failed = createTestPayment(testSubscription, 1999);
         failed.status = PaymentStatus.FAILED;
+        failed.paymentId = UUID.randomUUID(); // Ensure unique ID
         failed.stripeInvoiceId = "stripe_inv_456";
 
-        paymentRepository.persist(succeeded).await().indefinitely();
-        paymentRepository.persist(failed).await().indefinitely();
+        asserter.execute(() -> Panache.withTransaction(() ->
+            subscriptionRepository.persist(testSubscription).flatMap(sub ->
+                paymentRepository.persist(succeeded).flatMap(p1 ->
+                    paymentRepository.persist(failed)
+                )
+            )
+        ));
 
         // When: finding succeeded payments
-        List<PaymentHistory> succeededPayments = paymentRepository.findByStatus(PaymentStatus.SUCCEEDED)
-                .await().indefinitely();
-
         // Then: only succeeded payments are returned
-        assertThat(succeededPayments).hasSize(1);
+        asserter.assertThat(() -> Panache.withTransaction(() -> paymentRepository.findByStatus(PaymentStatus.SUCCEEDED)), succeededPayments -> {
+            assertThat(succeededPayments).hasSize(1);
+        });
     }
 
     @Test
-    @Transactional
-    void testCountBySubscriptionId() {
+    @RunOnVertxContext
+    void testCountBySubscriptionId(UniAsserter asserter) {
         // Given: multiple payments
-        paymentRepository.persist(createTestPayment(testSubscription, 1999)).await().indefinitely();
-        paymentRepository.persist(createTestPayment(testSubscription, 1999)).await().indefinitely();
+        Subscription testSubscription = createTestSubscription();
+
+        asserter.execute(() -> Panache.withTransaction(() ->
+            subscriptionRepository.persist(testSubscription).flatMap(sub -> {
+                PaymentHistory p1 = createTestPayment(sub, 1999);
+                PaymentHistory p2 = createTestPayment(sub, 1999);
+                p2.paymentId = UUID.randomUUID(); // Ensure unique IDs
+                p2.stripeInvoiceId = "stripe_inv_125";
+                return paymentRepository.persist(p1).flatMap(payment1 ->
+                    paymentRepository.persist(p2)
+                );
+            })
+        ));
 
         // When: counting payments
-        Long count = paymentRepository.countBySubscriptionId(testSubscription.subscriptionId)
-                .await().indefinitely();
-
         // Then: correct count is returned
-        assertThat(count).isEqualTo(2);
+        asserter.assertThat(() -> Panache.withTransaction(() -> paymentRepository.countBySubscriptionId(testSubscription.subscriptionId)), count -> {
+            assertThat(count).isEqualTo(2);
+        });
     }
 
     @Test
-    @Transactional
-    void testCalculateTotalRevenue() {
+    @RunOnVertxContext
+    void testCalculateTotalRevenue(UniAsserter asserter) {
         // Given: successful payments
-        paymentRepository.persist(createTestPayment(testSubscription, 1999)).await().indefinitely();
-        paymentRepository.persist(createTestPayment(testSubscription, 2999)).await().indefinitely();
+        Subscription testSubscription = createTestSubscription();
+
+        asserter.execute(() -> Panache.withTransaction(() ->
+            subscriptionRepository.persist(testSubscription).flatMap(sub -> {
+                PaymentHistory p1 = createTestPayment(sub, 1999);
+                PaymentHistory p2 = createTestPayment(sub, 2999);
+                p2.paymentId = UUID.randomUUID(); // Ensure unique IDs
+                p2.stripeInvoiceId = "stripe_inv_126";
+                return paymentRepository.persist(p1).flatMap(payment1 ->
+                    paymentRepository.persist(p2)
+                );
+            })
+        ));
 
         // When: calculating total revenue
-        Long totalRevenue = paymentRepository.calculateTotalRevenue().await().indefinitely();
-
         // Then: correct sum is returned
-        assertThat(totalRevenue).isEqualTo(4998L);
+        asserter.assertThat(() -> Panache.withTransaction(() -> paymentRepository.calculateTotalRevenue()), totalRevenue -> {
+            assertThat(totalRevenue).isEqualTo(4998L);
+        });
     }
 
     private Subscription createTestSubscription() {

@@ -21,200 +21,171 @@ Create integration tests for all Panache repositories using Testcontainers (Post
 
 ## Issues Detected
 
-**CRITICAL:** 83 out of 94 tests are failing with reactive session/transaction errors. The root cause is that most repository tests are using the **WRONG** testing pattern for Hibernate Reactive.
+**Compilation Errors in VoteRepositoryTest:**
 
-### Test Failure Summary
+The file `backend/src/test/java/com/scrumpoker/repository/VoteRepositoryTest.java` has been partially converted from `@Transactional` pattern to `@RunOnVertxContext` pattern, but **8 test methods** still reference instance variables (`testRound`, `testParticipant`, `testRoom`, `testUser`) that were removed from the class.
 
-*   **Test Pattern Error (9 test classes):** The following test classes are using `@Transactional` annotation which is for **blocking/JTA transactions**, NOT reactive transactions. This causes "No current Vertx context found" errors:
-    - `AuditLogRepositoryTest` (8 tests failing)
-    - `OrgMemberRepositoryTest` (7 tests failing)
-    - `OrganizationRepositoryTest` (6 tests failing)
-    - `PaymentHistoryRepositoryTest` (6 tests failing)
-    - `RoomParticipantRepositoryTest` (6 tests failing)
-    - `RoomRepositoryTest` (13 tests failing)
-    - `RoundRepositoryTest` (6 tests failing)
-    - `SessionHistoryRepositoryTest` (7 tests failing)
-    - `SubscriptionRepositoryTest` (6 tests failing)
-    - `UserPreferenceRepositoryTest` (6 tests failing)
+**Affected test methods (lines 118-316):**
+1. `testRelationshipNavigationToParticipant` - line 121: references `testRound`, `testParticipant`
+2. `testFindByRoundId` - lines 138-140: references `testRound`, `testParticipant`
+3. `testFindByRoomIdAndRoundNumber` - lines 163-164: references `testRound`, `testParticipant`
+4. `testFindByParticipantId` - lines 182-183: references `testRound`, `testParticipant`
+5. `testFindByRoundIdAndParticipantId` - line 201: references `testRound`, `testParticipant`
+6. `testCountByRoundId` - lines 217-219: references `testRound`, `testParticipant`
+7. `testFindByRoundIdAndCardValue` - lines 236-238: references `testRound`, `testParticipant`
+8. `testVoteWithSpecialCardValues` - lines 257-259: references `testRound`, `testParticipant`
+9. `testVoteOrderingByVotedAt` - lines 278, 281, 284: references `testRound`, `testParticipant`
+10. `testDeleteVote` - line 305: references `testRound`, `testParticipant`
 
-*   **Transaction Wrapper Missing (1 test class):** `VoteRepositoryTest` correctly uses `@RunOnVertxContext` + `UniAsserter` but is NOT wrapping database operations in `Panache.withTransaction()` in the `setUp()` method (lines 52-56). This causes "No current Mutiny.Session found" errors (12 tests failing).
-
-*   **Only 1 test class is correct:** `UserRepositoryTest` is the ONLY test file using the correct pattern: `@RunOnVertxContext` + `UniAsserter` + `Panache.withTransaction()` wrapper. All 11 tests in this class pass successfully.
+**Specific Compilation Errors:**
+- **Lines 121, 138-140, 163-164, 182-183, 201, 217-219, 236-238, 257-259, 278-285, 305:** Cannot find symbol: variable `testRound`, `testParticipant`, `testRoom`, `testUser`
+- **Lines 248, 268, 294:** Cannot find symbol: method `hasSize(int)` - This is because `votes` is typed as `Object` instead of `List<Vote>`
+- **Line 249:** Cannot find symbol: method `allMatch(...)` - Same typing issue
+- **Lines 269, 295-297:** Cannot find symbol: method `get(int)` or `extracting(...)` - Same typing issue
 
 ---
 
 ## Best Approach to Fix
 
-You MUST rewrite all failing repository tests to follow the **EXACT pattern** used in `UserRepositoryTest.java`. This is the gold standard reference implementation.
+You MUST fix `VoteRepositoryTest.java` by adding local test data creation to each failing test method, following the **exact same pattern** already used in `testPersistAndFindById` (lines 54-83) and `testRelationshipNavigationToRound` (lines 85-115).
 
-### Step-by-Step Fix Instructions
+### Required Changes for Each Failing Test:
 
-**1. For ALL 10 test classes using `@Transactional` (AuditLog, OrgMember, Organization, PaymentHistory, RoomParticipant, Room, Round, SessionHistory, Subscription, UserPreference):**
+**For ALL 10 failing test methods**, add this exact setup code at the beginning (after the `// Given:` comment):
 
-   **a) Remove these imports:**
-   ```java
-   import jakarta.transaction.Transactional;
-   ```
+```java
+User testUser = createTestUser("voter@example.com", "google", "google-voter");
+Room testRoom = createTestRoom("vote01", "Vote Test Room", testUser);
+Round testRound = createTestRound(testRoom, 1, "Test Story");
+RoomParticipant testParticipant = createTestParticipant(testRoom, testUser, "Test Voter");
 
-   **b) Add these imports:**
-   ```java
-   import io.quarkus.hibernate.reactive.panache.Panache;
-   import io.quarkus.test.vertx.RunOnVertxContext;
-   import io.quarkus.test.vertx.UniAsserter;
-   ```
-
-   **c) Change EVERY method signature from:**
-   ```java
-   @BeforeEach
-   @Transactional
-   void setUp() {
-       repository.deleteAll().await().indefinitely();
-   }
-
-   @Test
-   @Transactional
-   void testSomething() {
-       // test code with .await().indefinitely()
-   }
-   ```
-
-   **TO:**
-   ```java
-   @BeforeEach
-   @RunOnVertxContext
-   void setUp(UniAsserter asserter) {
-       asserter.execute(() -> Panache.withTransaction(() -> repository.deleteAll()));
-       // If cleaning up multiple repositories, each must be wrapped separately:
-       asserter.execute(() -> Panache.withTransaction(() -> otherRepository.deleteAll()));
-   }
-
-   @Test
-   @RunOnVertxContext
-   void testSomething(UniAsserter asserter) {
-       // For operations that don't return values we care about:
-       asserter.execute(() -> Panache.withTransaction(() -> repository.persist(entity)));
-
-       // For operations that return values we need to assert:
-       asserter.assertThat(() -> Panache.withTransaction(() -> repository.findById(id)), found -> {
-           assertThat(found).isNotNull();
-           assertThat(found.field).isEqualTo("expected");
-       });
-   }
-   ```
-
-   **d) Remove ALL `.await().indefinitely()` calls** - the UniAsserter pattern handles async execution automatically.
-
-**2. For VoteRepositoryTest:**
-
-   **a) Fix the `setUp()` method (lines 48-73) to wrap EVERY `deleteAll()` call in `Panache.withTransaction()`:**
-
-   Change from:
-   ```java
-   @BeforeEach
-   @RunOnVertxContext
-   void setUp(UniAsserter asserter) {
-       voteRepository.deleteAll().await().indefinitely();
-       roundRepository.deleteAll().await().indefinitely();
-       participantRepository.deleteAll().await().indefinitely();
-       roomRepository.deleteAll().await().indefinitely();
-       userRepository.deleteAll().await().indefinitely();
-
-       // ... setup code ...
-   }
-   ```
-
-   To:
-   ```java
-   @BeforeEach
-   @RunOnVertxContext
-   void setUp(UniAsserter asserter) {
-       // Clean up in correct order (children first, then parents)
-       asserter.execute(() -> Panache.withTransaction(() -> voteRepository.deleteAll()));
-       asserter.execute(() -> Panache.withTransaction(() -> roundRepository.deleteAll()));
-       asserter.execute(() -> Panache.withTransaction(() -> participantRepository.deleteAll()));
-       asserter.execute(() -> Panache.withTransaction(() -> roomRepository.deleteAll()));
-       asserter.execute(() -> Panache.withTransaction(() -> userRepository.deleteAll()));
-
-       // Setup test data (each persist wrapped in transaction)
-       asserter.execute(() -> Panache.withTransaction(() -> {
-           testUser = createTestUser("voter@example.com", "google", "google-voter");
-           return userRepository.persist(testUser);
-       }));
-
-       asserter.execute(() -> Panache.withTransaction(() -> {
-           testRoom = createTestRoom("vote01", "Vote Test Room", testUser);
-           return roomRepository.persist(testRoom);
-       }));
-
-       asserter.execute(() -> Panache.withTransaction(() -> {
-           testRound = createTestRound(testRoom, 1, "Test Story");
-           return roundRepository.persist(testRound);
-       }));
-
-       asserter.execute(() -> Panache.withTransaction(() -> {
-           testParticipant = createTestParticipant(testRoom, testUser, "Test Voter");
-           return participantRepository.persist(testParticipant);
-       }));
-   }
-   ```
-
-   **b) Fix ALL test methods** - they are currently calling `.await().indefinitely()` directly on repository operations. You MUST wrap each operation in `Panache.withTransaction()` and remove the `.await().indefinitely()` calls. See UserRepositoryTest for the exact pattern.
-
-   For example, change:
-   ```java
-   @Test
-   @RunOnVertxContext
-   void testPersistAndFindById(UniAsserter asserter) {
-       Vote vote = createTestVote(testRound, testParticipant, "5");
-       voteRepository.persist(vote).await().indefinitely();
-       Vote found = voteRepository.findById(vote.voteId).await().indefinitely();
-       assertThat(found).isNotNull();
-       assertThat(found.cardValue).isEqualTo("5");
-   }
-   ```
-
-   To:
-   ```java
-   @Test
-   @RunOnVertxContext
-   void testPersistAndFindById(UniAsserter asserter) {
-       Vote vote = createTestVote(testRound, testParticipant, "5");
-
-       asserter.execute(() -> Panache.withTransaction(() -> voteRepository.persist(vote)));
-
-       asserter.assertThat(() -> Panache.withTransaction(() -> voteRepository.findById(vote.voteId)), found -> {
-           assertThat(found).isNotNull();
-           assertThat(found.cardValue).isEqualTo("5");
-       });
-   }
-   ```
-
-### Critical Rules You MUST Follow
-
-1. **ALWAYS use `@RunOnVertxContext` annotation** on `@BeforeEach` and `@Test` methods
-2. **ALWAYS add `UniAsserter asserter` parameter** to every `@BeforeEach` and `@Test` method
-3. **ALWAYS wrap database operations** in `Panache.withTransaction(() -> ...)`
-4. **NEVER use `.await().indefinitely()`** with the UniAsserter pattern
-5. **Use `asserter.execute()`** for operations that don't need assertions (persist, delete)
-6. **Use `asserter.assertThat()`** for operations that return values you need to assert
-7. **Study UserRepositoryTest** (lines 30-256) - copy this pattern EXACTLY for all other tests
-
-### Reference Implementation
-
-**UserRepositoryTest.java is your GOLD STANDARD.** Every pattern, every transaction wrapper, every assertion style in that file is the CORRECT way to write reactive repository tests. Copy it precisely.
-
-Key patterns from UserRepositoryTest to replicate:
-- Line 34: `asserter.execute(() -> Panache.withTransaction(() -> userRepository.deleteAll()));`
-- Line 47: `asserter.execute(() -> Panache.withTransaction(() -> userRepository.persist(user)));`
-- Line 50-60: `asserter.assertThat(() -> Panache.withTransaction(() -> userRepository.findById(user.userId)), found -> { /* assertions */ });`
-- Lines 118-130: Multi-step update pattern using `.flatMap()`
-- Lines 150-155: Soft delete pattern
-
-### After Fixing
-
-Run `mvn test -Dtest="*RepositoryTest"` to verify ALL 94 tests pass. You MUST see:
-```
-[INFO] Tests run: 94, Failures: 0, Errors: 0, Skipped: 0
+// Persist the test hierarchy
+asserter.execute(() -> Panache.withTransaction(() ->
+    userRepository.persist(testUser).flatMap(user ->
+        roomRepository.persist(testRoom).flatMap(room ->
+            roundRepository.persist(testRound).flatMap(round ->
+                participantRepository.persist(testParticipant)
+            )
+        )
+    )
+));
 ```
 
-If ANY tests still fail, you have NOT correctly applied the UniAsserter + Panache.withTransaction pattern. Review UserRepositoryTest again and ensure EXACT pattern matching.
+**CRITICAL:** After adding the setup code, each test method MUST persist its own Vote entities. For example, in `testFindByRoundId`, after the setup code above, the test creates and persists 3 votes:
+
+```java
+Vote vote1 = createTestVote(testRound, testParticipant, "3");
+Vote vote2 = createTestVote(testRound, testParticipant, "5");
+Vote vote3 = createTestVote(testRound, testParticipant, "8");
+
+vote1.votedAt = Instant.now().minusMillis(30);
+vote2.votedAt = Instant.now().minusMillis(20);
+vote3.votedAt = Instant.now().minusMillis(10);
+
+asserter.execute(() -> Panache.withTransaction(() -> voteRepository.persist(vote1)));
+asserter.execute(() -> Panache.withTransaction(() -> voteRepository.persist(vote2)));
+asserter.execute(() -> Panache.withTransaction(() -> voteRepository.persist(vote3)));
+```
+
+### Implementation Steps:
+
+1. **Fix `testRelationshipNavigationToParticipant` (line 118):** Add complete setup code before line 121
+2. **Fix `testFindByRoundId` (line 134):** Add setup code before line 138
+3. **Fix `testFindByRoomIdAndRoundNumber` (line 159):** Add setup code before line 163
+4. **Fix `testFindByParticipantId` (line 178):** Add setup code before line 182
+5. **Fix `testFindByRoundIdAndParticipantId` (line 197):** Add setup code before line 201
+6. **Fix `testCountByRoundId` (line 213):** Add setup code before line 217
+7. **Fix `testFindByRoundIdAndCardValue` (line 232):** Add setup code before line 236
+8. **Fix `testVoteWithSpecialCardValues` (line 253):** Add setup code before line 257
+9. **Fix `testVoteOrderingByVotedAt` (line 274):** Add setup code before line 278
+10. **Fix `testDeleteVote` (line 301):** Add setup code before line 305
+
+### Special Handling for Tests with Multiple Participants:
+
+For tests that require multiple participants (e.g., `testFindByRoundIdAndCardValue` creates 3 votes from potentially different participants), you may need to create additional participants:
+
+```java
+RoomParticipant participant1 = createTestParticipant(testRoom, testUser, "Alice");
+RoomParticipant participant2 = createTestParticipant(testRoom, createTestUser("bob@example.com", "google", "google-bob"), "Bob");
+
+asserter.execute(() -> Panache.withTransaction(() ->
+    participantRepository.persist(participant1).flatMap(p1 ->
+        participantRepository.persist(participant2)
+    )
+));
+```
+
+However, **reviewing the current test logic**, it appears all tests currently use a single `testParticipant`. The unique constraint on Vote is `(round_id, participant_id)`, so **you cannot create multiple votes in the same round from the same participant**.
+
+**CRITICAL FIX REQUIRED:** For tests that create multiple votes in the same round (e.g., `testFindByRoundId`, `testCountByRoundId`, `testFindByRoundIdAndCardValue`, `testVoteOrderingByVotedAt`), you MUST either:
+1. Create multiple participants (one per vote), OR
+2. Create multiple rounds (one per vote)
+
+**RECOMMENDED APPROACH:** Create multiple participants for these tests to match real-world voting scenarios where multiple people vote in the same round.
+
+### Example Fix for `testFindByRoundId`:
+
+```java
+@Test
+@RunOnVertxContext
+void testFindByRoundId(UniAsserter asserter) {
+    // Given: setup test hierarchy
+    User testUser = createTestUser("voter@example.com", "google", "google-voter");
+    Room testRoom = createTestRoom("vote01", "Vote Test Room", testUser);
+    Round testRound = createTestRound(testRoom, 1, "Test Story");
+
+    // Create 3 different participants for 3 votes
+    RoomParticipant participant1 = createTestParticipant(testRoom, testUser, "Alice");
+    RoomParticipant participant2 = createTestParticipant(testRoom, createTestUser("bob@example.com", "google", "google-bob"), "Bob");
+    RoomParticipant participant3 = createTestParticipant(testRoom, createTestUser("charlie@example.com", "google", "google-charlie"), "Charlie");
+
+    // Persist hierarchy
+    asserter.execute(() -> Panache.withTransaction(() ->
+        userRepository.persist(testUser).flatMap(u ->
+            roomRepository.persist(testRoom).flatMap(r ->
+                roundRepository.persist(testRound).flatMap(round ->
+                    participantRepository.persist(participant1).flatMap(p1 ->
+                        participantRepository.persist(participant2).flatMap(p2 ->
+                            participantRepository.persist(participant3)
+                        )
+                    )
+                )
+            )
+        )
+    ));
+
+    // Given: multiple votes in a round
+    Vote vote1 = createTestVote(testRound, participant1, "3");
+    Vote vote2 = createTestVote(testRound, participant2, "5");
+    Vote vote3 = createTestVote(testRound, participant3, "8");
+
+    vote1.votedAt = Instant.now().minusMillis(30);
+    vote2.votedAt = Instant.now().minusMillis(20);
+    vote3.votedAt = Instant.now().minusMillis(10);
+
+    asserter.execute(() -> Panache.withTransaction(() -> voteRepository.persist(vote1)));
+    asserter.execute(() -> Panache.withTransaction(() -> voteRepository.persist(vote2)));
+    asserter.execute(() -> Panache.withTransaction(() -> voteRepository.persist(vote3)));
+
+    // When: finding votes by round ID
+    // Then: all votes in the round are returned, ordered by votedAt
+    asserter.assertThat(() -> Panache.withTransaction(() -> voteRepository.findByRoundId(testRound.roundId)), votes -> {
+        assertThat(votes).hasSize(3);
+        assertThat(votes).extracting(v -> v.cardValue)
+                .containsExactly("3", "5", "8");
+    });
+}
+```
+
+### After Fixing Compilation Errors:
+
+1. Run `mvn test -Dtest=VoteRepositoryTest` to verify all tests compile and pass
+2. If any tests fail due to unique constraint violations, create additional participants or rounds as needed
+3. Ensure all 12 test methods in VoteRepositoryTest pass successfully
+
+---
+
+## DO NOT:
+- Change the testing pattern from `@RunOnVertxContext` to `@Transactional`
+- Remove any existing test methods
+- Change the assertion logic (the assertions are correct, just missing the test data setup)

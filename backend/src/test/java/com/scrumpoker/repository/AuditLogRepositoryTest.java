@@ -5,15 +5,16 @@ import com.scrumpoker.domain.organization.AuditLogId;
 import com.scrumpoker.domain.organization.Organization;
 import com.scrumpoker.domain.user.SubscriptionTier;
 import com.scrumpoker.domain.user.User;
+import io.quarkus.hibernate.reactive.panache.Panache;
 import io.quarkus.test.junit.QuarkusTest;
+import io.quarkus.test.vertx.RunOnVertxContext;
+import io.quarkus.test.vertx.UniAsserter;
 import jakarta.inject.Inject;
-import jakarta.transaction.Transactional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
-import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -38,72 +39,74 @@ class AuditLogRepositoryTest {
     private User testUser;
 
     @BeforeEach
-    @Transactional
-    void setUp() {
-        auditLogRepository.deleteAll().await().indefinitely();
-        organizationRepository.deleteAll().await().indefinitely();
-        userRepository.deleteAll().await().indefinitely();
+    @RunOnVertxContext
+    void setUp(UniAsserter asserter) {
+        asserter.execute(() -> Panache.withTransaction(() -> auditLogRepository.deleteAll()));
+        asserter.execute(() -> Panache.withTransaction(() -> organizationRepository.deleteAll()));
+        asserter.execute(() -> Panache.withTransaction(() -> userRepository.deleteAll()));
 
         testOrg = createTestOrganization("Audit Org", "audit.com");
-        organizationRepository.persist(testOrg).await().indefinitely();
+        asserter.execute(() -> Panache.withTransaction(() -> organizationRepository.persist(testOrg)));
 
         testUser = createTestUser("audituser@example.com", "google", "google-audit");
-        userRepository.persist(testUser).await().indefinitely();
+        asserter.execute(() -> Panache.withTransaction(() -> userRepository.persist(testUser)));
     }
 
     @Test
-    @Transactional
-    void testPersistAndFindByCompositeId() {
+    @RunOnVertxContext
+    void testPersistAndFindByCompositeId(UniAsserter asserter) {
         // Given: a new audit log with composite key
         AuditLog log = createTestAuditLog(testOrg, testUser, "USER_LOGIN", Instant.now());
 
         // When: persisting the audit log
-        auditLogRepository.persist(log).await().indefinitely();
+        asserter.execute(() -> Panache.withTransaction(() -> auditLogRepository.persist(log)));
 
         // Then: the audit log can be retrieved by composite ID
-        AuditLog found = auditLogRepository.findById(log.id).await().indefinitely();
-        assertThat(found).isNotNull();
-        assertThat(found.action).isEqualTo("USER_LOGIN");
-        assertThat(found.resourceType).isEqualTo("USER");
+        asserter.assertThat(() -> Panache.withTransaction(() -> auditLogRepository.findById(log.id)), found -> {
+            assertThat(found).isNotNull();
+            assertThat(found.action).isEqualTo("USER_LOGIN");
+            assertThat(found.resourceType).isEqualTo("USER");
+        });
     }
 
     @Test
-    @Transactional
-    void testJsonbMetadataField() {
+    @RunOnVertxContext
+    void testJsonbMetadataField(UniAsserter asserter) {
         // Given: audit log with JSONB metadata
         AuditLog log = createTestAuditLog(testOrg, testUser, "ROOM_CREATED", Instant.now());
         String metadataJson = "{\"roomId\":\"abc123\",\"privacyMode\":\"PUBLIC\",\"deckType\":\"fibonacci\"}";
         log.metadata = metadataJson;
 
         // When: persisting and retrieving
-        auditLogRepository.persist(log).await().indefinitely();
-        AuditLog found = auditLogRepository.findById(log.id).await().indefinitely();
+        asserter.execute(() -> Panache.withTransaction(() -> auditLogRepository.persist(log)));
 
         // Then: JSONB metadata persists correctly
-        assertThat(found.metadata).isEqualTo(metadataJson);
-        assertThat(found.metadata).contains("fibonacci");
+        asserter.assertThat(() -> Panache.withTransaction(() -> auditLogRepository.findById(log.id)), found -> {
+            assertThat(found.metadata).isEqualTo(metadataJson);
+            assertThat(found.metadata).contains("fibonacci");
+        });
     }
 
     @Test
-    @Transactional
-    void testFindByOrgId() {
+    @RunOnVertxContext
+    void testFindByOrgId(UniAsserter asserter) {
         // Given: multiple audit logs for an organization
         AuditLog log1 = createTestAuditLog(testOrg, testUser, "USER_LOGIN", Instant.now().minus(2, ChronoUnit.HOURS));
         AuditLog log2 = createTestAuditLog(testOrg, testUser, "ROOM_CREATED", Instant.now().minus(1, ChronoUnit.HOURS));
 
-        auditLogRepository.persist(log1).await().indefinitely();
-        auditLogRepository.persist(log2).await().indefinitely();
+        asserter.execute(() -> Panache.withTransaction(() -> auditLogRepository.persist(log1)));
+        asserter.execute(() -> Panache.withTransaction(() -> auditLogRepository.persist(log2)));
 
         // When: finding logs by organization ID
-        List<AuditLog> logs = auditLogRepository.findByOrgId(testOrg.orgId).await().indefinitely();
-
         // Then: all logs are returned
-        assertThat(logs).hasSize(2);
+        asserter.assertThat(() -> Panache.withTransaction(() -> auditLogRepository.findByOrgId(testOrg.orgId)), logs -> {
+            assertThat(logs).hasSize(2);
+        });
     }
 
     @Test
-    @Transactional
-    void testFindByDateRange() {
+    @RunOnVertxContext
+    void testFindByDateRange(UniAsserter asserter) {
         // Given: audit logs at different times
         Instant twoDaysAgo = Instant.now().minus(2, ChronoUnit.DAYS);
         Instant yesterday = Instant.now().minus(1, ChronoUnit.DAYS);
@@ -112,85 +115,86 @@ class AuditLogRepositoryTest {
         AuditLog oldLog = createTestAuditLog(testOrg, testUser, "OLD_ACTION", twoDaysAgo);
         AuditLog recentLog = createTestAuditLog(testOrg, testUser, "RECENT_ACTION", yesterday);
 
-        auditLogRepository.persist(oldLog).await().indefinitely();
-        auditLogRepository.persist(recentLog).await().indefinitely();
+        asserter.execute(() -> Panache.withTransaction(() -> auditLogRepository.persist(oldLog)));
+        asserter.execute(() -> Panache.withTransaction(() -> auditLogRepository.persist(recentLog)));
 
         // When: finding logs in date range
         Instant startDate = Instant.now().minus(36, ChronoUnit.HOURS);
         Instant endDate = today;
-        List<AuditLog> logs = auditLogRepository.findByDateRange(startDate, endDate).await().indefinitely();
 
         // Then: only logs in range are returned
-        assertThat(logs).hasSize(1);
-        assertThat(logs.get(0).action).isEqualTo("RECENT_ACTION");
+        asserter.assertThat(() -> Panache.withTransaction(() -> auditLogRepository.findByDateRange(startDate, endDate)), logs -> {
+            assertThat(logs).hasSize(1);
+            assertThat(logs.get(0).action).isEqualTo("RECENT_ACTION");
+        });
     }
 
     @Test
-    @Transactional
-    void testFindByAction() {
+    @RunOnVertxContext
+    void testFindByAction(UniAsserter asserter) {
         // Given: audit logs with different actions
         AuditLog loginLog = createTestAuditLog(testOrg, testUser, "USER_LOGIN", Instant.now().minus(1, ChronoUnit.HOURS));
         AuditLog roomLog = createTestAuditLog(testOrg, testUser, "ROOM_CREATED", Instant.now());
 
-        auditLogRepository.persist(loginLog).await().indefinitely();
-        auditLogRepository.persist(roomLog).await().indefinitely();
+        asserter.execute(() -> Panache.withTransaction(() -> auditLogRepository.persist(loginLog)));
+        asserter.execute(() -> Panache.withTransaction(() -> auditLogRepository.persist(roomLog)));
 
         // When: finding logs by action
-        List<AuditLog> loginLogs = auditLogRepository.findByAction("USER_LOGIN").await().indefinitely();
-
         // Then: only matching action logs are returned
-        assertThat(loginLogs).hasSize(1);
-        assertThat(loginLogs.get(0).action).isEqualTo("USER_LOGIN");
+        asserter.assertThat(() -> Panache.withTransaction(() -> auditLogRepository.findByAction("USER_LOGIN")), loginLogs -> {
+            assertThat(loginLogs).hasSize(1);
+            assertThat(loginLogs.get(0).action).isEqualTo("USER_LOGIN");
+        });
     }
 
     @Test
-    @Transactional
-    void testFindByResourceTypeAndId() {
+    @RunOnVertxContext
+    void testFindByResourceTypeAndId(UniAsserter asserter) {
         // Given: audit logs for different resources
         AuditLog roomLog = createTestAuditLog(testOrg, testUser, "ROOM_CREATED", Instant.now());
         roomLog.resourceType = "ROOM";
         roomLog.resourceId = "room123";
 
-        auditLogRepository.persist(roomLog).await().indefinitely();
+        asserter.execute(() -> Panache.withTransaction(() -> auditLogRepository.persist(roomLog)));
 
         // When: finding logs by resource type and ID
-        List<AuditLog> roomLogs = auditLogRepository.findByResourceTypeAndId("ROOM", "room123")
-                .await().indefinitely();
-
         // Then: matching resource logs are returned
-        assertThat(roomLogs).hasSize(1);
-        assertThat(roomLogs.get(0).resourceId).isEqualTo("room123");
+        asserter.assertThat(() -> Panache.withTransaction(() -> auditLogRepository.findByResourceTypeAndId("ROOM", "room123")), roomLogs -> {
+            assertThat(roomLogs).hasSize(1);
+            assertThat(roomLogs.get(0).resourceId).isEqualTo("room123");
+        });
     }
 
     @Test
-    @Transactional
-    void testCountByOrgId() {
+    @RunOnVertxContext
+    void testCountByOrgId(UniAsserter asserter) {
         // Given: multiple audit logs
-        auditLogRepository.persist(createTestAuditLog(testOrg, testUser, "ACTION1", Instant.now().minus(1, ChronoUnit.HOURS))).await().indefinitely();
-        auditLogRepository.persist(createTestAuditLog(testOrg, testUser, "ACTION2", Instant.now())).await().indefinitely();
+        asserter.execute(() -> Panache.withTransaction(() -> auditLogRepository.persist(createTestAuditLog(testOrg, testUser, "ACTION1", Instant.now().minus(1, ChronoUnit.HOURS)))));
+        asserter.execute(() -> Panache.withTransaction(() -> auditLogRepository.persist(createTestAuditLog(testOrg, testUser, "ACTION2", Instant.now()))));
 
         // When: counting logs by organization
-        Long count = auditLogRepository.countByOrgId(testOrg.orgId).await().indefinitely();
-
         // Then: correct count is returned
-        assertThat(count).isEqualTo(2);
+        asserter.assertThat(() -> Panache.withTransaction(() -> auditLogRepository.countByOrgId(testOrg.orgId)), count -> {
+            assertThat(count).isEqualTo(2L);
+        });
     }
 
     @Test
-    @Transactional
-    void testIpAddressStorage() {
+    @RunOnVertxContext
+    void testIpAddressStorage(UniAsserter asserter) {
         // Given: audit log with IP address
         AuditLog log = createTestAuditLog(testOrg, testUser, "USER_LOGIN", Instant.now());
         log.ipAddress = "192.168.1.100";
         log.userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)";
 
         // When: persisting and retrieving
-        auditLogRepository.persist(log).await().indefinitely();
-        AuditLog found = auditLogRepository.findById(log.id).await().indefinitely();
+        asserter.execute(() -> Panache.withTransaction(() -> auditLogRepository.persist(log)));
 
         // Then: IP address and user agent are persisted correctly
-        assertThat(found.ipAddress).isEqualTo("192.168.1.100");
-        assertThat(found.userAgent).contains("Mozilla");
+        asserter.assertThat(() -> Panache.withTransaction(() -> auditLogRepository.findById(log.id)), found -> {
+            assertThat(found.ipAddress).isEqualTo("192.168.1.100");
+            assertThat(found.userAgent).contains("Mozilla");
+        });
     }
 
     private User createTestUser(String email, String provider, String subject) {
