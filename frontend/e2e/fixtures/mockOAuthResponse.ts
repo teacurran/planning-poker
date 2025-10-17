@@ -155,37 +155,60 @@ export async function clearAllStorage(page: Page): Promise<void> {
  * This mocks the backend API endpoints needed for most tests
  */
 export async function setupCommonRouteMocks(page: Page): Promise<void> {
-  // Mock the OAuth callback endpoint
-  await page.route('**/api/v1/auth/oauth/callback', async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify(mockTokenResponse),
-    });
-  });
+  // Mock ALL API requests to prevent real backend calls
+  await page.route('**/api/**', async (route) => {
+    const url = route.request().url();
+    const method = route.request().method();
+    console.log(`[MOCK] API request intercepted: ${method} ${url}`);
 
-  // Mock the user profile endpoint
-  await page.route(`**/api/v1/users/${mockUser.userId}`, async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify(mockUser),
-    });
-  });
+    // OAuth callback endpoint
+    if (url.includes('/api/v1/auth/oauth/callback')) {
+      console.log('[MOCK] → OAuth callback response');
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(mockTokenResponse),
+      });
+      return;
+    }
 
-  // Mock the rooms list endpoint
-  await page.route('**/api/v1/rooms**', async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify(mockRoomListResponse),
-    });
-  });
+    // Logout endpoint
+    if (url.includes('/api/v1/auth/logout')) {
+      console.log('[MOCK] → Logout response (204)');
+      await route.fulfill({
+        status: 204,
+      });
+      return;
+    }
 
-  // Mock the logout endpoint
-  await page.route('**/api/v1/auth/logout', async (route) => {
+    // User rooms endpoint (must check before user profile)
+    if (url.includes('/api/v1/users/') && url.includes('/rooms')) {
+      console.log('[MOCK] → User rooms response');
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(mockRoomListResponse),
+      });
+      return;
+    }
+
+    // User profile endpoint
+    if (url.includes('/api/v1/users/')) {
+      console.log('[MOCK] → User profile response');
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(mockUser),
+      });
+      return;
+    }
+
+    // Default: log and pass through (or fail)
+    console.log(`[MOCK] ⚠ Unhandled API request: ${url}`);
     await route.fulfill({
-      status: 204,
+      status: 404,
+      contentType: 'application/json',
+      body: JSON.stringify({ error: 'Not Found', message: 'Mock endpoint not configured' }),
     });
   });
 }

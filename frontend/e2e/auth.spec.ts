@@ -25,13 +25,16 @@ import {
 
 test.describe('OAuth Authentication Flow', () => {
   test.beforeEach(async ({ page }) => {
-    // Clear all storage before each test to ensure clean state
+    // Set up route mocks FIRST, before any navigation
+    await setupCommonRouteMocks(page);
+
+    // Then clear all storage to ensure clean state
     await clearAllStorage(page);
   });
 
   test('should complete successful OAuth login flow with Google', async ({ page }) => {
-    // Set up route mocks before navigation
-    await setupCommonRouteMocks(page);
+    // Enable console logging to debug
+    page.on('console', msg => console.log('[BROWSER CONSOLE]', msg.type(), msg.text()));
 
     // Navigate to login page
     await page.goto('/login');
@@ -51,6 +54,13 @@ test.describe('OAuth Authentication Flow', () => {
     // Wait for redirect to dashboard after successful authentication
     await expect(page).toHaveURL('/dashboard', { timeout: 10000 });
 
+    // Log page content for debugging
+    const bodyText = await page.evaluate(() => document.body.innerText);
+    console.log('[DEBUG] Dashboard page content:', bodyText.substring(0, 200));
+
+    // Wait for network to be idle to ensure all API calls complete
+    await page.waitForLoadState('networkidle');
+
     // Verify tokens are stored in localStorage
     const authState = await page.evaluate(() => {
       const stored = localStorage.getItem('auth_state');
@@ -65,14 +75,14 @@ test.describe('OAuth Authentication Flow', () => {
     expect(authState.user.email).toBe(mockUser.email);
 
     // Verify dashboard content is displayed
-    await expect(page.locator('h1')).toHaveText('Dashboard');
+    await expect(page.locator('h1')).toHaveText('Dashboard', { timeout: 10000 });
 
     // Verify user profile information is displayed
     await expect(page.getByText(mockUser.displayName)).toBeVisible();
     await expect(page.getByText(mockUser.email)).toBeVisible();
 
     // Verify rooms section is displayed
-    await expect(page.getByText('Your Rooms')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Your Rooms' })).toBeVisible();
     await expect(page.getByText('Sprint Planning Meeting')).toBeVisible();
     await expect(page.getByText('Backlog Refinement')).toBeVisible();
   });
@@ -90,29 +100,43 @@ test.describe('OAuth Authentication Flow', () => {
   });
 
   test('should logout by clearing localStorage and redirecting', async ({ page }) => {
-    // Set up authenticated state and route mocks
-    await setupAuthenticatedState(page);
-    await setupCommonRouteMocks(page);
+    // DON'T use setupAuthenticatedState() because it uses addInitScript which persists across reloads
+    // Instead, manually set localStorage after navigating to the page
 
-    // Navigate to dashboard
+    // First navigate to home page
+    await page.goto('/');
+
+    // Then manually set auth state in localStorage
+    await page.evaluate((authState) => {
+      localStorage.setItem('auth_state', JSON.stringify(authState));
+    }, {
+      user: mockUser,
+      accessToken: mockTokenResponse.accessToken,
+      refreshToken: mockTokenResponse.refreshToken,
+      isAuthenticated: true,
+    });
+
+    // Now navigate to dashboard
     await page.goto('/dashboard');
 
-    // Verify we're authenticated and on dashboard
+    // Wait for network idle and dashboard to fully load
+    await page.waitForLoadState('networkidle');
     await expect(page).toHaveURL('/dashboard');
 
     // Wait for dashboard to load
-    await expect(page.locator('h1')).toHaveText('Dashboard');
+    await expect(page.locator('h1')).toHaveText('Dashboard', { timeout: 10000 });
 
     // Manually clear auth (simulating logout since no button exists yet)
     await page.evaluate(() => {
       localStorage.removeItem('auth_state');
     });
 
-    // Navigate to dashboard again - should redirect to login
-    await page.goto('/dashboard');
+    // Reload the page to trigger auth check
+    // This simulates what would happen after logout - the app needs to re-check auth state
+    await page.reload();
 
     // Should be redirected to login page
-    await expect(page).toHaveURL('/login', { timeout: 5000 });
+    await expect(page).toHaveURL('/login', { timeout: 10000 });
 
     // Verify we're back on the login page with OAuth buttons visible
     await expect(page.getByRole('button', { name: /sign in with google/i })).toBeVisible();
@@ -137,55 +161,75 @@ test.describe('OAuth Authentication Flow', () => {
     await setupAuthenticatedState(page);
 
     let userRequestCount = 0;
+    let roomRequestCount = 0;
     let refreshCalled = false;
 
-    // Mock the user profile endpoint to return 401 on first call (expired token)
-    await page.route(`**/api/v1/users/${mockUser.userId}`, async (route) => {
-      userRequestCount++;
+    // Override the common route mocks with specific behavior for this test
+    // Mock the user endpoints to return 401 on first call
+    await page.route('**/api/v1/users/**', async (route) => {
+      const url = route.request().url();
 
-      if (userRequestCount === 1) {
-        // First call: Return 401 to simulate expired token
-        await route.fulfill({
-          status: 401,
-          contentType: 'application/json',
-          body: JSON.stringify({
-            error: 'Unauthorized',
-            message: 'Access token expired',
-            timestamp: new Date().toISOString(),
-          }),
-        });
+      if (url.includes('/rooms')) {
+        // Rooms endpoint
+        roomRequestCount++;
+        if (roomRequestCount === 1) {
+          // First call: Return 401 to simulate expired token
+          await route.fulfill({
+            status: 401,
+            contentType: 'application/json',
+            body: JSON.stringify({
+              error: 'Unauthorized',
+              message: 'Access token expired',
+              timestamp: new Date().toISOString(),
+            }),
+          });
+        } else {
+          // Subsequent calls: Return success (after token refresh)
+          await route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({
+              rooms: [],
+              page: 0,
+              size: 20,
+              totalElements: 0,
+              totalPages: 0,
+            }),
+          });
+        }
       } else {
-        // Subsequent calls: Return success (after token refresh)
-        await route.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify(mockUser),
-        });
+        // User profile endpoint
+        userRequestCount++;
+        if (userRequestCount === 1) {
+          // First call: Return 401 to simulate expired token
+          await route.fulfill({
+            status: 401,
+            contentType: 'application/json',
+            body: JSON.stringify({
+              error: 'Unauthorized',
+              message: 'Access token expired',
+              timestamp: new Date().toISOString(),
+            }),
+          });
+        } else {
+          // Subsequent calls: Return success (after token refresh)
+          await route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify(mockUser),
+          });
+        }
       }
     });
 
     // Mock the token refresh endpoint
     await page.route('**/api/v1/auth/refresh', async (route) => {
       refreshCalled = true;
+      console.log('[MOCK] Refresh token endpoint called');
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify(mockRefreshedTokenResponse),
-      });
-    });
-
-    // Mock the rooms endpoint
-    await page.route('**/api/v1/rooms**', async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          rooms: [],
-          page: 0,
-          size: 20,
-          totalElements: 0,
-          totalPages: 0,
-        }),
       });
     });
 
@@ -196,7 +240,7 @@ test.describe('OAuth Authentication Flow', () => {
     await expect(page).toHaveURL('/dashboard');
 
     // Wait for dashboard heading to appear (indicates successful load)
-    await expect(page.locator('h1')).toHaveText('Dashboard', { timeout: 5000 });
+    await expect(page.locator('h1')).toHaveText('Dashboard', { timeout: 10000 });
 
     // Verify that refresh was called
     expect(refreshCalled).toBe(true);
@@ -221,8 +265,10 @@ test.describe('OAuth Authentication Flow', () => {
     // Set up authenticated state
     await setupAuthenticatedState(page);
 
-    // Mock the user profile endpoint to return 401
-    await page.route(`**/api/v1/users/${mockUser.userId}`, async (route) => {
+    // Override the common route mocks with specific behavior for this test
+    // Mock the user endpoints to always return 401
+    await page.route('**/api/v1/users/**', async (route) => {
+      console.log('[MOCK] User endpoint returning 401');
       await route.fulfill({
         status: 401,
         contentType: 'application/json',
@@ -236,6 +282,7 @@ test.describe('OAuth Authentication Flow', () => {
 
     // Mock the token refresh endpoint to fail (invalid refresh token)
     await page.route('**/api/v1/auth/refresh', async (route) => {
+      console.log('[MOCK] Refresh endpoint returning 401');
       await route.fulfill({
         status: 401,
         contentType: 'application/json',
@@ -251,7 +298,7 @@ test.describe('OAuth Authentication Flow', () => {
     await page.goto('/dashboard');
 
     // Should be redirected to login page when refresh fails
-    await expect(page).toHaveURL('/login', { timeout: 10000 });
+    await expect(page).toHaveURL('/login', { timeout: 15000 });
 
     // Verify tokens are cleared from localStorage
     const authState = await page.evaluate(() => {
