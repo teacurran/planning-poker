@@ -1,0 +1,71 @@
+name: Backend CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'maven'
+
+      - name: Build and run tests
+        working-directory: ./backend
+        run: mvn clean verify
+        env:
+          MAVEN_OPTS: -Xmx2g
+
+      - name: SonarQube analysis
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        working-directory: ./backend
+        run: |
+          mvn sonar:sonar \
+            -Dsonar.projectKey=planning-poker-backend \
+            -Dsonar.organization=YOUR_SONAR_ORG \
+            -Dsonar.host.url=https://sonarcloud.io \
+            -Dsonar.login=${{ secrets.SONAR_TOKEN }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
+
+      # Note: Trivy container scanning will be implemented in I8.T1 when Dockerfile is created
+      # - name: Build Docker image
+      #   working-directory: ./backend
+      #   run: docker build -t planning-poker-backend:${{ github.sha }} .
+      #
+      # - name: Run Trivy security scan
+      #   uses: aquasecurity/trivy-action@master
+      #   with:
+      #     image-ref: planning-poker-backend:${{ github.sha }}
+      #     format: 'sarif'
+      #     output: 'trivy-results.sarif'
+      #     severity: 'CRITICAL,HIGH'
+      #
+      # - name: Upload Trivy results to GitHub Security
+      #   uses: github/codeql-action/upload-sarif@v2
+      #   if: always()
+      #   with:
+      #     sarif_file: 'trivy-results.sarif'
+
+      - name: Publish test results
+        if: always()
+        uses: dorny/test-reporter@v1
+        with:
+          name: Backend Test Results
+          path: backend/target/surefire-reports/*.xml,backend/target/failsafe-reports/*.xml
+          reporter: java-junit
+          fail-on-error: true
+        continue-on-error: true

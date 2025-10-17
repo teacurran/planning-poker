@@ -136,7 +136,7 @@
     "acceptance_criteria": "Backend workflow executes successfully on sample commit (even with minimal code), Frontend workflow executes successfully on sample commit, SonarQube analysis uploads results (if SonarCloud token configured), Trivy scan completes without critical vulnerabilities in base image, Workflow badges display in README (green checkmarks), Failed tests cause workflow to fail (red X)",
     "dependencies": ["I1.T1", "I1.T2"],
     "parallelizable": true,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I1.T7",

@@ -10,28 +10,25 @@ This is the full specification of the task you must complete.
 
 ```json
 {
-  "task_id": "I1.T5",
+  "task_id": "I1.T6",
   "iteration_id": "I1",
   "iteration_goal": "Establish project scaffolding, configure development environment, define database schema, and set up CI/CD foundation to enable parallel backend and frontend development in subsequent iterations.",
-  "description": "Create `docker-compose.yml` defining services: PostgreSQL 15 (with initialized database `scrumpoker`), Redis 7 (cluster mode with 3 nodes), Prometheus (scraping Quarkus metrics), Grafana (preconfigured with Prometheus datasource and dashboard). Configure volume mounts for database persistence and Grafana dashboards. Create `.env.example` file with environment variable templates (database credentials, Redis URLs, JWT secret placeholder). Document startup commands in README.md.",
+  "description": "Create GitHub Actions workflows for backend CI (`backend-ci.yml`) and frontend CI (`frontend-ci.yml`). Backend workflow: checkout code, setup Java 17, run `mvn clean verify` (compile, unit tests, integration tests with Testcontainers), SonarQube analysis (code quality gate), Trivy container scan on built Docker image. Frontend workflow: checkout, setup Node.js 18, run `npm ci`, `npm run lint`, `npm run test`, `npm run build`, upload build artifacts. Configure workflow triggers (push to main, pull requests). Add workflow status badges to README.md.",
   "agent_type_hint": "SetupAgent",
-  "inputs": "Technology stack requirements (PostgreSQL 15, Redis 7 cluster), Observability stack (Prometheus, Grafana), Environment variable needs from application.properties",
+  "inputs": "CI/CD requirements from architecture blueprint (Section 5.2 - CI/CD Pipeline Hardening), Maven build lifecycle for Quarkus, npm script conventions (lint, test, build)",
   "input_files": [
-    "backend/src/main/resources/application.properties"
+    "backend/pom.xml",
+    "frontend/package.json"
   ],
   "target_files": [
-    "docker-compose.yml",
-    ".env.example",
-    "README.md",
-    "infra/local/prometheus.yml",
-    "infra/local/grafana/dashboards/quarkus-dashboard.json"
+    ".github/workflows/backend-ci.yml",
+    ".github/workflows/frontend-ci.yml",
+    "README.md"
   ],
-  "deliverables": "Docker Compose file with 4 services (PostgreSQL, Redis, Prometheus, Grafana), PostgreSQL container with automatic schema initialization (Flyway migrations), Redis cluster configuration (3 nodes with replication), Prometheus configured to scrape `http://host.docker.internal:8080/q/metrics`, Grafana preconfigured with Prometheus datasource, Environment variable template file, README section documenting `docker-compose up`, connection strings, port mappings",
-  "acceptance_criteria": "`docker-compose up` starts all services without errors, PostgreSQL accessible at `localhost:5432` with credentials from `.env`, Redis cluster accessible at `localhost:6379-6381`, Prometheus UI at `http://localhost:9090` shows Quarkus target, Grafana UI at `http://localhost:3000` displays preconfigured dashboard, Flyway migrations execute automatically when PostgreSQL container starts",
-  "dependencies": [
-    "I1.T3"
-  ],
-  "parallelizable": false,
+  "deliverables": "Backend CI workflow with Java 17 setup, Maven build, Testcontainers support, Frontend CI workflow with Node.js 18 setup, npm tasks (lint, test, build), SonarQube integration for backend (quality gate check), Trivy security scan for backend Docker image, Workflow status badges in README, Workflows triggered on push to `main` and pull requests to `main`",
+  "acceptance_criteria": "Backend workflow executes successfully on sample commit (even with minimal code), Frontend workflow executes successfully on sample commit, SonarQube analysis uploads results (if SonarCloud token configured), Trivy scan completes without critical vulnerabilities in base image, Workflow badges display in README (green checkmarks), Failed tests cause workflow to fail (red X)",
+  "dependencies": ["I1.T1", "I1.T2"],
+  "parallelizable": true,
   "done": false
 }
 ```
@@ -42,136 +39,162 @@ This is the full specification of the task you must complete.
 
 The following are the relevant sections from the architecture and plan documents, which I found by analyzing the task description.
 
-### Context: technology-constraints (from 01_Context_and_Drivers.md)
+### Context: CI/CD Pipeline Integration (from 03_Verification_and_Glossary.md)
 
 ```markdown
-#### Technology Constraints
-- **Backend Framework:** Quarkus with Hibernate Reactive (specified requirement)
-- **Database:** PostgreSQL for relational data integrity and JSONB support
-- **Cache/Message Bus:** Redis for session state distribution and Pub/Sub messaging
-- **Payment Provider:** Stripe for subscription billing and payment processing
-- **Containerization:** Docker containers orchestrated via Kubernetes
+**Continuous Integration (CI):**
+
+Every push to `main` branch or pull request triggers:
+
+1. **Backend CI Pipeline:**
+   - Compile Java code (`mvn clean compile`)
+   - Run unit tests (`mvn test`)
+   - Run integration tests (`mvn verify` with Testcontainers)
+   - SonarQube code quality analysis
+   - Dependency vulnerability scan (Snyk)
+   - Build Docker image
+   - Container security scan (Trivy)
+   - Publish test results and coverage reports
+
+2. **Frontend CI Pipeline:**
+   - Install dependencies (`npm ci`)
+   - Lint code (`npm run lint`)
+   - Run unit tests (`npm run test:unit`)
+   - Build production bundle (`npm run build`)
+   - Upload build artifacts
+
+**Quality Gates:**
+- Unit test coverage >80% (fail build if below threshold)
+- SonarQube quality gate passed (no blocker/critical issues)
+- No HIGH/CRITICAL vulnerabilities in dependencies
+- Linter passes with no errors (warnings acceptable)
+
+**Continuous Deployment (CD):**
+
+Merges to `main` branch trigger automated deployments:
+
+1. **Deploy to Staging:**
+   - Deploy backend Docker image to Kubernetes staging namespace
+   - Deploy frontend build to staging CDN
+   - Run smoke tests against staging environment
+   - If smoke tests pass, mark deployment as successful
+
+2. **Deploy to Production (Manual Approval):**
+   - Product owner reviews staging deployment
+   - Manual approval gate in GitHub Actions
+   - Deploy backend to production Kubernetes namespace (rolling update, 0 downtime)
+   - Deploy frontend to production CDN
+   - Run smoke tests against production
+   - Monitor error rates and latency for 30 minutes
+   - Automated rollback if error rate >2x baseline or smoke tests fail
+
+**Deployment Strategy:**
+- **Rolling Update:** MaxSurge=1, MaxUnavailable=0 (ensures at least 2 pods always available)
+- **Canary Deployment (Future):** Route 10% traffic to new version, monitor for 15 minutes, gradually increase to 100%
+- **Blue/Green Deployment (Future):** Maintain two full environments, instant traffic switch via load balancer
 ```
 
-### Context: deployment-view (from 05_Operational_Architecture.md)
+### Context: CI/CD Pipeline Details from Architecture (from 05_Operational_Architecture.md)
 
 ```markdown
-<!-- anchor: deployment-view -->
-## 5.2. Deployment View
+**CI/CD Pipeline (GitHub Actions):**
 
-<!-- anchor: target-environment -->
-### 5.2.1. Target Environment
-
-**Cloud Platform:** AWS (Amazon Web Services)
-
-**Rationale:**
-- **Managed Kubernetes:** Amazon EKS provides battle-tested container orchestration with native integration to AWS services (RDS, ElastiCache, CloudFront, S3)
-- **Regional Presence:** AWS has extensive global coverage with data centers in North America and Europe, supporting the initial target markets with <100ms latency requirements
-- **Ecosystem Maturity:** Extensive tooling for monitoring (CloudWatch), logging (CloudWatch Logs), and secret management (Secrets Manager)
-- **Cost Optimization:** Reserved instances, spot instances, and auto-scaling capabilities align with budget constraints
-- **Compliance:** AWS certifications (SOC 2, ISO 27001, GDPR-ready) meet regulatory requirements
+**Stages:**
+1. **Build & Test:**
+   - Checkout code, setup Java 17
+   - Maven build with unit tests
+   - Integration tests using Testcontainers (PostgreSQL, Redis)
+   - SonarQube code quality gate
+2. **Container Build:**
+   - Docker build multi-stage image
+   - Tag with Git SHA and semantic version
+   - Push to ECR
+3. **Security Scan:**
+   - Trivy vulnerability scan on Docker image
+   - Fail pipeline if HIGH/CRITICAL vulnerabilities found
+4. **Deploy to Staging:**
+   - Helm upgrade staging environment with new image tag
+   - Run smoke tests (health checks, critical API endpoints)
+   - Playwright E2E tests for WebSocket flows
+5. **Manual Approval Gate:**
+   - Product owner review and approval for production deploy
+6. **Deploy to Production:**
+   - Helm upgrade production with blue/green strategy
+   - Gradual traffic shift (10% → 50% → 100% over 30 minutes)
+   - Automated rollback if error rate exceeds baseline by 2x
 ```
 
-### Context: container-diagram (from 03_System_Structure_and_Data.md)
+### Context: Testing Strategy (from 03_Verification_and_Glossary.md)
 
 ```markdown
-**Key Containers:**
-- **Web Application (SPA):** React-based single-page application served via CDN, communicating with backend via REST and WebSocket
-- **API Gateway / Load Balancer:** Kubernetes Ingress or cloud load balancer providing TLS termination and sticky session routing
-- **Quarkus Application (Reactive):** Core backend containing business logic, WebSocket handlers, REST controllers, and integration adapters
-- **PostgreSQL Database:** Primary persistent store for users, rooms, votes, subscriptions, and audit logs
-- **Redis Cluster:** In-memory cache for session state, WebSocket message broadcasting (Pub/Sub), and transient room data
-- **Background Job Processor:** Asynchronous worker consuming Redis Streams for report generation, email notifications, and analytics aggregation
+**Unit Testing:**
+
+**Scope:** Individual classes and methods in isolation (services, utilities, validators)
+
+**Framework:** JUnit 5 (backend), Jest/Vitest (frontend)
+
+**Coverage Target:** >90% code coverage for service layer, >80% for overall codebase
+
+**Approach:**
+- Mock external dependencies (repositories, adapters, external services) using Mockito
+- Test business logic thoroughly (happy paths, edge cases, error scenarios)
+- Fast execution (<5 minutes for entire unit test suite)
+- Run on every developer commit and in CI pipeline
+
+**Acceptance Criteria:**
+- All unit tests pass (`mvn test`, `npm run test:unit`)
+- Coverage reports meet targets (verify with JaCoCo, Istanbul)
+- No flaky tests (consistent results across runs)
+
+---
+
+**Integration Testing:**
+
+**Scope:** Multiple components working together with real infrastructure (database, cache, message queue)
+
+**Framework:** Quarkus Test (`@QuarkusTest`), Testcontainers, REST Assured
+
+**Coverage Target:** Critical integration points (API → Service → Repository → Database)
+
+**Approach:**
+- Use Testcontainers for PostgreSQL and Redis (real instances, not mocks)
+- Test REST endpoints end-to-end (request → response with database persistence)
+- Test WebSocket flows (connection → message handling → database → Pub/Sub broadcast)
+- Verify transaction boundaries and data consistency
+- Run in CI pipeline (longer execution time acceptable: 10-15 minutes)
+
+**Acceptance Criteria:**
+- All integration tests pass (`mvn verify`)
+- Testcontainers start successfully (PostgreSQL, Redis)
+- Database schema migrations execute correctly in tests
+- No test pollution (each test isolated with database cleanup)
 ```
 
-### Context: monitoring-metrics (from 05_Operational_Architecture.md)
+### Context: Security Testing (from 03_Verification_and_Glossary.md)
 
 ```markdown
-#### Monitoring Metrics
+**Security Testing:**
 
-**Prometheus Metrics Collection:**
+**Scope:** Identify vulnerabilities and validate security controls
 
-The application exposes Quarkus-generated metrics at `/q/metrics` endpoint in Prometheus format. Custom business metrics are instrumented using Micrometer's `MeterRegistry`.
+**Tools:**
+- **SAST (Static Analysis):** SonarQube code scanning
+- **Dependency Scanning:** Snyk or Dependabot for vulnerable dependencies
+- **Container Scanning:** Trivy for Docker image vulnerabilities
+- **DAST (Dynamic Analysis):** OWASP ZAP scan against running application
 
-**Key Metrics Categories:**
+**Test Areas:**
+- Authentication (JWT validation, OAuth flows, session management)
+- Authorization (RBAC enforcement, tier gating, org admin checks)
+- Input validation (SQL injection, XSS, command injection)
+- Rate limiting (brute force protection)
+- Security headers (HSTS, CSP, X-Frame-Options)
 
-1. **HTTP Request Metrics**
-   - `http_server_requests_seconds_count` - Total request count by endpoint, method, status
-   - `http_server_requests_seconds_sum` - Total request duration
-   - `http_server_requests_seconds_max` - Maximum request duration (with percentiles: p50, p95, p99)
-
-2. **WebSocket Metrics** (custom metrics)
-   - `scrumpoker_websocket_connections_active` - Current active WebSocket connections (gauge)
-   - `scrumpoker_websocket_messages_sent_total` - Total WebSocket messages sent (counter)
-   - `scrumpoker_websocket_disconnections_total` - Total disconnections by reason (counter)
-
-3. **Business Metrics** (custom metrics)
-   - `scrumpoker_active_rooms` - Current number of active estimation rooms (gauge)
-   - `scrumpoker_votes_cast_total` - Total votes cast across all sessions (counter)
-   - `scrumpoker_subscriptions_active` - Active subscriptions by tier (gauge with tier label)
-   - `scrumpoker_round_consensus_rate` - Percentage of rounds achieving consensus (histogram)
-
-4. **JVM Metrics** (Quarkus built-in)
-   - `jvm_memory_used_bytes` - Heap/non-heap memory usage
-   - `jvm_threads_live` - Current thread count
-   - `jvm_gc_pause_seconds` - Garbage collection pause time
-
-5. **Database Metrics** (Hibernate Reactive)
-   - `hikari_connections_active` - Active database connections
-   - `hibernate_query_execution_total` - Query execution count
-   - `hibernate_query_execution_seconds` - Query execution duration
-
-**Grafana Dashboards:**
-
-Three preconfigured dashboards provide operational visibility:
-
-1. **Application Overview Dashboard**
-   - Request rate (requests/second)
-   - Error rate (4xx/5xx percentage)
-   - Latency percentiles (p50, p95, p99)
-   - Active sessions and WebSocket connections
-
-2. **WebSocket Real-Time Dashboard**
-   - Connection count by room
-   - Message throughput (messages/second)
-   - Disconnection rate by reason (network failure, client close, timeout)
-   - Average room lifetime
-
-3. **Business Metrics Dashboard**
-   - Subscription tier distribution (pie chart)
-   - Daily active users (DAU)
-   - Votes cast per hour (time series)
-   - Consensus achievement rate trend
-```
-
-### Context: technology-stack (from 01_Plan_Overview_and_Setup.md)
-
-```markdown
-*   **Technology Stack:**
-    *   **Frontend:**
-        *   Framework: React 18+ with TypeScript
-        *   UI Library: Tailwind CSS + Headless UI
-        *   State Management: Zustand (client state) + React Query (server state)
-        *   WebSocket: Native WebSocket API with reconnection wrapper
-    *   **Backend:**
-        *   Framework: Quarkus 3.x (Reactive mode)
-        *   Language: Java 17 (LTS)
-        *   Runtime: JVM mode (potential future native compilation)
-    *   **Database:**
-        *   Primary: PostgreSQL 15+ (ACID compliance, JSONB support, partitioning)
-        *   ORM: Hibernate Reactive + Panache repositories
-    *   **Messaging/Queues:**
-        *   Redis 7+ Cluster (Pub/Sub for WebSocket broadcasting, Streams for async jobs)
-    *   **Deployment:**
-        *   Containerization: Docker (multi-stage builds)
-        *   Orchestration: Kubernetes (AWS EKS or GCP GKE)
-        *   Cloud Platform: AWS (primary) with CloudFront CDN, RDS, ElastiCache
-    *   **Other Key Libraries/Tools:**
-        *   **Auth:** Quarkus OIDC extension (OAuth2/SSO), SmallRye JWT
-        *   **Payments:** Stripe Java SDK
-        *   **Logging:** SLF4J with JSON formatter, Loki/CloudWatch aggregation
-        *   **Metrics:** Prometheus + Grafana dashboards
-        *   **Testing:** Testcontainers (integration), Playwright (E2E), JUnit 5
+**Acceptance Criteria:**
+- No HIGH or CRITICAL vulnerabilities in dependency scan
+- SonarQube security rating A or B
+- OWASP ZAP scan shows no HIGH risk findings (or findings documented with mitigation plan)
+- Penetration test report (if required for Enterprise customers) shows acceptable risk level
 ```
 
 ---
@@ -182,68 +205,80 @@ The following analysis is based on my direct review of the current codebase. Use
 
 ### Relevant Existing Code
 
-*   **File:** `docker-compose.yml`
-    *   **Summary:** Currently contains only PostgreSQL 15 service with basic configuration. Database name is `planningpoker`, user/password is `dockercompose`, exposed on port `5445:5432`.
-    *   **Recommendation:** You MUST extend this file to add Redis cluster (3 nodes), Prometheus, and Grafana services. Keep the existing PostgreSQL configuration but ensure it aligns with the task requirements (database name should be `scrumpoker` according to the task, but current setup uses `planningpoker` - verify which is correct or update accordingly).
-    *   **Note:** Current setup has healthcheck configured for PostgreSQL - maintain this pattern for other services.
-
-*   **File:** `backend/src/main/resources/application.properties`
-    *   **Summary:** This is the Quarkus configuration file that will define database connection strings, Redis URLs, and other runtime parameters.
-    *   **Recommendation:** You MUST read this file to understand what environment variables need to be templated in `.env.example`. Look for properties related to datasource, Redis, JWT, and any other configurable parameters.
-    *   **Note:** Quarkus uses property names like `quarkus.datasource.reactive.url`, `quarkus.redis.hosts`, etc. The `.env.example` should provide templates for these values.
-
 *   **File:** `backend/pom.xml`
-    *   **Summary:** Maven project configuration with Quarkus 3.15.1, includes dependencies for Hibernate Reactive Panache, PostgreSQL reactive client, Redis client, WebSockets, OIDC, JWT, Micrometer Prometheus, Flyway, and SmallRye Health.
-    *   **Recommendation:** The Prometheus configuration MUST scrape the `/q/metrics` endpoint which is provided by the `quarkus-micrometer-registry-prometheus` dependency already included. Grafana should be configured to pull from Prometheus and display Quarkus/JVM metrics.
-    *   **Note:** Flyway is already configured (`quarkus-flyway` dependency present), so PostgreSQL service should automatically run migrations from `backend/src/main/resources/db/migration/` when the application starts.
+    *   **Summary:** This is the Maven POM file for the backend Quarkus application. It defines Java 17 as the compilation target, includes Quarkus 3.15.1 platform, and has comprehensive dependencies for reactive REST, WebSockets, database access, OAuth2, JWT, metrics, health checks, and testing (JUnit 5, REST Assured).
+    *   **Recommendation:** You MUST use `mvn clean verify` as specified in the task. This will run both unit tests (Surefire) and integration tests (Failsafe). The POM already includes the necessary plugins (Maven Compiler, Surefire, Failsafe, Quarkus). You SHOULD NOT modify the POM file for this task unless there are missing dependencies for SonarQube or Trivy integration.
+    *   **Note:** The POM includes `quarkus-test-vertx` and `rest-assured` for testing, which are required for integration tests with Testcontainers.
 
-*   **File:** `backend/src/main/resources/db/migration/V1__initial_schema.sql`
-    *   **Summary:** Complete database schema migration creating 11 core tables (User, UserPreference, Organization, OrgMember, Subscription, PaymentHistory, Room, RoomParticipant, Round, Vote, SessionHistory, AuditLog) with proper ENUMs, constraints, indexes, and partitioning setup.
-    *   **Recommendation:** The PostgreSQL Docker container SHOULD be configured to automatically run these migrations. Consider whether to run Flyway migrations via Quarkus application startup (preferred) or via a separate init container in docker-compose (less preferred but possible for local dev).
-    *   **Note:** Schema is production-ready with partitioning, soft deletes, and comprehensive indexes. Database user needs sufficient permissions to create tables, types, and partitions.
+*   **File:** `frontend/package.json`
+    *   **Summary:** This is the npm package manifest for the React TypeScript frontend built with Vite. It includes scripts: `dev` (Vite dev server), `build` (TypeScript compile + Vite build), `lint` (ESLint), and `preview` (Vite preview). Dependencies include React 18, React Router, Headless UI, Zustand, React Query, Zod, date-fns, and Recharts.
+    *   **Recommendation:** You MUST use `npm ci` (not `npm install`) for CI environments to ensure reproducible builds. You MUST run `npm run lint` and `npm run build` as specified. The task mentions `npm run test` but the current package.json does NOT have a test script defined. You SHOULD add a test script placeholder (e.g., `"test": "echo \"No tests yet\" && exit 0"`) or skip test step initially until frontend tests are implemented in later iterations.
+    *   **Warning:** The package.json is missing a `test` script. This will cause the frontend CI workflow to fail if you include `npm run test`. You must either add a placeholder test script or comment out the test step in the workflow.
 
-*   **File:** `backend/src/main/java/com/scrumpoker/domain/` (various entity classes)
-    *   **Summary:** JPA entities with Hibernate Reactive Panache already implemented for User, Room, Vote, Organization, Subscription, etc. Entities use UUID primary keys (except Room which uses 6-char String), proper validation annotations, and JSONB columns.
-    *   **Recommendation:** No code changes needed for this task, but understanding the entities helps ensure the database configuration in docker-compose supports the schema requirements (JSONB support, UUID generation, ENUM types).
+*   **File:** `.github/workflows/ci.yml` (existing workflow)
+    *   **Summary:** There is an existing basic CI workflow that uses docker-compose to run tests and SonarQube analysis. It runs `docker-compose run server mvn test` and `docker-compose run server mvn verify sonar:sonar`.
+    *   **Recommendation:** You SHOULD replace or rename this existing workflow because it relies on docker-compose with a "server" service that doesn't exist in the current docker-compose.yml. The new backend-ci.yml workflow should be standalone and not depend on the legacy docker-compose setup. You can either delete the old ci.yml or rename it to ci.yml.legacy for reference.
+    *   **Note:** The existing workflow already includes SonarQube integration with `sonar:sonar` using a `SONAR_TOKEN` secret. You SHOULD reuse this approach in your new workflow.
+
+*   **File:** `docker-compose.yml`
+    *   **Summary:** This file defines infrastructure services (PostgreSQL, Redis 3-node cluster, Prometheus, Grafana) for local development. It does NOT define application containers or a "server" service, which means the old ci.yml workflow is broken.
+    *   **Recommendation:** The new CI workflows should NOT use docker-compose for running the application. Instead, they should use Testcontainers (which is already configured in the backend) for integration tests. The CI workflows only need to set up Java/Node.js and run Maven/npm commands directly.
 
 *   **File:** `README.md`
-    *   **Summary:** Current README exists but content unknown without reading it.
-    *   **Recommendation:** You MUST update the README to include a section on local development setup with docker-compose. Document: prerequisites (Docker, Docker Compose), how to start services (`docker-compose up`), how to stop services, port mappings, accessing UIs (Prometheus, Grafana), database connection details.
+    *   **Summary:** The README currently documents the project setup with docker-compose, Quarkus dev mode, monitoring setup, and basic usage instructions. It does NOT have any GitHub Actions status badges.
+    *   **Recommendation:** You MUST add workflow status badges to the README at the top of the file. The badge format should be: `![Backend CI](https://github.com/OWNER/REPO/workflows/Backend%20CI/badge.svg)` and `![Frontend CI](https://github.com/OWNER/REPO/workflows/Frontend%20CI/badge.svg)`. You can use a placeholder like `YOUR_GITHUB_ORG` that users should replace.
 
 ### Implementation Tips & Notes
 
-*   **Tip:** For Redis cluster mode with 3 nodes, you'll need to use the official Redis image and configure cluster initialization. Consider using `redis:7-alpine` for smaller image size. The cluster setup requires specific configuration for master-replica topology and cluster discovery.
+*   **Tip:** For SonarQube integration in the backend CI workflow, you SHOULD use the Maven SonarQube plugin with `mvn sonar:sonar`. The existing ci.yml workflow shows the pattern: use `-Dsonar.login=${{ secrets.SONAR_TOKEN }}` and `-Dsonar.host.url="https://sonarcloud.io"`. You'll need to configure the `SONAR_TOKEN` secret in GitHub repository settings (or document this requirement).
 
-*   **Tip:** Prometheus configuration file (`infra/local/prometheus.yml`) should define scrape targets. For local development, the Quarkus app runs on the host machine (not in Docker by default), so use `host.docker.internal:8080` to allow the Prometheus container to reach the host machine's Quarkus dev server.
+*   **Tip:** For Trivy container scanning, you'll need to build a Docker image first. However, the current project structure doesn't have a Dockerfile in the backend directory. You have two options:
+    1. Create a basic Dockerfile for the Quarkus application (recommended for completeness).
+    2. Skip the Trivy scan step for now and document it as a TODO, since the task says "even with minimal code" acceptance criteria.
 
-*   **Tip:** Grafana dashboard JSON should be created with a preconfigured Prometheus datasource. You can generate this by:
-    1. Manually configuring Grafana (start it once, add Prometheus datasource, create dashboard)
-    2. Exporting the dashboard JSON via Grafana UI
-    3. Placing the exported JSON in `infra/local/grafana/dashboards/` and mounting it as a volume
-    OR create a minimal dashboard JSON manually following Grafana's schema.
+    For MVP, I recommend option 2: add a comment in the workflow that Trivy scanning will be added once Dockerfile is created in I8.T1.
 
-*   **Tip:** The `.env.example` file should contain placeholder values with comments explaining what each variable is for. Example:
+*   **Note:** The frontend package.json is missing a `test` script. You MUST either:
+    1. Add `"test": "echo \"No tests implemented yet\" && exit 0"` to package.json scripts.
+    2. Comment out or remove the `npm run test` step from the frontend-ci.yml workflow.
+
+    Option 1 is preferred because it makes the workflow complete and documents the missing tests.
+
+*   **Note:** GitHub Actions uses `ubuntu-latest` as the default runner. You SHOULD use specific versions like `ubuntu-22.04` for reproducibility, but `ubuntu-latest` is acceptable for MVP.
+
+*   **Warning:** Testcontainers requires Docker to be available in the CI environment. GitHub Actions runners have Docker pre-installed, so you don't need to configure it explicitly. However, integration tests may take 5-10 minutes to run due to container startup. You SHOULD set a reasonable timeout for test steps (e.g., `timeout-minutes: 15`).
+
+*   **Tip:** For uploading build artifacts (frontend build output), use the GitHub Actions `actions/upload-artifact@v3` action. The artifact should include the `frontend/dist` directory after `npm run build` completes.
+
+*   **Tip:** Workflow triggers should be:
+    ```yaml
+    on:
+      push:
+        branches: [ main ]
+      pull_request:
+        branches: [ main ]
     ```
-    # PostgreSQL Configuration
-    POSTGRES_USER=scrumpoker
-    POSTGRES_PASSWORD=change_me_in_production
-    POSTGRES_DB=scrumpoker
+    This ensures workflows run on pushes to main and on pull requests targeting main.
 
-    # Redis Configuration
-    REDIS_PASSWORD=change_me_in_production
+*   **Important:** The acceptance criteria states "even with minimal code" - this means the workflows should be designed to succeed even if there are no tests written yet (e.g., for frontend). The backend already has the entity classes compiled, so `mvn verify` should pass.
 
-    # JWT Configuration
-    JWT_SECRET=changeme_must_be_long_random_string_min_32_chars
-    ```
+### Dockerfile Consideration
 
-*   **Note:** The existing docker-compose.yml uses port `5445:5432` for PostgreSQL (non-standard). The acceptance criteria states `localhost:5432`, so you may need to change the port mapping to `5432:5432` OR update the acceptance criteria interpretation to use `5445`.
+The backend doesn't currently have a Dockerfile. For the Trivy scan step, you have options:
 
-*   **Note:** For Flyway migrations to run automatically, the Quarkus application must be started AFTER PostgreSQL is ready. In docker-compose, this is handled by the Quarkus application healthcheck depending on PostgreSQL service. However, for local development (Quarkus running in dev mode on host), migrations will run on first app startup.
+1. **Skip Trivy for now**: Add a comment in the workflow explaining that container scanning will be implemented in I8.T1 when the Dockerfile is created. This satisfies "even with minimal code" acceptance criteria.
 
-*   **Warning:** Redis cluster mode requires at least 3 master nodes and optionally 3 replica nodes (6 total) for production HA. For local development, you can simplify to 3 standalone Redis instances or use a single Redis node with cluster mode enabled. Verify the task requirement: "Redis 7 cluster mode with 3 nodes" - interpret this as 3 Redis nodes in cluster topology.
+2. **Create a basic Dockerfile**: Add a simple multi-stage Dockerfile based on the architecture requirements (Red Hat UBI with OpenJDK 17). This is more complete but adds scope beyond the task description.
 
-*   **Warning:** Grafana default credentials are typically `admin/admin` and must be changed on first login. Document this in README. Consider using environment variables to set initial admin password in docker-compose.
+I recommend option 1 for this task, with a TODO comment in the workflow. The task deliverable says "Trivy security scan for backend Docker image" but the acceptance criteria allows for "even with minimal code", which suggests the workflows should be set up even if not all features are fully functional yet.
 
-*   **Important:** The task specifies "PostgreSQL container with automatic schema initialization (Flyway migrations)". Flyway migrations are managed by Quarkus application, NOT by PostgreSQL container. The migrations will execute when Quarkus starts, not when PostgreSQL starts. Make this clear in documentation.
+### GitHub Repository Context
 
-*   **Important:** Volume persistence is critical for PostgreSQL to avoid data loss on container restart. Ensure named volumes are used for `postgres_data` (as already present in current docker-compose.yml). Consider adding volume for Grafana data persistence as well.
+The project is at `/Users/tea/dev/github/planning-poker`, which suggests the GitHub repository is likely `tea/planning-poker` or similar. For the status badges in README, you'll need to use a dynamic approach or document that users need to update the badge URLs with their repository path. A better approach is to add badges with a placeholder:
+
+```markdown
+![Backend CI](https://github.com/YOUR_GITHUB_ORG/planning-poker/workflows/Backend%20CI/badge.svg)
+![Frontend CI](https://github.com/YOUR_GITHUB_ORG/planning-poker/workflows/Frontend%20CI/badge.svg)
+```
+
+You should add these with a note that users need to replace `YOUR_GITHUB_ORG` with their GitHub organization/username.
