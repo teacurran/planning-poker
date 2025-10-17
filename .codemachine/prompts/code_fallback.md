@@ -21,79 +21,200 @@ Create integration tests for all Panache repositories using Testcontainers (Post
 
 ## Issues Detected
 
-**CRITICAL: You broke existing working tests!**
+**CRITICAL:** 83 out of 94 tests are failing with reactive session/transaction errors. The root cause is that most repository tests are using the **WRONG** testing pattern for Hibernate Reactive.
 
-*   **Test Execution Failure:** 66 errors, 94 tests run, only 27 passed
-*   **Pattern Mixing Error:** RoomRepositoryTest and OrganizationRepositoryTest were rewritten to use `@RunOnVertxContext` with `UniAsserter` pattern, causing "No current Vertx context found" errors in ALL repository tests
-*   **Lazy Loading Error:** RoomRepositoryTest lines 115 and 136 throw `LazyInitializationException` when accessing `User.email` and `Organization.name` outside transaction context
-*   **Missing UUID Assignment:** OrganizationRepositoryTest has NullPointerException because `org.orgId` is never set in `createTestOrganization()` helper
-*   **Incorrect Rewrite:** RoomRepositoryTest was ALREADY COMPLETE with 14 passing tests using `@Transactional` pattern (see git history commit 5683da2). You DELETED the working code and replaced it with broken reactive pattern code
+### Test Failure Summary
+
+*   **Test Pattern Error (9 test classes):** The following test classes are using `@Transactional` annotation which is for **blocking/JTA transactions**, NOT reactive transactions. This causes "No current Vertx context found" errors:
+    - `AuditLogRepositoryTest` (8 tests failing)
+    - `OrgMemberRepositoryTest` (7 tests failing)
+    - `OrganizationRepositoryTest` (6 tests failing)
+    - `PaymentHistoryRepositoryTest` (6 tests failing)
+    - `RoomParticipantRepositoryTest` (6 tests failing)
+    - `RoomRepositoryTest` (13 tests failing)
+    - `RoundRepositoryTest` (6 tests failing)
+    - `SessionHistoryRepositoryTest` (7 tests failing)
+    - `SubscriptionRepositoryTest` (6 tests failing)
+    - `UserPreferenceRepositoryTest` (6 tests failing)
+
+*   **Transaction Wrapper Missing (1 test class):** `VoteRepositoryTest` correctly uses `@RunOnVertxContext` + `UniAsserter` but is NOT wrapping database operations in `Panache.withTransaction()` in the `setUp()` method (lines 52-56). This causes "No current Mutiny.Session found" errors (12 tests failing).
+
+*   **Only 1 test class is correct:** `UserRepositoryTest` is the ONLY test file using the correct pattern: `@RunOnVertxContext` + `UniAsserter` + `Panache.withTransaction()` wrapper. All 11 tests in this class pass successfully.
 
 ---
 
 ## Best Approach to Fix
 
-**STOP and READ the existing working code first!**
+You MUST rewrite all failing repository tests to follow the **EXACT pattern** used in `UserRepositoryTest.java`. This is the gold standard reference implementation.
 
-1. **REVERT your changes to RoomRepositoryTest.java** - This file was working perfectly before your changes. Use `git diff HEAD backend/src/test/java/com/scrumpoker/repository/RoomRepositoryTest.java` to see what you broke, then restore the original version using `git checkout HEAD -- backend/src/test/java/com/scrumpoker/repository/RoomRepositoryTest.java`
+### Step-by-Step Fix Instructions
 
-2. **REVERT your changes to OrganizationRepositoryTest.java** - Same issue. Use `git checkout HEAD -- backend/src/test/java/com/scrumpoker/repository/OrganizationRepositoryTest.java`
+**1. For ALL 10 test classes using `@Transactional` (AuditLog, OrgMember, Organization, PaymentHistory, RoomParticipant, Room, Round, SessionHistory, Subscription, UserPreference):**
 
-3. **Use ONLY the @Transactional pattern for ALL repository tests** - The working pattern is shown in VoteRepositoryTest (11 passing tests):
+   **a) Remove these imports:**
    ```java
-   @QuarkusTest
-   class XxxRepositoryTest {
-       @BeforeEach
-       @Transactional
-       void setUp() {
-           repository.deleteAll().await().indefinitely();
-           // Create and persist test entities
-       }
-
-       @Test
-       @Transactional
-       void testSomething() {
-           Entity entity = createEntity();
-           repository.persist(entity).await().indefinitely();
-           Entity found = repository.findById(id).await().indefinitely();
-           assertThat(found).isNotNull();
-       }
-   }
+   import jakarta.transaction.Transactional;
    ```
 
-4. **DO NOT use @RunOnVertxContext or UniAsserter** - These patterns cause context issues and lazy loading exceptions. The `@Transactional` pattern with `.await().indefinitely()` is the correct approach for this codebase.
-
-5. **For relationship navigation tests** - Keep relationships within the same transaction:
+   **b) Add these imports:**
    ```java
+   import io.quarkus.hibernate.reactive.panache.Panache;
+   import io.quarkus.test.vertx.RunOnVertxContext;
+   import io.quarkus.test.vertx.UniAsserter;
+   ```
+
+   **c) Change EVERY method signature from:**
+   ```java
+   @BeforeEach
+   @Transactional
+   void setUp() {
+       repository.deleteAll().await().indefinitely();
+   }
+
    @Test
    @Transactional
-   void testRelationshipNavigation() {
-       repository.persist(entity).await().indefinitely();
-       Entity found = repository.findById(id).await().indefinitely();
-       // Access relationships in same transaction - this works!
-       assertThat(found.relatedEntity).isNotNull();
-       assertThat(found.relatedEntity.someField).isEqualTo(expected);
+   void testSomething() {
+       // test code with .await().indefinitely()
    }
    ```
 
-6. **Always set UUID fields in helper methods** for entities with UUID primary keys:
+   **TO:**
    ```java
-   private Organization createTestOrganization(String name, String domain) {
-       Organization org = new Organization();
-       org.orgId = UUID.randomUUID(); // REQUIRED!
-       org.name = name;
-       // ... rest of fields
-       return org;
+   @BeforeEach
+   @RunOnVertxContext
+   void setUp(UniAsserter asserter) {
+       asserter.execute(() -> Panache.withTransaction(() -> repository.deleteAll()));
+       // If cleaning up multiple repositories, each must be wrapped separately:
+       asserter.execute(() -> Panache.withTransaction(() -> otherRepository.deleteAll()));
+   }
+
+   @Test
+   @RunOnVertxContext
+   void testSomething(UniAsserter asserter) {
+       // For operations that don't return values we care about:
+       asserter.execute(() -> Panache.withTransaction(() -> repository.persist(entity)));
+
+       // For operations that return values we need to assert:
+       asserter.assertThat(() -> Panache.withTransaction(() -> repository.findById(id)), found -> {
+           assertThat(found).isNotNull();
+           assertThat(found.field).isEqualTo("expected");
+       });
    }
    ```
 
-7. **Run `mvn test -Dtest="*RepositoryTest"` after each fix** to verify tests pass before moving to next repository
+   **d) Remove ALL `.await().indefinitely()` calls** - the UniAsserter pattern handles async execution automatically.
 
-**DO NOT:**
-- Use `@RunOnVertxContext` or `UniAsserter` anywhere
-- Mix reactive and blocking patterns
-- Access lazy-loaded relationships outside transaction boundaries
-- Rewrite or modify ANY test file that already has passing tests
-- Create new files - only fix the tests that are actually missing or failing
+**2. For VoteRepositoryTest:**
 
-**Expected outcome:** All repository tests pass using the `@Transactional` pattern demonstrated in VoteRepositoryTest.
+   **a) Fix the `setUp()` method (lines 48-73) to wrap EVERY `deleteAll()` call in `Panache.withTransaction()`:**
+
+   Change from:
+   ```java
+   @BeforeEach
+   @RunOnVertxContext
+   void setUp(UniAsserter asserter) {
+       voteRepository.deleteAll().await().indefinitely();
+       roundRepository.deleteAll().await().indefinitely();
+       participantRepository.deleteAll().await().indefinitely();
+       roomRepository.deleteAll().await().indefinitely();
+       userRepository.deleteAll().await().indefinitely();
+
+       // ... setup code ...
+   }
+   ```
+
+   To:
+   ```java
+   @BeforeEach
+   @RunOnVertxContext
+   void setUp(UniAsserter asserter) {
+       // Clean up in correct order (children first, then parents)
+       asserter.execute(() -> Panache.withTransaction(() -> voteRepository.deleteAll()));
+       asserter.execute(() -> Panache.withTransaction(() -> roundRepository.deleteAll()));
+       asserter.execute(() -> Panache.withTransaction(() -> participantRepository.deleteAll()));
+       asserter.execute(() -> Panache.withTransaction(() -> roomRepository.deleteAll()));
+       asserter.execute(() -> Panache.withTransaction(() -> userRepository.deleteAll()));
+
+       // Setup test data (each persist wrapped in transaction)
+       asserter.execute(() -> Panache.withTransaction(() -> {
+           testUser = createTestUser("voter@example.com", "google", "google-voter");
+           return userRepository.persist(testUser);
+       }));
+
+       asserter.execute(() -> Panache.withTransaction(() -> {
+           testRoom = createTestRoom("vote01", "Vote Test Room", testUser);
+           return roomRepository.persist(testRoom);
+       }));
+
+       asserter.execute(() -> Panache.withTransaction(() -> {
+           testRound = createTestRound(testRoom, 1, "Test Story");
+           return roundRepository.persist(testRound);
+       }));
+
+       asserter.execute(() -> Panache.withTransaction(() -> {
+           testParticipant = createTestParticipant(testRoom, testUser, "Test Voter");
+           return participantRepository.persist(testParticipant);
+       }));
+   }
+   ```
+
+   **b) Fix ALL test methods** - they are currently calling `.await().indefinitely()` directly on repository operations. You MUST wrap each operation in `Panache.withTransaction()` and remove the `.await().indefinitely()` calls. See UserRepositoryTest for the exact pattern.
+
+   For example, change:
+   ```java
+   @Test
+   @RunOnVertxContext
+   void testPersistAndFindById(UniAsserter asserter) {
+       Vote vote = createTestVote(testRound, testParticipant, "5");
+       voteRepository.persist(vote).await().indefinitely();
+       Vote found = voteRepository.findById(vote.voteId).await().indefinitely();
+       assertThat(found).isNotNull();
+       assertThat(found.cardValue).isEqualTo("5");
+   }
+   ```
+
+   To:
+   ```java
+   @Test
+   @RunOnVertxContext
+   void testPersistAndFindById(UniAsserter asserter) {
+       Vote vote = createTestVote(testRound, testParticipant, "5");
+
+       asserter.execute(() -> Panache.withTransaction(() -> voteRepository.persist(vote)));
+
+       asserter.assertThat(() -> Panache.withTransaction(() -> voteRepository.findById(vote.voteId)), found -> {
+           assertThat(found).isNotNull();
+           assertThat(found.cardValue).isEqualTo("5");
+       });
+   }
+   ```
+
+### Critical Rules You MUST Follow
+
+1. **ALWAYS use `@RunOnVertxContext` annotation** on `@BeforeEach` and `@Test` methods
+2. **ALWAYS add `UniAsserter asserter` parameter** to every `@BeforeEach` and `@Test` method
+3. **ALWAYS wrap database operations** in `Panache.withTransaction(() -> ...)`
+4. **NEVER use `.await().indefinitely()`** with the UniAsserter pattern
+5. **Use `asserter.execute()`** for operations that don't need assertions (persist, delete)
+6. **Use `asserter.assertThat()`** for operations that return values you need to assert
+7. **Study UserRepositoryTest** (lines 30-256) - copy this pattern EXACTLY for all other tests
+
+### Reference Implementation
+
+**UserRepositoryTest.java is your GOLD STANDARD.** Every pattern, every transaction wrapper, every assertion style in that file is the CORRECT way to write reactive repository tests. Copy it precisely.
+
+Key patterns from UserRepositoryTest to replicate:
+- Line 34: `asserter.execute(() -> Panache.withTransaction(() -> userRepository.deleteAll()));`
+- Line 47: `asserter.execute(() -> Panache.withTransaction(() -> userRepository.persist(user)));`
+- Line 50-60: `asserter.assertThat(() -> Panache.withTransaction(() -> userRepository.findById(user.userId)), found -> { /* assertions */ });`
+- Lines 118-130: Multi-step update pattern using `.flatMap()`
+- Lines 150-155: Soft delete pattern
+
+### After Fixing
+
+Run `mvn test -Dtest="*RepositoryTest"` to verify ALL 94 tests pass. You MUST see:
+```
+[INFO] Tests run: 94, Failures: 0, Errors: 0, Skipped: 0
+```
+
+If ANY tests still fail, you have NOT correctly applied the UniAsserter + Panache.withTransaction pattern. Review UserRepositoryTest again and ensure EXACT pattern matching.

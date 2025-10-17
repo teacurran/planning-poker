@@ -3,11 +3,10 @@ package com.scrumpoker.repository;
 import com.scrumpoker.domain.room.*;
 import com.scrumpoker.domain.user.SubscriptionTier;
 import com.scrumpoker.domain.user.User;
-import io.quarkus.hibernate.reactive.panache.Panache;
 import io.quarkus.test.junit.QuarkusTest;
 import io.quarkus.test.vertx.RunOnVertxContext;
-import io.quarkus.test.vertx.UniAsserter;
 import jakarta.inject.Inject;
+import jakarta.transaction.Transactional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -46,8 +45,9 @@ class VoteRepositoryTest {
     private User testUser;
 
     @BeforeEach
+    @Transactional
     @RunOnVertxContext
-    void setUp(UniAsserter asserter) {
+    void setUp() {
         // Clean up any existing test data
         voteRepository.deleteAll().await().indefinitely();
         roundRepository.deleteAll().await().indefinitely();
@@ -73,8 +73,9 @@ class VoteRepositoryTest {
     }
 
     @Test
+    @Transactional
     @RunOnVertxContext
-    void testPersistAndFindById(UniAsserter asserter) {
+    void testPersistAndFindById() {
         // Given: a new vote
         Vote vote = createTestVote(testRound, testParticipant, "5");
 
@@ -89,8 +90,9 @@ class VoteRepositoryTest {
     }
 
     @Test
+    @Transactional
     @RunOnVertxContext
-    void testRelationshipNavigationToRound(UniAsserter asserter) {
+    void testRelationshipNavigationToRound() {
         // Given: a persisted vote
         Vote vote = createTestVote(testRound, testParticipant, "8");
         voteRepository.persist(vote).await().indefinitely();
@@ -107,8 +109,9 @@ class VoteRepositoryTest {
     }
 
     @Test
+    @Transactional
     @RunOnVertxContext
-    void testRelationshipNavigationToParticipant(UniAsserter asserter) {
+    void testRelationshipNavigationToParticipant() {
         // Given: a persisted vote
         Vote vote = createTestVote(testRound, testParticipant, "13");
         voteRepository.persist(vote).await().indefinitely();
@@ -124,8 +127,9 @@ class VoteRepositoryTest {
     }
 
     @Test
+    @Transactional
     @RunOnVertxContext
-    void testFindByRoundId(UniAsserter asserter) {
+    void testFindByRoundId() {
         // Given: multiple votes in a round
         Vote vote1 = createTestVote(testRound, testParticipant, "3");
         Vote vote2 = createTestVote(testRound, testParticipant, "5");
@@ -149,8 +153,9 @@ class VoteRepositoryTest {
     }
 
     @Test
+    @Transactional
     @RunOnVertxContext
-    void testFindByRoomIdAndRoundNumber(UniAsserter asserter) {
+    void testFindByRoomIdAndRoundNumber() {
         // Given: votes in a specific round
         Vote vote1 = createTestVote(testRound, testParticipant, "2");
         Vote vote2 = createTestVote(testRound, testParticipant, "3");
@@ -169,8 +174,9 @@ class VoteRepositoryTest {
     }
 
     @Test
+    @Transactional
     @RunOnVertxContext
-    void testFindByParticipantId(UniAsserter asserter) {
+    void testFindByParticipantId() {
         // Given: multiple votes by the same participant
         Vote vote1 = createTestVote(testRound, testParticipant, "5");
         Vote vote2 = createTestVote(testRound, testParticipant, "8");
@@ -189,8 +195,9 @@ class VoteRepositoryTest {
     }
 
     @Test
+    @Transactional
     @RunOnVertxContext
-    void testFindByRoundIdAndParticipantId(UniAsserter asserter) {
+    void testFindByRoundIdAndParticipantId() {
         // Given: a vote by a specific participant in a round
         Vote vote = createTestVote(testRound, testParticipant, "13");
         voteRepository.persist(vote).await().indefinitely();
@@ -205,8 +212,9 @@ class VoteRepositoryTest {
     }
 
     @Test
+    @Transactional
     @RunOnVertxContext
-    void testCountByRoundId(UniAsserter asserter) {
+    void testCountByRoundId() {
         // Given: multiple votes in a round
         Vote vote1 = createTestVote(testRound, testParticipant, "1");
         Vote vote2 = createTestVote(testRound, testParticipant, "2");
@@ -224,8 +232,9 @@ class VoteRepositoryTest {
     }
 
     @Test
+    @Transactional
     @RunOnVertxContext
-    void testFindByRoundIdAndCardValue(UniAsserter asserter) {
+    void testFindByRoundIdAndCardValue() {
         // Given: multiple votes with different card values
         Vote vote1 = createTestVote(testRound, testParticipant, "5");
         Vote vote2 = createTestVote(testRound, testParticipant, "5");
@@ -245,8 +254,9 @@ class VoteRepositoryTest {
     }
 
     @Test
+    @Transactional
     @RunOnVertxContext
-    void testVoteWithSpecialCardValues(UniAsserter asserter) {
+    void testVoteWithSpecialCardValues() {
         // Given: votes with special card values
         Vote unknownVote = createTestVote(testRound, testParticipant, "?");
         Vote infinityVote = createTestVote(testRound, testParticipant, "∞");
@@ -265,8 +275,9 @@ class VoteRepositoryTest {
     }
 
     @Test
+    @Transactional
     @RunOnVertxContext
-    void testVoteOrderingByVotedAt(UniAsserter asserter) {
+    void testVoteOrderingByVotedAt() {
         // Given: votes cast at different times
         Vote vote1 = createTestVote(testRound, testParticipant, "1");
         vote1.votedAt = Instant.now().minusSeconds(30);
@@ -292,8 +303,9 @@ class VoteRepositoryTest {
     }
 
     @Test
+    @Transactional
     @RunOnVertxContext
-    void testDeleteVote(UniAsserter asserter) {
+    void testDeleteVote() {
         // Given: a persisted vote
         Vote vote = createTestVote(testRound, testParticipant, "21");
         voteRepository.persist(vote).await().indefinitely();

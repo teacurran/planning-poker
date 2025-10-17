@@ -1,15 +1,14 @@
 package com.scrumpoker.repository;
 
 import com.scrumpoker.domain.organization.Organization;
-import io.quarkus.hibernate.reactive.panache.Panache;
 import io.quarkus.test.junit.QuarkusTest;
-import io.quarkus.test.vertx.RunOnVertxContext;
-import io.quarkus.test.vertx.UniAsserter;
 import jakarta.inject.Inject;
+import jakarta.transaction.Transactional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import java.time.Instant;
+import java.util.List;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -24,127 +23,119 @@ class OrganizationRepositoryTest {
     OrganizationRepository organizationRepository;
 
     @BeforeEach
-    @RunOnVertxContext
-    void setUp(UniAsserter asserter) {
-        asserter.execute(() -> Panache.withTransaction(() -> organizationRepository.deleteAll()));
+    @Transactional
+    void setUp() {
+        organizationRepository.deleteAll().await().indefinitely();
     }
 
     @Test
-    @RunOnVertxContext
-    void testPersistAndFindById(UniAsserter asserter) {
+    @Transactional
+    void testPersistAndFindById() {
         // Given: a new organization
         Organization org = createTestOrganization("Acme Corp", "acme.com");
 
         // When: persisting the organization
-        asserter.execute(() -> Panache.withTransaction(() -> organizationRepository.persist(org)));
+        organizationRepository.persist(org).await().indefinitely();
 
         // Then: the organization can be retrieved
-        asserter.assertThat(() -> Panache.withTransaction(() -> organizationRepository.findById(org.orgId)), found -> {
-            assertThat(found).isNotNull();
-            assertThat(found.name).isEqualTo("Acme Corp");
-            assertThat(found.domain).isEqualTo("acme.com");
-        });
+        Organization found = organizationRepository.findById(org.orgId).await().indefinitely();
+        assertThat(found).isNotNull();
+        assertThat(found.name).isEqualTo("Acme Corp");
+        assertThat(found.domain).isEqualTo("acme.com");
     }
 
     @Test
-    @RunOnVertxContext
-    void testJsonbSsoConfig(UniAsserter asserter) {
+    @Transactional
+    void testJsonbSsoConfig() {
         // Given: organization with JSONB SSO config
         Organization org = createTestOrganization("SSO Org", "sso.com");
         String ssoConfig = "{\"provider\":\"okta\",\"issuer\":\"https://okta.com\",\"clientId\":\"abc123\"}";
         org.ssoConfig = ssoConfig;
 
         // When: persisting and retrieving
-        asserter.execute(() -> Panache.withTransaction(() -> organizationRepository.persist(org)));
+        organizationRepository.persist(org).await().indefinitely();
+        Organization found = organizationRepository.findById(org.orgId).await().indefinitely();
 
         // Then: JSONB SSO config persists correctly
-        asserter.assertThat(() -> Panache.withTransaction(() -> organizationRepository.findById(org.orgId)), found -> {
-            assertThat(found.ssoConfig).isEqualTo(ssoConfig);
-            assertThat(found.ssoConfig).contains("okta");
-        });
+        assertThat(found.ssoConfig).isEqualTo(ssoConfig);
+        assertThat(found.ssoConfig).contains("okta");
     }
 
     @Test
-    @RunOnVertxContext
-    void testFindByDomain(UniAsserter asserter) {
+    @Transactional
+    void testFindByDomain() {
         // Given: persisted organization
         Organization org = createTestOrganization("Test Org", "test.com");
-        asserter.execute(() -> Panache.withTransaction(() -> organizationRepository.persist(org)));
+        organizationRepository.persist(org).await().indefinitely();
 
         // When: finding by domain
+        Organization found = organizationRepository.findByDomain("test.com").await().indefinitely();
+
         // Then: organization is found
-        asserter.assertThat(() -> Panache.withTransaction(() -> organizationRepository.findByDomain("test.com")), found -> {
-            assertThat(found).isNotNull();
-            assertThat(found.orgId).isEqualTo(org.orgId);
-        });
+        assertThat(found).isNotNull();
+        assertThat(found.orgId).isEqualTo(org.orgId);
     }
 
     @Test
-    @RunOnVertxContext
-    void testSearchByName(UniAsserter asserter) {
+    @Transactional
+    void testSearchByName() {
         // Given: multiple organizations
         Organization org1 = createTestOrganization("Acme Corporation", "acme.com");
         Organization org2 = createTestOrganization("Acme Inc", "acmeinc.com");
         Organization org3 = createTestOrganization("Test Corp", "test.com");
 
-        asserter.execute(() -> Panache.withTransaction(() -> organizationRepository.persist(org1)));
-        asserter.execute(() -> Panache.withTransaction(() -> organizationRepository.persist(org2)));
-        asserter.execute(() -> Panache.withTransaction(() -> organizationRepository.persist(org3)));
+        organizationRepository.persist(org1).await().indefinitely();
+        organizationRepository.persist(org2).await().indefinitely();
+        organizationRepository.persist(org3).await().indefinitely();
 
         // When: searching by name pattern
+        List<Organization> results = organizationRepository.searchByName("acme").await().indefinitely();
+
         // Then: matching organizations are returned
-        asserter.assertThat(() -> Panache.withTransaction(() -> organizationRepository.searchByName("acme")), results -> {
-            assertThat(results).hasSize(2);
-            assertThat(results).extracting(o -> o.name)
-                    .containsExactlyInAnyOrder("Acme Corporation", "Acme Inc");
-        });
+        assertThat(results).hasSize(2);
+        assertThat(results).extracting(o -> o.name)
+                .containsExactlyInAnyOrder("Acme Corporation", "Acme Inc");
     }
 
     @Test
-    @RunOnVertxContext
-    void testCountAll(UniAsserter asserter) {
+    @Transactional
+    void testCountAll() {
         // Given: multiple organizations
-        asserter.execute(() -> Panache.withTransaction(() -> organizationRepository.persist(createTestOrganization("Org1", "org1.com"))));
-        asserter.execute(() -> Panache.withTransaction(() -> organizationRepository.persist(createTestOrganization("Org2", "org2.com"))));
+        organizationRepository.persist(createTestOrganization("Org1", "org1.com")).await().indefinitely();
+        organizationRepository.persist(createTestOrganization("Org2", "org2.com")).await().indefinitely();
 
         // When: counting all organizations
+        Long count = organizationRepository.countAll().await().indefinitely();
+
         // Then: correct count is returned
-        asserter.assertThat(() -> Panache.withTransaction(() -> organizationRepository.countAll()), count -> {
-            assertThat(count).isEqualTo(2L);
-        });
+        assertThat(count).isEqualTo(2);
     }
 
     @Test
-    @RunOnVertxContext
-    void testUpdateOrganization(UniAsserter asserter) {
+    @Transactional
+    void testUpdateOrganization() {
         // Given: persisted organization
         Organization org = createTestOrganization("Old Name", "old.com");
-        asserter.execute(() -> Panache.withTransaction(() -> organizationRepository.persist(org)));
+        organizationRepository.persist(org).await().indefinitely();
 
         // When: updating organization
-        asserter.execute(() -> Panache.withTransaction(() ->
-                organizationRepository.findById(org.orgId).flatMap(found -> {
-                    found.name = "New Name";
-                    found.domain = "new.com";
-                    return organizationRepository.persist(found);
-                })
-        ));
+        org.name = "New Name";
+        org.domain = "new.com";
+        organizationRepository.persist(org).await().indefinitely();
 
         // Then: changes are persisted
-        asserter.assertThat(() -> Panache.withTransaction(() -> organizationRepository.findById(org.orgId)), updated -> {
-            assertThat(updated.name).isEqualTo("New Name");
-            assertThat(updated.domain).isEqualTo("new.com");
-        });
+        Organization updated = organizationRepository.findById(org.orgId).await().indefinitely();
+        assertThat(updated.name).isEqualTo("New Name");
+        assertThat(updated.domain).isEqualTo("new.com");
     }
 
     private Organization createTestOrganization(String name, String domain) {
         Organization org = new Organization();
+        org.orgId = UUID.randomUUID();
         org.name = name;
         org.domain = domain;
         org.ssoConfig = "{}";
         org.branding = "{}";
-        org.createdAt = Instant.now();
-        org.updatedAt = Instant.now();
         return org;
     }
 }
