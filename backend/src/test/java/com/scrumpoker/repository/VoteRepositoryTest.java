@@ -1,0 +1,372 @@
+package com.scrumpoker.repository;
+
+import com.scrumpoker.domain.room.*;
+import com.scrumpoker.domain.user.SubscriptionTier;
+import com.scrumpoker.domain.user.User;
+import io.quarkus.test.junit.QuarkusTest;
+import jakarta.inject.Inject;
+import jakarta.transaction.Transactional;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+
+import java.time.Instant;
+import java.util.List;
+import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+/**
+ * Integration tests for VoteRepository.
+ * Tests CRUD operations, relationship navigation to Round and Participant,
+ * and complex queries using Testcontainers PostgreSQL.
+ */
+@QuarkusTest
+class VoteRepositoryTest {
+
+    @Inject
+    VoteRepository voteRepository;
+
+    @Inject
+    RoundRepository roundRepository;
+
+    @Inject
+    RoomRepository roomRepository;
+
+    @Inject
+    RoomParticipantRepository participantRepository;
+
+    @Inject
+    UserRepository userRepository;
+
+    private Room testRoom;
+    private Round testRound;
+    private RoomParticipant testParticipant;
+    private User testUser;
+
+    @BeforeEach
+    @Transactional
+    void setUp() {
+        // Clean up any existing test data
+        voteRepository.deleteAll().await().indefinitely();
+        roundRepository.deleteAll().await().indefinitely();
+        participantRepository.deleteAll().await().indefinitely();
+        roomRepository.deleteAll().await().indefinitely();
+        userRepository.deleteAll().await().indefinitely();
+
+        // Create test user
+        testUser = createTestUser("voter@example.com", "google", "google-voter");
+        userRepository.persist(testUser).await().indefinitely();
+
+        // Create test room
+        testRoom = createTestRoom("vote01", "Vote Test Room", testUser);
+        roomRepository.persist(testRoom).await().indefinitely();
+
+        // Create test round
+        testRound = createTestRound(testRoom, 1, "Test Story");
+        roundRepository.persist(testRound).await().indefinitely();
+
+        // Create test participant
+        testParticipant = createTestParticipant(testRoom, testUser, "Test Voter");
+        participantRepository.persist(testParticipant).await().indefinitely();
+    }
+
+    @Test
+    @Transactional
+    void testPersistAndFindById() {
+        // Given: a new vote
+        Vote vote = createTestVote(testRound, testParticipant, "5");
+
+        // When: persisting the vote
+        voteRepository.persist(vote).await().indefinitely();
+
+        // Then: the vote can be retrieved by ID
+        Vote found = voteRepository.findById(vote.voteId).await().indefinitely();
+        assertThat(found).isNotNull();
+        assertThat(found.cardValue).isEqualTo("5");
+        assertThat(found.votedAt).isNotNull();
+    }
+
+    @Test
+    @Transactional
+    void testRelationshipNavigationToRound() {
+        // Given: a persisted vote
+        Vote vote = createTestVote(testRound, testParticipant, "8");
+        voteRepository.persist(vote).await().indefinitely();
+
+        // When: retrieving the vote
+        Vote found = voteRepository.findById(vote.voteId).await().indefinitely();
+
+        // Then: the round relationship can be navigated
+        assertThat(found.round).isNotNull();
+        Round round = found.round;
+        assertThat(round.roundId).isEqualTo(testRound.roundId);
+        assertThat(round.roundNumber).isEqualTo(1);
+        assertThat(round.storyTitle).isEqualTo("Test Story");
+    }
+
+    @Test
+    @Transactional
+    void testRelationshipNavigationToParticipant() {
+        // Given: a persisted vote
+        Vote vote = createTestVote(testRound, testParticipant, "13");
+        voteRepository.persist(vote).await().indefinitely();
+
+        // When: retrieving the vote
+        Vote found = voteRepository.findById(vote.voteId).await().indefinitely();
+
+        // Then: the participant relationship can be navigated
+        assertThat(found.participant).isNotNull();
+        RoomParticipant participant = found.participant;
+        assertThat(participant.participantId).isEqualTo(testParticipant.participantId);
+        assertThat(participant.displayName).isEqualTo("Test Voter");
+    }
+
+    @Test
+    @Transactional
+    void testFindByRoundId() {
+        // Given: multiple votes in a round
+        Vote vote1 = createTestVote(testRound, testParticipant, "3");
+        Vote vote2 = createTestVote(testRound, testParticipant, "5");
+        Vote vote3 = createTestVote(testRound, testParticipant, "8");
+
+        vote1.votedAt = Instant.now().minusMillis(30);
+        vote2.votedAt = Instant.now().minusMillis(20);
+        vote3.votedAt = Instant.now().minusMillis(10);
+
+        voteRepository.persist(vote1).await().indefinitely();
+        voteRepository.persist(vote2).await().indefinitely();
+        voteRepository.persist(vote3).await().indefinitely();
+
+        // When: finding votes by round ID
+        List<Vote> votes = voteRepository.findByRoundId(testRound.roundId).await().indefinitely();
+
+        // Then: all votes in the round are returned, ordered by votedAt
+        assertThat(votes).hasSize(3);
+        assertThat(votes).extracting(v -> v.cardValue)
+                .containsExactly("3", "5", "8");
+    }
+
+    @Test
+    @Transactional
+    void testFindByRoomIdAndRoundNumber() {
+        // Given: votes in a specific round
+        Vote vote1 = createTestVote(testRound, testParticipant, "2");
+        Vote vote2 = createTestVote(testRound, testParticipant, "3");
+
+        voteRepository.persist(vote1).await().indefinitely();
+        voteRepository.persist(vote2).await().indefinitely();
+
+        // When: finding votes by room ID and round number
+        List<Vote> votes = voteRepository.findByRoomIdAndRoundNumber("vote01", 1)
+                .await().indefinitely();
+
+        // Then: votes from the specified round are returned
+        assertThat(votes).hasSize(2);
+        assertThat(votes).extracting(v -> v.cardValue)
+                .containsExactlyInAnyOrder("2", "3");
+    }
+
+    @Test
+    @Transactional
+    void testFindByParticipantId() {
+        // Given: multiple votes by the same participant
+        Vote vote1 = createTestVote(testRound, testParticipant, "5");
+        Vote vote2 = createTestVote(testRound, testParticipant, "8");
+
+        voteRepository.persist(vote1).await().indefinitely();
+        voteRepository.persist(vote2).await().indefinitely();
+
+        // When: finding votes by participant ID
+        List<Vote> votes = voteRepository.findByParticipantId(testParticipant.participantId)
+                .await().indefinitely();
+
+        // Then: all votes by the participant are returned
+        assertThat(votes).hasSize(2);
+        assertThat(votes).extracting(v -> v.cardValue)
+                .containsExactlyInAnyOrder("5", "8");
+    }
+
+    @Test
+    @Transactional
+    void testFindByRoundIdAndParticipantId() {
+        // Given: a vote by a specific participant in a round
+        Vote vote = createTestVote(testRound, testParticipant, "13");
+        voteRepository.persist(vote).await().indefinitely();
+
+        // When: finding the specific vote
+        Vote found = voteRepository.findByRoundIdAndParticipantId(
+                testRound.roundId, testParticipant.participantId).await().indefinitely();
+
+        // Then: the vote is found
+        assertThat(found).isNotNull();
+        assertThat(found.cardValue).isEqualTo("13");
+    }
+
+    @Test
+    @Transactional
+    void testCountByRoundId() {
+        // Given: multiple votes in a round
+        Vote vote1 = createTestVote(testRound, testParticipant, "1");
+        Vote vote2 = createTestVote(testRound, testParticipant, "2");
+        Vote vote3 = createTestVote(testRound, testParticipant, "3");
+
+        voteRepository.persist(vote1).await().indefinitely();
+        voteRepository.persist(vote2).await().indefinitely();
+        voteRepository.persist(vote3).await().indefinitely();
+
+        // When: counting votes in the round
+        Long count = voteRepository.countByRoundId(testRound.roundId).await().indefinitely();
+
+        // Then: the correct count is returned
+        assertThat(count).isEqualTo(3);
+    }
+
+    @Test
+    @Transactional
+    void testFindByRoundIdAndCardValue() {
+        // Given: multiple votes with different card values
+        Vote vote1 = createTestVote(testRound, testParticipant, "5");
+        Vote vote2 = createTestVote(testRound, testParticipant, "5");
+        Vote vote3 = createTestVote(testRound, testParticipant, "8");
+
+        voteRepository.persist(vote1).await().indefinitely();
+        voteRepository.persist(vote2).await().indefinitely();
+        voteRepository.persist(vote3).await().indefinitely();
+
+        // When: finding votes with a specific card value
+        List<Vote> fiveVotes = voteRepository.findByRoundIdAndCardValue(testRound.roundId, "5")
+                .await().indefinitely();
+
+        // Then: only votes with the specified card value are returned
+        assertThat(fiveVotes).hasSize(2);
+        assertThat(fiveVotes).allMatch(v -> v.cardValue.equals("5"));
+    }
+
+    @Test
+    @Transactional
+    void testVoteWithSpecialCardValues() {
+        // Given: votes with special card values
+        Vote unknownVote = createTestVote(testRound, testParticipant, "?");
+        Vote infinityVote = createTestVote(testRound, testParticipant, "∞");
+        Vote coffeeVote = createTestVote(testRound, testParticipant, "☕");
+
+        // When: persisting votes with special characters
+        voteRepository.persist(unknownVote).await().indefinitely();
+        voteRepository.persist(infinityVote).await().indefinitely();
+        voteRepository.persist(coffeeVote).await().indefinitely();
+
+        // Then: special card values are persisted correctly
+        List<Vote> votes = voteRepository.findByRoundId(testRound.roundId).await().indefinitely();
+        assertThat(votes).hasSize(3);
+        assertThat(votes).extracting(v -> v.cardValue)
+                .containsExactlyInAnyOrder("?", "∞", "☕");
+    }
+
+    @Test
+    @Transactional
+    void testVoteOrderingByVotedAt() {
+        // Given: votes cast at different times
+        Vote vote1 = createTestVote(testRound, testParticipant, "1");
+        vote1.votedAt = Instant.now().minusSeconds(30);
+
+        Vote vote2 = createTestVote(testRound, testParticipant, "2");
+        vote2.votedAt = Instant.now().minusSeconds(20);
+
+        Vote vote3 = createTestVote(testRound, testParticipant, "3");
+        vote3.votedAt = Instant.now().minusSeconds(10);
+
+        voteRepository.persist(vote1).await().indefinitely();
+        voteRepository.persist(vote2).await().indefinitely();
+        voteRepository.persist(vote3).await().indefinitely();
+
+        // When: finding votes by round ID
+        List<Vote> votes = voteRepository.findByRoundId(testRound.roundId).await().indefinitely();
+
+        // Then: votes are ordered by votedAt (earliest first)
+        assertThat(votes).hasSize(3);
+        assertThat(votes.get(0).cardValue).isEqualTo("1");
+        assertThat(votes.get(1).cardValue).isEqualTo("2");
+        assertThat(votes.get(2).cardValue).isEqualTo("3");
+    }
+
+    @Test
+    @Transactional
+    void testDeleteVote() {
+        // Given: a persisted vote
+        Vote vote = createTestVote(testRound, testParticipant, "21");
+        voteRepository.persist(vote).await().indefinitely();
+        UUID voteId = vote.voteId;
+
+        // When: deleting the vote
+        voteRepository.delete(vote).await().indefinitely();
+
+        // Then: the vote no longer exists
+        Vote found = voteRepository.findById(voteId).await().indefinitely();
+        assertThat(found).isNull();
+    }
+
+    /**
+     * Helper method to create test users.
+     */
+    private User createTestUser(String email, String provider, String subject) {
+        User user = new User();
+        user.userId = UUID.randomUUID();
+        user.email = email;
+        user.oauthProvider = provider;
+        user.oauthSubject = subject;
+        user.displayName = "Test User";
+        user.subscriptionTier = SubscriptionTier.FREE;
+        return user;
+    }
+
+    /**
+     * Helper method to create test rooms.
+     */
+    private Room createTestRoom(String roomId, String title, User owner) {
+        Room room = new Room();
+        room.roomId = roomId;
+        room.title = title;
+        room.owner = owner;
+        room.privacyMode = PrivacyMode.PUBLIC;
+        room.config = "{\"deckType\":\"fibonacci\"}";
+        return room;
+    }
+
+    /**
+     * Helper method to create test rounds.
+     */
+    private Round createTestRound(Room room, Integer roundNumber, String storyTitle) {
+        Round round = new Round();
+        round.roundId = UUID.randomUUID();
+        round.room = room;
+        round.roundNumber = roundNumber;
+        round.storyTitle = storyTitle;
+        return round;
+    }
+
+    /**
+     * Helper method to create test participants.
+     */
+    private RoomParticipant createTestParticipant(Room room, User user, String displayName) {
+        RoomParticipant participant = new RoomParticipant();
+        participant.participantId = UUID.randomUUID();
+        participant.room = room;
+        participant.user = user;
+        participant.displayName = displayName;
+        participant.role = RoomRole.VOTER;
+        return participant;
+    }
+
+    /**
+     * Helper method to create test votes.
+     */
+    private Vote createTestVote(Round round, RoomParticipant participant, String cardValue) {
+        Vote vote = new Vote();
+        vote.voteId = UUID.randomUUID();
+        vote.round = round;
+        vote.participant = participant;
+        vote.cardValue = cardValue;
+        vote.votedAt = Instant.now();
+        return vote;
+    }
+}
