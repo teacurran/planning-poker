@@ -1,0 +1,812 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://api.planningpoker.example.com/schemas/websocket-messages.json",
+  "title": "Planning Poker WebSocket Protocol - Message Schemas",
+  "description": "JSON Schema definitions for WebSocket message payloads in the Planning Poker real-time protocol",
+
+  "definitions": {
+    "MessageEnvelope": {
+      "type": "object",
+      "required": ["type", "requestId", "payload"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "pattern": "^[a-z]+\\.[a-z_]+\\.v[0-9]+$",
+          "description": "Versioned message type following pattern: entity.action.version",
+          "examples": ["vote.cast.v1", "room.join.v1", "error.v1"]
+        },
+        "requestId": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Unique request identifier for request/response correlation (UUID v4)"
+        },
+        "payload": {
+          "type": "object",
+          "description": "Message-specific payload (schema depends on message type)"
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "RoomRole": {
+      "type": "string",
+      "enum": ["HOST", "VOTER", "OBSERVER"],
+      "description": "Participant role in the estimation room"
+    },
+
+    "DeckType": {
+      "type": "string",
+      "enum": ["fibonacci", "tshirt", "powers_of_2", "custom"],
+      "description": "Type of estimation deck used in room"
+    },
+
+    "RoomJoinPayload": {
+      "type": "object",
+      "required": ["displayName", "role"],
+      "properties": {
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "description": "Display name for participant in room"
+        },
+        "role": {
+          "$ref": "#/definitions/RoomRole",
+          "description": "Requested role (server may override based on room configuration)"
+        },
+        "avatarUrl": {
+          "type": "string",
+          "format": "uri",
+          "maxLength": 500,
+          "description": "Optional avatar URL"
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "RoomLeavePayload": {
+      "type": "object",
+      "properties": {
+        "reason": {
+          "type": "string",
+          "enum": ["user_initiated", "timeout", "kicked"],
+          "description": "Reason for leaving"
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "VoteCastPayload": {
+      "type": "object",
+      "required": ["cardValue"],
+      "properties": {
+        "cardValue": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 10,
+          "description": "Selected card value from current deck (e.g., '5', '8', 'XL', '?')"
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "RoundStartPayload": {
+      "type": "object",
+      "properties": {
+        "storyTitle": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "Title or description of the user story being estimated"
+        },
+        "timerDurationSeconds": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 600,
+          "description": "Optional timer duration for this round"
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "RoundRevealPayload": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false,
+      "description": "Empty payload - host triggers reveal of current round"
+    },
+
+    "RoundResetPayload": {
+      "type": "object",
+      "properties": {
+        "clearVotes": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether to clear existing votes when resetting"
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "ChatMessagePayload": {
+      "type": "object",
+      "required": ["message"],
+      "properties": {
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000,
+          "description": "Chat message content"
+        },
+        "replyToMessageId": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Optional message ID this is replying to"
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "PresenceUpdatePayload": {
+      "type": "object",
+      "required": ["status"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["ready", "away", "typing"],
+          "description": "Participant presence status"
+        },
+        "customMessage": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "Optional custom status message"
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "RoomStatePayload": {
+      "type": "object",
+      "required": ["roomId", "title", "config", "participants", "currentRound"],
+      "properties": {
+        "roomId": {
+          "type": "string",
+          "pattern": "^[a-z0-9]{6}$",
+          "description": "6-character room identifier"
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 255,
+          "description": "Room display name"
+        },
+        "config": {
+          "type": "object",
+          "required": ["deckType"],
+          "properties": {
+            "deckType": {
+              "$ref": "#/definitions/DeckType"
+            },
+            "customDeck": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "maxLength": 10
+              },
+              "description": "Custom card values if deckType is 'custom'"
+            },
+            "timerEnabled": {
+              "type": "boolean",
+              "description": "Whether voting timer is enabled"
+            },
+            "timerDurationSeconds": {
+              "type": "integer",
+              "minimum": 10,
+              "maximum": 600,
+              "description": "Default timer duration"
+            },
+            "allowObservers": {
+              "type": "boolean",
+              "description": "Whether observers are allowed"
+            }
+          }
+        },
+        "participants": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["participantId", "displayName", "role", "connectedAt"],
+            "properties": {
+              "participantId": {
+                "type": "string",
+                "description": "Unique participant identifier"
+              },
+              "displayName": {
+                "type": "string",
+                "maxLength": 100
+              },
+              "avatarUrl": {
+                "type": "string",
+                "format": "uri",
+                "maxLength": 500
+              },
+              "role": {
+                "$ref": "#/definitions/RoomRole"
+              },
+              "connectedAt": {
+                "type": "string",
+                "format": "date-time",
+                "description": "ISO 8601 timestamp of connection"
+              },
+              "hasVoted": {
+                "type": "boolean",
+                "description": "Whether participant has voted in current round (before reveal)"
+              }
+            }
+          }
+        },
+        "currentRound": {
+          "type": "object",
+          "required": ["roundId", "roundNumber", "startedAt", "revealed"],
+          "properties": {
+            "roundId": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "roundNumber": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Sequential round number"
+            },
+            "storyTitle": {
+              "type": "string",
+              "maxLength": 500
+            },
+            "startedAt": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "revealed": {
+              "type": "boolean",
+              "description": "Whether votes have been revealed"
+            },
+            "revealedAt": {
+              "type": "string",
+              "format": "date-time",
+              "description": "When votes were revealed (if revealed=true)"
+            }
+          }
+        },
+        "lastEventId": {
+          "type": "string",
+          "format": "uuid",
+          "description": "ID of last event for replay on reconnection"
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "RoomParticipantJoinedPayload": {
+      "type": "object",
+      "required": ["participantId", "displayName", "role", "connectedAt"],
+      "properties": {
+        "participantId": {
+          "type": "string",
+          "description": "Unique participant identifier"
+        },
+        "displayName": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "avatarUrl": {
+          "type": "string",
+          "format": "uri",
+          "maxLength": 500
+        },
+        "role": {
+          "$ref": "#/definitions/RoomRole"
+        },
+        "connectedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "RoomParticipantLeftPayload": {
+      "type": "object",
+      "required": ["participantId", "leftAt"],
+      "properties": {
+        "participantId": {
+          "type": "string",
+          "description": "Participant who left"
+        },
+        "leftAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "reason": {
+          "type": "string",
+          "enum": ["user_initiated", "timeout", "kicked"],
+          "description": "Reason for departure"
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "RoomParticipantDisconnectedPayload": {
+      "type": "object",
+      "required": ["participantId", "disconnectedAt"],
+      "properties": {
+        "participantId": {
+          "type": "string",
+          "description": "Participant who disconnected ungracefully"
+        },
+        "disconnectedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "gracePeriodSeconds": {
+          "type": "integer",
+          "default": 300,
+          "description": "Seconds until participant is marked as left (default 300 = 5 minutes)"
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "VoteRecordedPayload": {
+      "type": "object",
+      "required": ["participantId", "votedAt", "hasVoted"],
+      "properties": {
+        "participantId": {
+          "type": "string",
+          "description": "Participant who voted"
+        },
+        "votedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "hasVoted": {
+          "type": "boolean",
+          "description": "Always true (indicates vote was recorded, but value is hidden)"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Broadcast to room after vote is recorded. Does NOT include card value before reveal."
+    },
+
+    "RoundStartedPayload": {
+      "type": "object",
+      "required": ["roundId", "roundNumber", "startedAt"],
+      "properties": {
+        "roundId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "roundNumber": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "storyTitle": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "startedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "timerDurationSeconds": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 600,
+          "description": "Timer duration for this round if enabled"
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "RoundRevealedPayload": {
+      "type": "object",
+      "required": ["roundId", "revealedAt", "votes", "statistics"],
+      "properties": {
+        "roundId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "revealedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "votes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["participantId", "displayName", "cardValue"],
+            "properties": {
+              "participantId": {
+                "type": "string"
+              },
+              "displayName": {
+                "type": "string",
+                "maxLength": 100
+              },
+              "cardValue": {
+                "type": "string",
+                "maxLength": 10,
+                "description": "The revealed vote value"
+              },
+              "votedAt": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          },
+          "description": "All votes in the round with revealed values"
+        },
+        "statistics": {
+          "type": "object",
+          "properties": {
+            "average": {
+              "type": "number",
+              "description": "Average of numeric votes (null if no numeric votes)"
+            },
+            "median": {
+              "type": "number",
+              "description": "Median of numeric votes (null if no numeric votes)"
+            },
+            "mode": {
+              "type": "string",
+              "maxLength": 10,
+              "description": "Most frequent vote value"
+            },
+            "consensusReached": {
+              "type": "boolean",
+              "description": "Whether votes are sufficiently similar (variance threshold)"
+            },
+            "totalVotes": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Total number of votes"
+            },
+            "distribution": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "description": "Vote value distribution (e.g., {'5': 3, '8': 2})"
+            }
+          },
+          "required": ["consensusReached", "totalVotes", "distribution"]
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "RoundResetBroadcastPayload": {
+      "type": "object",
+      "required": ["roundId", "resetAt"],
+      "properties": {
+        "roundId": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Round that was reset"
+        },
+        "resetAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "votesCleared": {
+          "type": "boolean",
+          "description": "Whether votes were cleared"
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "ChatMessageBroadcastPayload": {
+      "type": "object",
+      "required": ["messageId", "participantId", "displayName", "message", "sentAt"],
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Unique message identifier"
+        },
+        "participantId": {
+          "type": "string",
+          "description": "Sender participant ID"
+        },
+        "displayName": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "Sender display name"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "sentAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "replyToMessageId": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Message ID this is replying to"
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "PresenceUpdateBroadcastPayload": {
+      "type": "object",
+      "required": ["participantId", "status", "updatedAt"],
+      "properties": {
+        "participantId": {
+          "type": "string",
+          "description": "Participant whose status changed"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["ready", "away", "typing"]
+        },
+        "customMessage": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "ErrorPayload": {
+      "type": "object",
+      "required": ["code", "message", "timestamp"],
+      "properties": {
+        "code": {
+          "type": "integer",
+          "minimum": 4000,
+          "maximum": 4999,
+          "description": "Application error code (4000-4999 range for WebSocket errors)"
+        },
+        "error": {
+          "type": "string",
+          "description": "Machine-readable error identifier",
+          "examples": ["UNAUTHORIZED", "ROOM_NOT_FOUND", "INVALID_VOTE", "FORBIDDEN"]
+        },
+        "message": {
+          "type": "string",
+          "description": "Human-readable error message"
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Error timestamp (ISO 8601 format)"
+        },
+        "details": {
+          "type": "object",
+          "additionalProperties": true,
+          "description": "Additional error context (field validation errors, etc.)"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+
+  "oneOf": [
+    {
+      "title": "room.join.v1 (Client → Server)",
+      "description": "Participant joins room. Must be sent immediately after WebSocket connection establishment.",
+      "type": "object",
+      "required": ["type", "requestId", "payload"],
+      "properties": {
+        "type": { "const": "room.join.v1" },
+        "requestId": { "type": "string", "format": "uuid" },
+        "payload": { "$ref": "#/definitions/RoomJoinPayload" }
+      }
+    },
+    {
+      "title": "room.leave.v1 (Client → Server)",
+      "description": "Participant leaves room gracefully. Should be sent before closing WebSocket connection.",
+      "type": "object",
+      "required": ["type", "requestId", "payload"],
+      "properties": {
+        "type": { "const": "room.leave.v1" },
+        "requestId": { "type": "string", "format": "uuid" },
+        "payload": { "$ref": "#/definitions/RoomLeavePayload" }
+      }
+    },
+    {
+      "title": "vote.cast.v1 (Client → Server)",
+      "description": "Participant casts vote for current round.",
+      "type": "object",
+      "required": ["type", "requestId", "payload"],
+      "properties": {
+        "type": { "const": "vote.cast.v1" },
+        "requestId": { "type": "string", "format": "uuid" },
+        "payload": { "$ref": "#/definitions/VoteCastPayload" }
+      }
+    },
+    {
+      "title": "round.start.v1 (Client → Server, Host only)",
+      "description": "Host starts a new estimation round.",
+      "type": "object",
+      "required": ["type", "requestId", "payload"],
+      "properties": {
+        "type": { "const": "round.start.v1" },
+        "requestId": { "type": "string", "format": "uuid" },
+        "payload": { "$ref": "#/definitions/RoundStartPayload" }
+      }
+    },
+    {
+      "title": "round.reveal.v1 (Client → Server, Host only)",
+      "description": "Host triggers reveal of votes for current round.",
+      "type": "object",
+      "required": ["type", "requestId", "payload"],
+      "properties": {
+        "type": { "const": "round.reveal.v1" },
+        "requestId": { "type": "string", "format": "uuid" },
+        "payload": { "$ref": "#/definitions/RoundRevealPayload" }
+      }
+    },
+    {
+      "title": "round.reset.v1 (Client → Server, Host only)",
+      "description": "Host resets current round for re-voting.",
+      "type": "object",
+      "required": ["type", "requestId", "payload"],
+      "properties": {
+        "type": { "const": "round.reset.v1" },
+        "requestId": { "type": "string", "format": "uuid" },
+        "payload": { "$ref": "#/definitions/RoundResetPayload" }
+      }
+    },
+    {
+      "title": "chat.message.v1 (Client → Server)",
+      "description": "Participant sends chat message to room.",
+      "type": "object",
+      "required": ["type", "requestId", "payload"],
+      "properties": {
+        "type": { "const": "chat.message.v1" },
+        "requestId": { "type": "string", "format": "uuid" },
+        "payload": { "$ref": "#/definitions/ChatMessagePayload" }
+      }
+    },
+    {
+      "title": "presence.update.v1 (Client → Server)",
+      "description": "Participant updates presence status.",
+      "type": "object",
+      "required": ["type", "requestId", "payload"],
+      "properties": {
+        "type": { "const": "presence.update.v1" },
+        "requestId": { "type": "string", "format": "uuid" },
+        "payload": { "$ref": "#/definitions/PresenceUpdatePayload" }
+      }
+    },
+    {
+      "title": "room.state.v1 (Server → Client)",
+      "description": "Server sends initial room state snapshot upon connection.",
+      "type": "object",
+      "required": ["type", "requestId", "payload"],
+      "properties": {
+        "type": { "const": "room.state.v1" },
+        "requestId": { "type": "string", "format": "uuid" },
+        "payload": { "$ref": "#/definitions/RoomStatePayload" }
+      }
+    },
+    {
+      "title": "room.participant_joined.v1 (Server → Client broadcast)",
+      "description": "Broadcast when a new participant joins the room.",
+      "type": "object",
+      "required": ["type", "requestId", "payload"],
+      "properties": {
+        "type": { "const": "room.participant_joined.v1" },
+        "requestId": { "type": "string", "format": "uuid" },
+        "payload": { "$ref": "#/definitions/RoomParticipantJoinedPayload" }
+      }
+    },
+    {
+      "title": "room.participant_left.v1 (Server → Client broadcast)",
+      "description": "Broadcast when a participant leaves gracefully.",
+      "type": "object",
+      "required": ["type", "requestId", "payload"],
+      "properties": {
+        "type": { "const": "room.participant_left.v1" },
+        "requestId": { "type": "string", "format": "uuid" },
+        "payload": { "$ref": "#/definitions/RoomParticipantLeftPayload" }
+      }
+    },
+    {
+      "title": "room.participant_disconnected.v1 (Server → Client broadcast)",
+      "description": "Broadcast when a participant disconnects ungracefully (network failure).",
+      "type": "object",
+      "required": ["type", "requestId", "payload"],
+      "properties": {
+        "type": { "const": "room.participant_disconnected.v1" },
+        "requestId": { "type": "string", "format": "uuid" },
+        "payload": { "$ref": "#/definitions/RoomParticipantDisconnectedPayload" }
+      }
+    },
+    {
+      "title": "vote.recorded.v1 (Server → Client broadcast)",
+      "description": "Broadcast when a vote is recorded (does not reveal vote value).",
+      "type": "object",
+      "required": ["type", "requestId", "payload"],
+      "properties": {
+        "type": { "const": "vote.recorded.v1" },
+        "requestId": { "type": "string", "format": "uuid" },
+        "payload": { "$ref": "#/definitions/VoteRecordedPayload" }
+      }
+    },
+    {
+      "title": "round.started.v1 (Server → Client broadcast)",
+      "description": "Broadcast when a new round starts.",
+      "type": "object",
+      "required": ["type", "requestId", "payload"],
+      "properties": {
+        "type": { "const": "round.started.v1" },
+        "requestId": { "type": "string", "format": "uuid" },
+        "payload": { "$ref": "#/definitions/RoundStartedPayload" }
+      }
+    },
+    {
+      "title": "round.revealed.v1 (Server → Client broadcast)",
+      "description": "Broadcast when votes are revealed with statistics.",
+      "type": "object",
+      "required": ["type", "requestId", "payload"],
+      "properties": {
+        "type": { "const": "round.revealed.v1" },
+        "requestId": { "type": "string", "format": "uuid" },
+        "payload": { "$ref": "#/definitions/RoundRevealedPayload" }
+      }
+    },
+    {
+      "title": "round.reset.v1 (Server → Client broadcast)",
+      "description": "Broadcast when a round is reset.",
+      "type": "object",
+      "required": ["type", "requestId", "payload"],
+      "properties": {
+        "type": { "const": "round.reset.v1" },
+        "requestId": { "type": "string", "format": "uuid" },
+        "payload": { "$ref": "#/definitions/RoundResetBroadcastPayload" }
+      }
+    },
+    {
+      "title": "chat.message.v1 (Server → Client broadcast)",
+      "description": "Broadcast chat message to all room participants.",
+      "type": "object",
+      "required": ["type", "requestId", "payload"],
+      "properties": {
+        "type": { "const": "chat.message.v1" },
+        "requestId": { "type": "string", "format": "uuid" },
+        "payload": { "$ref": "#/definitions/ChatMessageBroadcastPayload" }
+      }
+    },
+    {
+      "title": "presence.update.v1 (Server → Client broadcast)",
+      "description": "Broadcast presence status change.",
+      "type": "object",
+      "required": ["type", "requestId", "payload"],
+      "properties": {
+        "type": { "const": "presence.update.v1" },
+        "requestId": { "type": "string", "format": "uuid" },
+        "payload": { "$ref": "#/definitions/PresenceUpdateBroadcastPayload" }
+      }
+    },
+    {
+      "title": "error.v1 (Server → Client)",
+      "description": "Server error response to client request.",
+      "type": "object",
+      "required": ["type", "requestId", "payload"],
+      "properties": {
+        "type": { "const": "error.v1" },
+        "requestId": { "type": "string", "format": "uuid" },
+        "payload": { "$ref": "#/definitions/ErrorPayload" }
+      }
+    }
+  ]
+}

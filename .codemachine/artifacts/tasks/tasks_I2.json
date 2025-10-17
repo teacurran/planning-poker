@@ -38,7 +38,7 @@
     "acceptance_criteria": "All message types from architecture blueprint documented, JSON schemas validate sample messages (test with AJV or similar validator), Error codes cover common failure scenarios (auth, validation, server error), Connection lifecycle clearly explains handshake, heartbeat, reconnection, Versioning strategy enables protocol evolution without breaking clients, Document reviewed by backend and frontend leads for completeness",
     "dependencies": [],
     "parallelizable": true,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I2.T3",
