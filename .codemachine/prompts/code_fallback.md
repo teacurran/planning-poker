@@ -8,88 +8,181 @@ The previous code submission did not pass verification. You must fix the followi
 
 Create integration tests for all Panache repositories using Testcontainers (PostgreSQL container). Write tests for: entity persistence (insert, update, delete), custom finder methods, relationship navigation, JSONB field serialization/deserialization, soft delete behavior (User, Room). Use Quarkus `@QuarkusTest` annotation with `@TestProfile` for test database configuration. Assert results using AssertJ or Rest Assured for fluent assertions.
 
-**Deliverables:** 12 repository test classes with minimum 3 test methods each (create, findById, custom finder), Testcontainers PostgreSQL configuration in test profile, Tests for JSONB field operations (Room.config, UserPreference.default_room_config), Soft delete tests verifying `deleted_at` timestamp behavior, Foreign key relationship tests (e.g., deleting User cascades to UserPreference)
-
-**Acceptance Criteria:** `mvn test` executes all repository tests successfully, Testcontainers starts PostgreSQL container automatically, All CRUD operations pass (insert, select, update, delete), Custom finder methods return expected results, JSONB fields round-trip correctly (save and retrieve complex objects), Soft delete tests confirm `deleted_at` set correctly, Test coverage >80% for repository classes
+**Acceptance Criteria:**
+- `mvn test` executes all repository tests successfully
+- Testcontainers starts PostgreSQL container automatically
+- All CRUD operations pass (insert, select, update, delete)
+- Custom finder methods return expected results
+- JSONB fields round-trip correctly (save and retrieve complex objects)
+- Soft delete tests confirm `deleted_at` set correctly
+- Test coverage >80% for repository classes
 
 ---
 
 ## Issues Detected
 
-*   **Test Configuration Error:** Quarkus Dev Services (Testcontainers) is starting successfully and Flyway migrations are running, BUT the reactive datasource is failing to connect with error `FATAL: role "postgres" does not exist` or `FATAL: role "quarkus" does not exist`.
-*   **Root Cause:** The main `application.properties` file defines datasource URLs with default values (`jdbc:postgresql://localhost:5432/scrumpoker`). Even though Dev Services starts a Testcontainers PostgreSQL instance, the reactive datasource is not using the Dev Services connection - it's trying to connect to the default URL with the wrong credentials.
-*   **Configuration Conflict:** The test configuration attempts to override these URLs, but Quarkus property resolution is complex and the overrides are not working correctly.
+### Critical Issue: @BeforeEach with UniAsserter Pattern
+
+All 12 repository test files are failing with the error:
+```
+java.lang.IllegalStateException: No current Vertx context found
+```
+
+**Affected Files:**
+- `UserRepositoryTest.java` (line 30-38)
+- `RoomRepositoryTest.java` (line 41-49)
+- `VoteRepositoryTest.java` (line 46-60)
+- `SessionHistoryRepositoryTest.java` (line 40-48)
+- `SubscriptionRepositoryTest.java` (line 36-44)
+- `PaymentHistoryRepositoryTest.java` (line 33-41)
+- `OrganizationRepositoryTest.java` (line 25-33)
+- `OrgMemberRepositoryTest.java` (line 39-49)
+- `RoomParticipantRepositoryTest.java` (line 39-49)
+- `RoundRepositoryTest.java` (line 38-48)
+- `UserPreferenceRepositoryTest.java` (line 31-39)
+- `AuditLogRepositoryTest.java` (line 40-48)
+
+**Root Cause:**
+The `@BeforeEach` lifecycle methods are annotated with `@RunOnVertxContext` and use `UniAsserter` as a parameter. This pattern is **NOT SUPPORTED** by Quarkus test framework. The `@RunOnVertxContext` and `UniAsserter` are only valid for test methods (`@Test`), not lifecycle methods (`@BeforeEach`, `@AfterEach`).
+
+**Current (Incorrect) Pattern:**
+```java
+@BeforeEach
+@RunOnVertxContext
+void setUp(UniAsserter asserter) {
+    asserter.execute(() -> Panache.withTransaction(() -> repository.deleteAll()));
+    testEntity = createTestEntity();
+}
+```
+
+**Error Message:**
+```
+[ERROR] UserRepositoryTest.setUp:34 » IllegalState No current Vertx context found
+```
+
+**Total Test Results:**
+- Tests run: 94
+- Failures: 0
+- Errors: 83
+- Skipped: 0
+
+83 out of 94 tests are failing due to this single pattern issue across all test files.
 
 ---
 
 ## Best Approach to Fix
 
-You MUST properly configure the test profile to ensure BOTH the JDBC datasource (used by Flyway) AND the reactive datasource (used by Hibernate Reactive/Panache) use the Testcontainers database started by Dev Services.
+### Solution: Remove @BeforeEach Setup and Initialize Data in Each Test
 
-**The correct solution is to remove the Testcontainers JDBC URL approach and instead use Quarkus Dev Services native behavior:**
+For reactive Panache tests with `UniAsserter`, you **MUST NOT** use `@BeforeEach` with `UniAsserter`. Instead, you have two options:
 
-###  Step 1: Fix `backend/src/main/resources/application.properties`
+**Option 1 (RECOMMENDED): Initialize test data within each test method**
 
-Remove the test profile configuration that sets explicit `jdbc:tc:` URLs. Instead, configure the test profile to completely avoid setting any datasource URLs, which will allow Dev Services to activate:
+Remove the `@BeforeEach` method entirely and initialize test data as the first step in each test method using `asserter.execute()`.
 
-```properties
-# Remove these lines:
-#%test.quarkus.datasource.jdbc.url=jdbc:tc:postgresql:14:///quarkus
-#%test.quarkus.datasource.reactive.url=vertx-reactive:tc:postgresql:14:///quarkus
+**Example Fix for UserRepositoryTest.java:**
 
-# Keep only this:
-%test.quarkus.datasource.devservices.enabled=true
+```java
+@QuarkusTest
+class UserRepositoryTest {
+
+    @Inject
+    UserRepository userRepository;
+
+    // Remove @BeforeEach method entirely
+
+    @Test
+    @RunOnVertxContext
+    void testPersistAndFindById(UniAsserter asserter) {
+        // Clean up and initialize test data as first step
+        asserter.execute(() -> Panache.withTransaction(() -> userRepository.deleteAll()));
+
+        // Given: a new user
+        User user = createTestUser("john@example.com", "github", "github-456");
+
+        // When: persisting the user
+        asserter.execute(() -> Panache.withTransaction(() -> userRepository.persist(user)));
+
+        // Then: the user can be retrieved by ID
+        asserter.assertThat(() -> Panache.withTransaction(() -> userRepository.findById(user.userId)), found -> {
+            assertThat(found).isNotNull();
+            assertThat(found.email).isEqualTo("john@example.com");
+            // ... more assertions
+        });
+    }
+
+    // Repeat for all test methods
+
+    private User createTestUser(String email, String provider, String subject) {
+        User user = new User();
+        user.email = email;
+        user.oauthProvider = provider;
+        user.oauthSubject = subject;
+        user.displayName = "Test User";
+        user.subscriptionTier = SubscriptionTier.FREE;
+        return user;
+    }
+}
 ```
 
-### Step 2: Update `backend/src/test/resources/application.properties`
+**Option 2 (ALTERNATIVE): Use @BeforeAll with blocking calls**
 
-The test resources configuration should override the datasource URL properties to prevent them from being set at all:
+If you want to keep shared setup logic, use `@BeforeAll` with blocking reactive calls. However, this approach is less isolated and not recommended for tests that modify data.
 
-```properties
-# Test environment configuration for Quarkus tests
-
-# Completely unset datasource URLs to allow Dev Services to manage connections
-# Setting these properties without values prevents the main config defaults from being used
-quarkus.datasource.jdbc.url=
-quarkus.datasource.reactive.url=
-
-# Disable OIDC for tests
-quarkus.oidc.enabled=false
-
-# Flyway migrations for tests
-quarkus.flyway.migrate-at-start=true
-quarkus.flyway.clean-at-start=false
-
-# Test logging
-quarkus.log.level=INFO
-
-# Hibernate settings for tests
-quarkus.hibernate-orm.log.sql=false
-quarkus.hibernate-orm.database.generation=none
+```java
+@BeforeAll
+static void setupDatabase() {
+    // Use blocking calls with await().indefinitely()
+    // This is less ideal because it runs once for all tests
+}
 ```
 
-### Step 3: Verify Configuration
+### Implementation Instructions
 
-After making these changes, run `mvn clean test -Dtest=UserRepositoryTest` and verify:
+You MUST fix ALL 12 repository test files:
 
-1. Testcontainers PostgreSQL starts (look for log: `Dev Services for PostgreSQL started`)
-2. Flyway migrations execute successfully
-3. Tests can connect to the database (no role "postgres" or "quarkus" errors)
-4. All 11 tests in UserRepositoryTest pass
+1. **UserRepositoryTest.java** - Remove `@BeforeEach` method (lines 30-38). Add cleanup as first step in each test.
+2. **RoomRepositoryTest.java** - Remove `@BeforeEach` method (lines 41-49). Add cleanup + user/org creation in each test.
+3. **VoteRepositoryTest.java** - Remove `@BeforeEach` method (lines 46-60). Add cleanup + room/round/participant setup in each test.
+4. **SessionHistoryRepositoryTest.java** - Remove `@BeforeEach` method (lines 40-48). Add cleanup + room setup in each test.
+5. **SubscriptionRepositoryTest.java** - Remove `@BeforeEach` method (lines 36-44). Add cleanup + user setup in each test.
+6. **PaymentHistoryRepositoryTest.java** - Remove `@BeforeEach` method (lines 33-41). Add cleanup + user/subscription setup in each test.
+7. **OrganizationRepositoryTest.java** - Remove `@BeforeEach` method (lines 25-33). Add cleanup in each test.
+8. **OrgMemberRepositoryTest.java** - Remove `@BeforeEach` method (lines 39-49). Add cleanup + org/user setup in each test.
+9. **RoomParticipantRepositoryTest.java** - Remove `@BeforeEach` method (lines 39-49). Add cleanup + room setup in each test.
+10. **RoundRepositoryTest.java** - Remove `@BeforeEach` method (lines 38-48). Add cleanup + room setup in each test.
+11. **UserPreferenceRepositoryTest.java** - Remove `@BeforeEach` method (lines 31-39). Add cleanup + user setup in each test.
+12. **AuditLogRepositoryTest.java** - Remove `@BeforeEach` method (lines 40-48). Add cleanup in each test.
 
-### Alternative Approach (If Above Doesn't Work)
+### Key Points to Remember
 
-If the above configuration still doesn't work due to Quarkus property precedence issues, you can use environment variables to prevent the default URLs from being set:
+- **NEVER** use `@RunOnVertxContext` or `UniAsserter` in `@BeforeEach` or `@AfterEach` methods
+- **ALWAYS** perform cleanup and data initialization as the first `asserter.execute()` call in each test method
+- Keep helper methods (like `createTestUser()`) as non-reactive plain Java methods
+- Use `Panache.withTransaction()` wrapper for all database operations in tests
+- Each test should be independent and not rely on shared mutable state from `@BeforeEach`
+
+### Testing After Fix
+
+After fixing all test files, run:
 
 ```bash
-mvn clean test -DDB_JDBC_URL= -DDB_REACTIVE_URL=
+cd backend
+mvn clean test
 ```
 
-Or create a Maven profile in `pom.xml` that sets these environment variables automatically during test execution.
+**Expected result:** All 94 tests should pass with 0 errors.
 
-### Key Points
+---
 
-* Quarkus Dev Services will ONLY activate if no datasource URL is configured
-* Setting `quarkus.datasource.jdbc.url=` (empty string) in test config is the correct way to "unset" a property that has a default value in the main config
-* Both JDBC and reactive URLs must be unset for Dev Services to work properly
-* The username/password will automatically be "quarkus"/"quarkus" when Dev Services starts
+## Additional Notes
+
+The test code is otherwise well-structured with:
+- Comprehensive coverage of CRUD operations
+- Custom finder method tests
+- JSONB field serialization tests
+- Soft delete behavior tests
+- Relationship navigation tests
+- AssertJ fluent assertions
+
+The only issue is the incorrect use of `@BeforeEach` with reactive test patterns. Once fixed, the test suite will meet all acceptance criteria.

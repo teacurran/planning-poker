@@ -58,12 +58,10 @@ public class User extends PanacheEntityBase {
     @Column(name = "subscription_tier", nullable = false, columnDefinition = "subscription_tier_enum")
     public SubscriptionTier subscriptionTier = SubscriptionTier.FREE;
 
-    @NotNull
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     public Instant createdAt;
 
-    @NotNull
     @UpdateTimestamp
     @Column(name = "updated_at", nullable = false)
     public Instant updatedAt;
