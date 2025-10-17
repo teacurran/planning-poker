@@ -158,7 +158,7 @@
     "acceptance_criteria": "Dashboard loads user data from API on mount, User profile displays correct information (avatar, name, subscription tier), Room list shows user's owned rooms from API, Clicking room card navigates to /room/{roomId}, Create room button navigates to /rooms/new, Loading state displayed while fetching data, Error state shows message if API call fails, Responsive layout works on mobile, tablet, desktop",
     "dependencies": ["I3.T6"],
     "parallelizable": false,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I3.T8",
