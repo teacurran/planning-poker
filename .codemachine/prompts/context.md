@@ -128,23 +128,40 @@ The data model follows a relational schema leveraging PostgreSQL's ACID properti
 - No test pollution (each test isolated with database cleanup)
 ```
 
-### Context: Testcontainers (from 03_Verification_and_Glossary.md)
+### Context: unit-testing (from 03_Verification_and_Glossary.md)
+
+```markdown
+#### Unit Testing
+
+**Scope:** Individual classes and methods in isolation (services, utilities, validators)
+
+**Framework:** JUnit 5 (backend), Jest/Vitest (frontend)
+
+**Coverage Target:** >90% code coverage for service layer, >80% for overall codebase
+
+**Approach:**
+- Mock external dependencies (repositories, adapters, external services) using Mockito
+- Test business logic thoroughly (happy paths, edge cases, error scenarios)
+- Fast execution (<5 minutes for entire unit test suite)
+- Run on every developer commit and in CI pipeline
+
+**Examples:**
+- `RoomServiceTest`: Tests room creation with unique ID generation, config validation, soft delete
+- `VotingServiceTest`: Tests vote casting, consensus calculation with known inputs
+- `BillingServiceTest`: Tests subscription tier transitions, Stripe integration mocking
+
+**Acceptance Criteria:**
+- All unit tests pass (`mvn test`, `npm run test:unit`)
+- Coverage reports meet targets (verify with JaCoCo, Istanbul)
+- No flaky tests (consistent results across runs)
+```
+
+### Context: Testcontainers (from glossary)
 
 ```markdown
 | **Testcontainers** | Java library providing lightweight, disposable database/cache containers for integration tests |
-```
-
-### Context: Uni and Multi (from 03_Verification_and_Glossary.md)
-
-```markdown
 | **Uni** | Mutiny type representing asynchronous single-item result (similar to CompletableFuture) |
 | **Multi** | Mutiny type representing asynchronous stream of 0-N items (similar to Reactive Streams Publisher) |
-```
-
-### Context: Panache (from 03_Verification_and_Glossary.md)
-
-```markdown
-| **Panache** | Quarkus extension simplifying Hibernate with active record or repository patterns |
 ```
 
 ---
@@ -156,75 +173,155 @@ The following analysis is based on my direct review of the current codebase. Use
 ### Relevant Existing Code
 
 *   **File:** `backend/src/test/java/com/scrumpoker/repository/UserRepositoryTest.java`
-    *   **Summary:** This file contains a comprehensive example of reactive repository testing using Quarkus Test with UniAsserter. It demonstrates the correct pattern for testing all repository operations including persist, findById, custom finders, soft deletes, and updates.
-    *   **Recommendation:** You MUST follow this exact testing pattern for all remaining repository tests. This file is your golden template - use the same structure, annotations, and assertion patterns.
-    *   **Critical Pattern:** All async operations use `@RunOnVertxContext` and `UniAsserter`. Each test uses `asserter.execute()` for operations and `asserter.assertThat()` for assertions. All database operations MUST be wrapped in `Panache.withTransaction()`.
+    *   **Summary:** This is a COMPLETE and WORKING integration test for UserRepository. It demonstrates the EXACT patterns you MUST follow for all repository tests.
+    *   **Recommendation:** You MUST study this file carefully. It shows:
+        - How to use `@QuarkusTest` annotation for integration tests
+        - How to use `@RunOnVertxContext` and `UniAsserter` for reactive testing with Hibernate Reactive Panache
+        - How to clean up test data in `@BeforeEach` using `Panache.withTransaction(() -> repository.deleteAll())`
+        - How to persist entities reactively using `Panache.withTransaction(() -> repository.persist(entity))`
+        - How to assert on reactive results using `asserter.assertThat(() -> Panache.withTransaction(() -> repository.findById(id)), found -> { ... })`
+        - How to test soft delete behavior by setting `deletedAt` timestamp
+        - How to create helper methods for creating test entities
+    *   **Critical Pattern:** ALL repository operations in tests MUST be wrapped in `Panache.withTransaction(() -> ...)` to ensure transaction boundaries
+
+*   **File:** `backend/src/test/java/com/scrumpoker/repository/RoomRepositoryTest.java`
+    *   **Summary:** This is a COMPLETE and WORKING integration test for RoomRepository demonstrating more complex scenarios including JSONB field testing and relationship navigation.
+    *   **Recommendation:** This file shows CRITICAL patterns for:
+        - Testing JSONB field serialization/deserialization (Room.config field with JSON string)
+        - Testing relationship navigation (Room → Owner, Room → Organization)
+        - Testing custom finder methods (`findActiveByOwnerId`, `findByOrgId`, `findPublicRooms`, `findByPrivacyMode`)
+        - Testing soft delete behavior with verification that soft-deleted entities are excluded from active queries
+        - Using HQL mutation queries to update timestamps (for testing inactive rooms)
+        - Setting timestamps manually on entities (`room.createdAt = Instant.now()`) when `@CreationTimestamp` annotation won't work in test setup
+    *   **Critical Pattern:** When persisting entities with relationships, you MUST persist the parent entities FIRST using nested `flatMap` chains: `userRepository.persist(user).flatMap(u -> roomRepository.persist(room))`
 
 *   **File:** `backend/src/test/java/com/scrumpoker/repository/VoteRepositoryTest.java`
-    *   **Summary:** This file demonstrates testing complex entity hierarchies with foreign key relationships. It shows how to properly persist parent entities before children (User → Room → Round → Participant → Vote) and how to test relationship navigation.
-    *   **Recommendation:** When testing repositories with foreign key dependencies (like RoomParticipant, Round, SessionHistory), you MUST use this hierarchical persistence pattern. Always persist parent entities first using chained `.flatMap()` operations.
-    *   **Critical Pattern:** Helper methods create entities without IDs (IDs are auto-generated by Hibernate). Timestamps like `votedAt` are set manually for test data control. The file shows proper cleanup order (children deleted before parents in `@BeforeEach`).
+    *   **Summary:** This is a COMPLETE and WORKING integration test for VoteRepository demonstrating complex entity hierarchies and relationship testing.
+    *   **Recommendation:** This file demonstrates the MOST COMPLEX test scenarios you'll encounter:
+        - Persisting deep entity hierarchies (User → Room → Round → Participant → Vote)
+        - Using deeply nested `flatMap` chains to establish correct persistence order
+        - Testing ordering of query results (votes ordered by `votedAt`)
+        - Testing special character values (?, ∞, ☕) to ensure VARCHAR columns handle Unicode
+        - Capturing auto-generated IDs from persisted entities using holder arrays: `final UUID[] voteIdHolder = new UUID[1]`
+        - Testing delete operations by fetching entity first within transaction, then deleting
+    *   **Critical Pattern:** For entities with multiple levels of foreign key relationships, you MUST persist in dependency order: parent → child → grandchild, using nested `flatMap` chains
 
-*   **File:** `backend/src/main/java/com/scrumpoker/repository/UserRepository.java`
-    *   **Summary:** This repository implements `PanacheRepositoryBase<User, UUID>` with custom finder methods returning `Uni<>` types. It demonstrates the standard pattern for reactive repositories with methods like `findByEmail()`, `findByOAuthProviderAndSubject()`, and `countActive()`.
-    *   **Recommendation:** All 12 repository interfaces follow this same pattern. Each custom finder method you test MUST verify it returns the correct reactive type (Uni or Multi) and handles null results properly.
+*   **File:** `backend/src/main/java/com/scrumpoker/domain/room/Vote.java`
+    *   **Summary:** Example entity class showing JPA annotations, relationships, and validation constraints.
+    *   **Recommendation:** You SHOULD understand entity structure when writing tests:
+        - `@GeneratedValue(strategy = GenerationType.AUTO)` means IDs are auto-generated - DO NOT set them manually in test helpers
+        - `@ManyToOne(fetch = FetchType.LAZY)` means relationships are lazy-loaded
+        - `@NotNull` and `@Size` constraints are validated by Hibernate
+        - Entities extend `PanacheEntityBase` for Panache repository pattern
 
-*   **File:** `backend/src/main/java/com/scrumpoker/repository/RoomRepository.java`
-    *   **Summary:** This repository shows special handling for Room entities which use String primary keys (6-character nanoid) instead of UUID. It implements `PanacheRepositoryBase<Room, String>`.
-    *   **Recommendation:** When testing RoomRepository, you MUST manually set the `roomId` field (e.g., "vote01") since it's NOT auto-generated. Also note that Room has soft delete functionality via `deletedAt` timestamp.
-
-*   **File:** `backend/src/main/java/com/scrumpoker/domain/room/Room.java`
-    *   **Summary:** Room entity contains a JSONB `config` field stored as a String. Timestamps `createdAt` and `lastActiveAt` use `@CreationTimestamp` and `@UpdateTimestamp` annotations. The entity supports soft deletes with `deletedAt` field.
-    *   **Recommendation:** Your Room tests MUST verify JSONB serialization by setting `room.config = "{\"deckType\":\"fibonacci\"}"` and verifying it persists and retrieves correctly. Test soft delete by setting `deletedAt = Instant.now()` and verifying the entity is excluded from `findActive*` queries.
-
-*   **File:** `backend/src/main/java/com/scrumpoker/domain/user/UserPreference.java`
-    *   **Summary:** UserPreference has multiple JSONB columns: `defaultRoomConfig` and `notificationSettings`. It uses `@MapsId` annotation for one-to-one relationship with User, meaning the userId is the primary key.
-    *   **Recommendation:** UserPreference tests MUST test the one-to-one relationship mapping. When testing JSONB fields, verify both null and populated JSON strings persist correctly.
+*   **File:** `backend/src/main/java/com/scrumpoker/repository/VoteRepository.java`
+    *   **Summary:** Example repository interface showing custom finder methods using Panache query syntax.
+    *   **Recommendation:** You MUST test ALL custom finder methods defined in each repository:
+        - Methods like `findByRoundId()`, `findByParticipantId()`, `countByRoundId()` must have corresponding test methods
+        - Test both success cases (data found) and failure cases (data not found, returns empty list or null)
+        - Verify that ordering clauses work correctly (e.g., `order by votedAt`)
 
 *   **File:** `backend/src/test/resources/application.properties`
-    *   **Summary:** Test configuration file shows that Testcontainers is enabled by NOT setting explicit database URLs. Flyway migrations run automatically with `quarkus.flyway.migrate-at-start=true`.
-    *   **Recommendation:** You do NOT need to modify this file. Testcontainers will automatically start PostgreSQL when tests run. The existing configuration is correct.
-
-*   **File:** `backend/pom.xml`
-    *   **Summary:** Maven configuration includes all necessary test dependencies: `quarkus-junit5`, `quarkus-test-vertx` (for UniAsserter), `rest-assured`, and `assertj-core`. Surefire plugin is configured for unit tests.
-    *   **Recommendation:** All test dependencies are already configured. You do NOT need to add any new dependencies.
+    *   **Summary:** Test configuration file for Quarkus tests. This file is ALREADY COMPLETE and correctly configured.
+    *   **Recommendation:** You SHOULD NOT modify this file. It is already correctly configured:
+        - Empty datasource URLs allow Quarkus Dev Services (Testcontainers) to automatically start PostgreSQL
+        - Flyway migrations enabled (`quarkus.flyway.migrate-at-start=true`) to apply schema migrations
+        - OIDC disabled for tests (`quarkus.oidc.enabled=false`)
+        - Hibernate set to NOT auto-generate schema (`quarkus.hibernate-orm.database.generation=none`) because Flyway handles migrations
+    *   **Note:** The task mentions creating `application-test.properties` in target_files, but the existing `application.properties` is the correct file to use for tests. You do NOT need to create a separate `-test.properties` file.
 
 ### Implementation Tips & Notes
 
-*   **Tip #1 - Reactive Testing Pattern:** EVERY test method MUST use `@RunOnVertxContext` and accept `UniAsserter asserter` as a parameter. Use `asserter.execute()` for operations that don't return values you need to assert on, and `asserter.assertThat()` for operations where you need to verify the result.
+*   **Tip:** ALL 12 repository test files MUST follow the EXACT pattern demonstrated in `UserRepositoryTest.java`, `RoomRepositoryTest.java`, and `VoteRepositoryTest.java`. These are your templates.
 
-*   **Tip #2 - Transaction Boundaries:** ALL database operations in tests MUST be wrapped in `Panache.withTransaction(() -> ...)`. This is critical for reactive repositories - without it, your tests will fail with transaction errors.
+*   **Tip:** When creating test helper methods (e.g., `createTestUser()`, `createTestRoom()`), you MUST NOT set the primary key ID field (e.g., `userId`, `roomId` for UUID fields) because it is auto-generated by Hibernate. The ONLY exception is `Room.roomId` which is a manually-assigned 6-character String, not auto-generated.
 
-*   **Tip #3 - Entity Hierarchy Persistence:** When testing entities with foreign keys, you MUST persist parent entities BEFORE child entities. Use chained `.flatMap()` operations to ensure proper ordering. For example: `userRepository.persist(user).flatMap(u -> roomRepository.persist(room).flatMap(r -> roundRepository.persist(round)))`.
+*   **Tip:** For entities with `@CreationTimestamp` or `@UpdateTimestamp` annotations, you SHOULD set these timestamps MANUALLY in test helpers (e.g., `room.createdAt = Instant.now()`) because these annotations may not trigger during test entity creation.
 
-*   **Tip #4 - Test Isolation:** The `@BeforeEach` setup method MUST call `deleteAll()` on ALL repositories in reverse dependency order (children first, then parents) to ensure test isolation. This prevents data pollution between tests.
+*   **Tip:** When testing soft delete behavior, you MUST:
+    1. Persist the entity normally
+    2. Update the entity to set `deletedAt = Instant.now()`
+    3. Verify the entity still exists when retrieved by ID directly
+    4. Verify the entity is EXCLUDED from "active" queries (e.g., `findActiveByEmail()`)
 
-*   **Tip #5 - JSONB Testing:** For JSONB fields like `Room.config`, set them as JSON strings: `room.config = "{\"deckType\":\"fibonacci\",\"timerEnabled\":true}"`. Verify the string persists exactly as stored - PostgreSQL JSONB may reformat whitespace but content should match.
+*   **Tip:** For JSONB field testing, you SHOULD:
+    1. Set the JSONB field to a valid JSON string (e.g., `"{\"key\":\"value\"}"`)
+    2. Persist the entity
+    3. Retrieve the entity and assert the JSONB field contains the expected JSON structure
+    4. Use `assertThat(config).contains("key")` to verify specific JSON content
 
-*   **Tip #6 - Soft Delete Testing:** For User and Room entities, test soft delete by setting `deletedAt = Instant.now()`, persisting, then verifying that `findActive*()` methods exclude the soft-deleted entity while `findById()` still finds it.
+*   **Tip:** For relationship navigation testing, you MUST:
+    1. Persist both parent and child entities
+    2. Retrieve the child entity
+    3. Assert the relationship field is not null
+    4. Optionally fetch the parent separately and compare IDs to verify relationship integrity
 
-*   **Tip #7 - AssertJ Assertions:** Use AssertJ's fluent assertions for readability: `assertThat(found).isNotNull()`, `assertThat(found.email).isEqualTo("test@example.com")`, `assertThat(list).hasSize(3)`, `assertThat(list).extracting(v -> v.cardValue).containsExactly("3", "5", "8")`.
+*   **Warning:** Testcontainers will automatically start a PostgreSQL container when tests run. This is configured by Quarkus Dev Services and happens automatically when no explicit datasource URL is provided. You do NOT need to configure Testcontainers explicitly.
 
-*   **Tip #8 - Repository Count:** You need to create tests for 12 repositories total. Based on the file tree, these are: `UserRepository`, `UserPreferenceRepository`, `RoomRepository`, `RoomParticipantRepository`, `RoundRepository`, `VoteRepository`, `SessionHistoryRepository`, `OrganizationRepository`, `OrgMemberRepository`, `SubscriptionRepository`, `PaymentHistoryRepository`, `AuditLogRepository`. Three already exist (UserRepository, VoteRepository partially complete based on file listing), so you need to verify/complete the remaining 9+ test files.
+*   **Warning:** When testing entities with foreign key relationships, you MUST persist entities in dependency order (parent before child) to avoid foreign key constraint violations. Use nested `flatMap` chains to ensure correct ordering.
 
-*   **Note #1 - Entity ID Generation:** Most entities use UUID primary keys that are AUTO-GENERATED by Hibernate. Do NOT set the ID field when creating test entities (except for Room which uses manual String IDs). The ID will be populated after `persist()` completes.
+*   **Warning:** The `UniAsserter` from `io.quarkus.test.vertx.UniAsserter` is the CORRECT way to test reactive code in Quarkus. DO NOT use `Uni.await()` or blocking operations in tests.
 
-*   **Note #2 - Timestamp Fields:** Entities with `@CreationTimestamp` and `@UpdateTimestamp` will have timestamps auto-set by Hibernate. However, for test data control (like vote ordering), you may manually set `votedAt` fields AFTER creating the entity but BEFORE persisting.
+*   **Critical Pattern:** Every test method that performs database operations MUST follow this structure:
+    ```java
+    @Test
+    @RunOnVertxContext
+    void testSomething(UniAsserter asserter) {
+        // Setup (usually in @BeforeEach, but can be here)
+        Entity entity = createTestEntity();
 
-*   **Note #3 - Composite Keys:** OrgMember and potentially SessionHistory use composite primary keys (defined by `@Id` annotations on multiple fields or separate ID classes). Test these carefully - persistence and findById will use the composite key class.
+        // Execute: wrap in Panache.withTransaction
+        asserter.execute(() -> Panache.withTransaction(() ->
+            repository.persist(entity)
+        ));
 
-*   **Note #4 - Coverage Target:** The acceptance criteria states >80% test coverage for repository classes. Since repositories are thin wrappers around Panache, focusing on thorough testing of custom finder methods and JSONB/soft delete behavior will easily achieve this target.
+        // Assert: wrap in Panache.withTransaction and use asserter.assertThat
+        asserter.assertThat(() -> Panache.withTransaction(() ->
+            repository.findById(entity.id)
+        ), found -> {
+            assertThat(found).isNotNull();
+            assertThat(found.someField).isEqualTo(expectedValue);
+        });
+    }
+    ```
 
-*   **Warning #1 - Async Pitfall:** Do NOT use standard JUnit assertions inside reactive chains. If you try `assertEquals()` inside a `.map()` or `.flatMap()`, the assertion may not execute or fail silently. Always use `asserter.assertThat()` at the outer level to properly chain assertions.
+*   **Coverage Target:** Each repository test class MUST have a MINIMUM of 3 test methods, but you SHOULD aim for comprehensive coverage:
+    - At least 1 test for basic CRUD (persist, findById)
+    - At least 1 test for EACH custom finder method
+    - At least 1 test for update operations
+    - At least 1 test for delete operations (soft delete if applicable)
+    - At least 1 test for relationship navigation (if entity has relationships)
+    - At least 1 test for JSONB fields (if entity has JSONB columns)
+    - At least 1 test for count methods
 
-*   **Warning #2 - Test Ordering:** Tests must NOT depend on execution order. Each test should be fully independent. The `@BeforeEach` cleanup ensures this, but verify your tests don't assume data from previous tests exists.
+*   **Execution Command:** Run tests using `mvn test` (unit tests) or `mvn verify` (integration tests). The task acceptance criteria requires `mvn test` to pass, which runs both unit and integration tests marked with `@QuarkusTest`.
 
-*   **Warning #3 - Testcontainers Startup:** The first test run may take 30-60 seconds as Testcontainers downloads the PostgreSQL Docker image. Subsequent runs will be faster. This is normal and expected behavior.
+*   **Current Status:** Based on the directory listing, I can see that the following repository test files ALREADY EXIST and are likely complete:
+    - `UserRepositoryTest.java` ✓ (verified complete)
+    - `RoomRepositoryTest.java` ✓ (verified complete)
+    - `VoteRepositoryTest.java` ✓ (verified complete)
+    - `UserPreferenceRepositoryTest.java` ✓
+    - `OrganizationRepositoryTest.java` ✓
+    - `OrgMemberRepositoryTest.java` ✓
+    - `RoomParticipantRepositoryTest.java` ✓
+    - `RoundRepositoryTest.java` ✓
+    - `SessionHistoryRepositoryTest.java` ✓
+    - `SubscriptionRepositoryTest.java` ✓
+    - `PaymentHistoryRepositoryTest.java` ✓
+    - `AuditLogRepositoryTest.java` ✓
 
-*   **Best Practice:** Create helper methods at the bottom of each test class (like `createTestUser()`, `createTestRoom()`) that construct entity instances with valid default values. This makes tests more readable and maintainable. See VoteRepositoryTest for excellent examples.
+*   **ACTION REQUIRED:** You MUST verify that all 12 repository test files are complete and pass all acceptance criteria. Run `mvn test` to confirm all tests pass. If any tests fail, debug and fix them. If any test classes are incomplete (missing test methods), add the missing tests following the patterns from the working examples.
+
+*   **Quality Check:** After completing this task, you MUST run `mvn test` and ensure:
+    1. All tests pass (green checkmarks)
+    2. No test failures or errors
+    3. Testcontainers successfully starts PostgreSQL
+    4. Flyway migrations execute successfully
+    5. No test pollution (each test can run independently)
+    6. Test coverage meets >80% target for repository classes (verify with JaCoCo report)
 
 ---
 
-**END OF TASK BRIEFING PACKAGE**
+**End of Briefing Package**
 
-Good luck, Coder Agent! You have all the patterns, examples, and context you need to complete these repository integration tests successfully. Follow the existing patterns closely, and you'll achieve >80% coverage with comprehensive, reliable tests.
+You now have all the information needed to complete Task I1.T8. Focus on verifying and completing the repository integration tests, ensuring they follow the established patterns and meet all acceptance criteria.

@@ -42,17 +42,24 @@ class SubscriptionRepositoryTest {
     @Test
     @RunOnVertxContext
     void testPersistAndFindById(UniAsserter asserter) {
-        // Given: a new subscription
+        // Given: a new user and subscription
         User testUser = createTestUser("subuser@example.com", "google", "google-sub");
-        Subscription sub = createTestSubscription(testUser.userId, EntityType.USER);
+        Subscription sub = createTestSubscription(null, EntityType.USER);
+        final UUID[] subIdHolder = new UUID[1];
 
         // When: persisting the user and subscription
         asserter.execute(() -> Panache.withTransaction(() ->
-            userRepository.persist(testUser).flatMap(user -> subscriptionRepository.persist(sub))
+            userRepository.persist(testUser).flatMap(user -> {
+                sub.entityId = user.userId;
+                return subscriptionRepository.persist(sub).map(s -> {
+                    subIdHolder[0] = s.subscriptionId;
+                    return s;
+                });
+            })
         ));
 
         // Then: the subscription can be retrieved
-        asserter.assertThat(() -> Panache.withTransaction(() -> subscriptionRepository.findById(sub.subscriptionId)), found -> {
+        asserter.assertThat(() -> Panache.withTransaction(() -> subscriptionRepository.findById(subIdHolder[0])), found -> {
             assertThat(found).isNotNull();
             assertThat(found.tier).isEqualTo(SubscriptionTier.PRO);
             assertThat(found.status).isEqualTo(SubscriptionStatus.ACTIVE);
@@ -64,14 +71,20 @@ class SubscriptionRepositoryTest {
     void testFindActiveByEntityIdAndType(UniAsserter asserter) {
         // Given: an active subscription
         User testUser = createTestUser("subuser@example.com", "google", "google-sub");
-        Subscription sub = createTestSubscription(testUser.userId, EntityType.USER);
+        Subscription sub = createTestSubscription(null, EntityType.USER);
+        final UUID[] userIdHolder = new UUID[1];
+
         asserter.execute(() -> Panache.withTransaction(() ->
-            userRepository.persist(testUser).flatMap(user -> subscriptionRepository.persist(sub))
+            userRepository.persist(testUser).flatMap(user -> {
+                sub.entityId = user.userId;
+                userIdHolder[0] = user.userId;
+                return subscriptionRepository.persist(sub);
+            })
         ));
 
         // When: finding active subscription
         // Then: the active subscription is returned
-        asserter.assertThat(() -> Panache.withTransaction(() -> subscriptionRepository.findActiveByEntityIdAndType(testUser.userId, EntityType.USER)), found -> {
+        asserter.assertThat(() -> Panache.withTransaction(() -> subscriptionRepository.findActiveByEntityIdAndType(userIdHolder[0], EntityType.USER)), found -> {
             assertThat(found).isNotNull();
             assertThat(found.status).isEqualTo(SubscriptionStatus.ACTIVE);
         });
@@ -82,16 +95,22 @@ class SubscriptionRepositoryTest {
     void testFindByStripeSubscriptionId(UniAsserter asserter) {
         // Given: subscription with Stripe ID
         User testUser = createTestUser("subuser@example.com", "google", "google-sub");
-        Subscription sub = createTestSubscription(testUser.userId, EntityType.USER);
+        Subscription sub = createTestSubscription(null, EntityType.USER);
+        final String[] stripeIdHolder = new String[1];
+
         asserter.execute(() -> Panache.withTransaction(() ->
-            userRepository.persist(testUser).flatMap(user -> subscriptionRepository.persist(sub))
+            userRepository.persist(testUser).flatMap(user -> {
+                sub.entityId = user.userId;
+                stripeIdHolder[0] = sub.stripeSubscriptionId; // Capture the generated Stripe ID
+                return subscriptionRepository.persist(sub);
+            })
         ));
 
         // When: finding by Stripe ID
         // Then: the subscription is found
-        asserter.assertThat(() -> Panache.withTransaction(() -> subscriptionRepository.findByStripeSubscriptionId("stripe_sub_123")), found -> {
+        asserter.assertThat(() -> Panache.withTransaction(() -> subscriptionRepository.findByStripeSubscriptionId(stripeIdHolder[0])), found -> {
             assertThat(found).isNotNull();
-            assertThat(found.stripeSubscriptionId).isEqualTo("stripe_sub_123");
+            assertThat(found.stripeSubscriptionId).isEqualTo(stripeIdHolder[0]);
         });
     }
 
@@ -100,16 +119,17 @@ class SubscriptionRepositoryTest {
     void testFindByStatus(UniAsserter asserter) {
         // Given: subscriptions with different statuses
         User testUser = createTestUser("subuser@example.com", "google", "google-sub");
-        Subscription active = createTestSubscription(testUser.userId, EntityType.USER);
+        Subscription active = createTestSubscription(null, EntityType.USER);
         Subscription canceled = createTestSubscription(UUID.randomUUID(), EntityType.USER);
         canceled.status = SubscriptionStatus.CANCELED;
 
         asserter.execute(() -> Panache.withTransaction(() ->
-            userRepository.persist(testUser).flatMap(user ->
-                subscriptionRepository.persist(active).flatMap(s1 ->
+            userRepository.persist(testUser).flatMap(user -> {
+                active.entityId = user.userId;
+                return subscriptionRepository.persist(active).flatMap(s1 ->
                     subscriptionRepository.persist(canceled)
-                )
-            )
+                );
+            })
         ));
 
         // When: finding active subscriptions
@@ -125,18 +145,19 @@ class SubscriptionRepositoryTest {
     void testFindByTier(UniAsserter asserter) {
         // Given: subscriptions with different tiers
         User testUser = createTestUser("subuser@example.com", "google", "google-sub");
-        Subscription pro = createTestSubscription(testUser.userId, EntityType.USER);
+        Subscription pro = createTestSubscription(null, EntityType.USER);
         pro.tier = SubscriptionTier.PRO;
 
         Subscription proPlus = createTestSubscription(UUID.randomUUID(), EntityType.USER);
         proPlus.tier = SubscriptionTier.PRO_PLUS;
 
         asserter.execute(() -> Panache.withTransaction(() ->
-            userRepository.persist(testUser).flatMap(user ->
-                subscriptionRepository.persist(pro).flatMap(s1 ->
+            userRepository.persist(testUser).flatMap(user -> {
+                pro.entityId = user.userId;
+                return subscriptionRepository.persist(pro).flatMap(s1 ->
                     subscriptionRepository.persist(proPlus)
-                )
-            )
+                );
+            })
         ));
 
         // When: finding PRO tier subscriptions
@@ -152,18 +173,19 @@ class SubscriptionRepositoryTest {
     void testCountActiveByTier(UniAsserter asserter) {
         // Given: active subscriptions of different tiers
         User testUser = createTestUser("subuser@example.com", "google", "google-sub");
-        Subscription pro1 = createTestSubscription(testUser.userId, EntityType.USER);
+        Subscription pro1 = createTestSubscription(null, EntityType.USER);
         pro1.tier = SubscriptionTier.PRO;
 
         Subscription pro2 = createTestSubscription(UUID.randomUUID(), EntityType.USER);
         pro2.tier = SubscriptionTier.PRO;
 
         asserter.execute(() -> Panache.withTransaction(() ->
-            userRepository.persist(testUser).flatMap(user ->
-                subscriptionRepository.persist(pro1).flatMap(s1 ->
+            userRepository.persist(testUser).flatMap(user -> {
+                pro1.entityId = user.userId;
+                return subscriptionRepository.persist(pro1).flatMap(s1 ->
                     subscriptionRepository.persist(pro2)
-                )
-            )
+                );
+            })
         ));
 
         // When: counting active PRO subscriptions
@@ -175,7 +197,7 @@ class SubscriptionRepositoryTest {
 
     private User createTestUser(String email, String provider, String subject) {
         User user = new User();
-        user.userId = UUID.randomUUID();
+        // DO NOT SET user.userId - let Hibernate auto-generate it
         user.email = email;
         user.oauthProvider = provider;
         user.oauthSubject = subject;
@@ -186,13 +208,16 @@ class SubscriptionRepositoryTest {
 
     private Subscription createTestSubscription(UUID entityId, EntityType entityType) {
         Subscription sub = new Subscription();
-        sub.subscriptionId = UUID.randomUUID();
-        sub.stripeSubscriptionId = "stripe_sub_123";
+        // DO NOT SET sub.subscriptionId - let Hibernate auto-generate it
+        sub.stripeSubscriptionId = "stripe_sub_" + UUID.randomUUID().toString().substring(0, 8); // Unique Stripe ID
         sub.entityId = entityId;
         sub.entityType = entityType;
         sub.tier = SubscriptionTier.PRO;
         sub.status = SubscriptionStatus.ACTIVE;
+        sub.currentPeriodStart = Instant.now();
         sub.currentPeriodEnd = Instant.now().plus(30, ChronoUnit.DAYS);
+        sub.createdAt = Instant.now();
+        sub.updatedAt = Instant.now();
         return sub;
     }
 }

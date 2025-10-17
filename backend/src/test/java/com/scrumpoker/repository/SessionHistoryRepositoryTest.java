@@ -184,7 +184,7 @@ class SessionHistoryRepositoryTest {
 
     private User createTestUser(String email, String provider, String subject) {
         User user = new User();
-        user.userId = UUID.randomUUID();
+        // DO NOT SET user.userId - let Hibernate auto-generate it
         user.email = email;
         user.oauthProvider = provider;
         user.oauthSubject = subject;
@@ -200,6 +200,8 @@ class SessionHistoryRepositoryTest {
         room.owner = owner;
         room.privacyMode = PrivacyMode.PUBLIC;
         room.config = "{}";
+        room.createdAt = Instant.now();
+        room.lastActiveAt = Instant.now();
         return room;
     }
 
@@ -212,6 +214,7 @@ class SessionHistoryRepositoryTest {
         session.totalStories = 3;
         session.participants = "[]";
         session.summaryStats = "{}";
+        session.createdAt = Instant.now();
         return session;
     }
 }

@@ -199,7 +199,7 @@ class RoundRepositoryTest {
 
     private User createTestUser(String email, String provider, String subject) {
         User user = new User();
-        user.userId = UUID.randomUUID();
+        // DO NOT SET user.userId - let Hibernate auto-generate it
         user.email = email;
         user.oauthProvider = provider;
         user.oauthSubject = subject;
@@ -215,12 +215,14 @@ class RoundRepositoryTest {
         room.owner = owner;
         room.privacyMode = PrivacyMode.PUBLIC;
         room.config = "{}";
+        room.createdAt = Instant.now();
+        room.lastActiveAt = Instant.now();
         return room;
     }
 
     private Round createTestRound(Room room, Integer roundNumber, String storyTitle) {
         Round round = new Round();
-        round.roundId = UUID.randomUUID();
+        // DO NOT SET round.roundId - let Hibernate auto-generate it
         round.room = room;
         round.roundNumber = roundNumber;
         round.storyTitle = storyTitle;

@@ -34,12 +34,18 @@ class OrganizationRepositoryTest {
     void testPersistAndFindById(UniAsserter asserter) {
         // Given: a new organization
         Organization org = createTestOrganization("Acme Corp", "acme.com");
+        final UUID[] orgIdHolder = new UUID[1];
 
         // When: persisting the organization
-        asserter.execute(() -> Panache.withTransaction(() -> organizationRepository.persist(org)));
+        asserter.execute(() -> Panache.withTransaction(() ->
+            organizationRepository.persist(org).map(o -> {
+                orgIdHolder[0] = o.orgId;
+                return o;
+            })
+        ));
 
         // Then: the organization can be retrieved
-        asserter.assertThat(() -> Panache.withTransaction(() -> organizationRepository.findById(org.orgId)), found -> {
+        asserter.assertThat(() -> Panache.withTransaction(() -> organizationRepository.findById(orgIdHolder[0])), found -> {
             assertThat(found).isNotNull();
             assertThat(found.name).isEqualTo("Acme Corp");
             assertThat(found.domain).isEqualTo("acme.com");
@@ -53,12 +59,18 @@ class OrganizationRepositoryTest {
         Organization org = createTestOrganization("SSO Org", "sso.com");
         String ssoConfig = "{\"provider\":\"okta\",\"issuer\":\"https://okta.com\",\"clientId\":\"abc123\"}";
         org.ssoConfig = ssoConfig;
+        final UUID[] orgIdHolder = new UUID[1];
 
         // When: persisting and retrieving
-        asserter.execute(() -> Panache.withTransaction(() -> organizationRepository.persist(org)));
+        asserter.execute(() -> Panache.withTransaction(() ->
+            organizationRepository.persist(org).map(o -> {
+                orgIdHolder[0] = o.orgId;
+                return o;
+            })
+        ));
 
         // Then: JSONB SSO config persists correctly
-        asserter.assertThat(() -> Panache.withTransaction(() -> organizationRepository.findById(org.orgId)), found -> {
+        asserter.assertThat(() -> Panache.withTransaction(() -> organizationRepository.findById(orgIdHolder[0])), found -> {
             assertThat(found.ssoConfig).isEqualTo(ssoConfig);
             assertThat(found.ssoConfig).contains("okta");
         });
@@ -69,13 +81,20 @@ class OrganizationRepositoryTest {
     void testFindByDomain(UniAsserter asserter) {
         // Given: persisted organization
         Organization org = createTestOrganization("Test Org", "test.com");
-        asserter.execute(() -> Panache.withTransaction(() -> organizationRepository.persist(org)));
+        final UUID[] orgIdHolder = new UUID[1];
+
+        asserter.execute(() -> Panache.withTransaction(() ->
+            organizationRepository.persist(org).map(o -> {
+                orgIdHolder[0] = o.orgId;
+                return o;
+            })
+        ));
 
         // When: finding by domain
         // Then: organization is found
         asserter.assertThat(() -> Panache.withTransaction(() -> organizationRepository.findByDomain("test.com")), found -> {
             assertThat(found).isNotNull();
-            assertThat(found.orgId).isEqualTo(org.orgId);
+            assertThat(found.orgId).isEqualTo(orgIdHolder[0]);
         });
     }
 
@@ -119,11 +138,18 @@ class OrganizationRepositoryTest {
     void testUpdateOrganization(UniAsserter asserter) {
         // Given: persisted organization
         Organization org = createTestOrganization("Old Name", "old.com");
-        asserter.execute(() -> Panache.withTransaction(() -> organizationRepository.persist(org)));
+        final UUID[] orgIdHolder = new UUID[1];
+
+        asserter.execute(() -> Panache.withTransaction(() ->
+            organizationRepository.persist(org).map(o -> {
+                orgIdHolder[0] = o.orgId;
+                return o;
+            })
+        ));
 
         // When: updating organization
         asserter.execute(() -> Panache.withTransaction(() ->
-                organizationRepository.findById(org.orgId).flatMap(o -> {
+                organizationRepository.findById(orgIdHolder[0]).flatMap(o -> {
                     o.name = "New Name";
                     o.domain = "new.com";
                     return organizationRepository.persist(o);
@@ -131,7 +157,7 @@ class OrganizationRepositoryTest {
         ));
 
         // Then: changes are persisted
-        asserter.assertThat(() -> Panache.withTransaction(() -> organizationRepository.findById(org.orgId)), updated -> {
+        asserter.assertThat(() -> Panache.withTransaction(() -> organizationRepository.findById(orgIdHolder[0])), updated -> {
             assertThat(updated.name).isEqualTo("New Name");
             assertThat(updated.domain).isEqualTo("new.com");
         });
@@ -139,11 +165,13 @@ class OrganizationRepositoryTest {
 
     private Organization createTestOrganization(String name, String domain) {
         Organization org = new Organization();
-        org.orgId = UUID.randomUUID();
+        // DO NOT SET org.orgId - let Hibernate auto-generate it
         org.name = name;
         org.domain = domain;
         org.ssoConfig = "{}";
         org.branding = "{}";
+        org.createdAt = java.time.Instant.now();
+        org.updatedAt = java.time.Instant.now();
         return org;
     }
 }

@@ -223,9 +223,12 @@ class RoomParticipantRepositoryTest {
     private RoomParticipant createTestParticipant(Room room, User user, String displayName, RoomRole role) {
         RoomParticipant participant = new RoomParticipant();
         participant.room = room;
-        participant.user = user;
+        // Use anonymous participant to allow multiple participants in same room (unique constraint on room+user)
+        participant.anonymousId = UUID.randomUUID().toString(); // Set unique anonymous ID to avoid unique constraint violation
+        // DO NOT set participant.user - participants are anonymous
         participant.displayName = displayName;
         participant.role = role;
+        participant.connectedAt = Instant.now();
         return participant;
     }
 }

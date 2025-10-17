@@ -42,16 +42,21 @@ class PaymentHistoryRepositoryTest {
         // Given: a subscription and payment
         Subscription testSubscription = createTestSubscription();
         PaymentHistory payment = createTestPayment(testSubscription, 1999);
+        final UUID[] paymentIdHolder = new UUID[1];
 
         // When: persisting both
         asserter.execute(() -> Panache.withTransaction(() ->
-            subscriptionRepository.persist(testSubscription).flatMap(sub ->
-                paymentRepository.persist(payment)
-            )
+            subscriptionRepository.persist(testSubscription).flatMap(sub -> {
+                payment.subscription = sub;
+                return paymentRepository.persist(payment).map(p -> {
+                    paymentIdHolder[0] = p.paymentId;
+                    return p;
+                });
+            })
         ));
 
         // Then: the payment can be retrieved
-        asserter.assertThat(() -> Panache.withTransaction(() -> paymentRepository.findById(payment.paymentId)), found -> {
+        asserter.assertThat(() -> Panache.withTransaction(() -> paymentRepository.findById(paymentIdHolder[0])), found -> {
             assertThat(found).isNotNull();
             assertThat(found.amount).isEqualTo(1999);
             assertThat(found.status).isEqualTo(PaymentStatus.SUCCEEDED);
@@ -63,12 +68,13 @@ class PaymentHistoryRepositoryTest {
     void testFindBySubscriptionId(UniAsserter asserter) {
         // Given: multiple payments for a subscription
         Subscription testSubscription = createTestSubscription();
+        final UUID[] subIdHolder = new UUID[1];
 
         asserter.execute(() -> Panache.withTransaction(() ->
             subscriptionRepository.persist(testSubscription).flatMap(sub -> {
+                subIdHolder[0] = sub.subscriptionId;
                 PaymentHistory p1 = createTestPayment(sub, 1999);
                 PaymentHistory p2 = createTestPayment(sub, 1999);
-                p2.paymentId = UUID.randomUUID(); // Ensure unique IDs
                 p2.stripeInvoiceId = "stripe_inv_124";
                 return paymentRepository.persist(p1).flatMap(payment1 ->
                     paymentRepository.persist(p2)
@@ -78,7 +84,7 @@ class PaymentHistoryRepositoryTest {
 
         // When: finding payments by subscription ID
         // Then: all payments are returned
-        asserter.assertThat(() -> Panache.withTransaction(() -> paymentRepository.findBySubscriptionId(testSubscription.subscriptionId)), payments -> {
+        asserter.assertThat(() -> Panache.withTransaction(() -> paymentRepository.findBySubscriptionId(subIdHolder[0])), payments -> {
             assertThat(payments).hasSize(2);
         });
     }
@@ -114,7 +120,6 @@ class PaymentHistoryRepositoryTest {
 
         PaymentHistory failed = createTestPayment(testSubscription, 1999);
         failed.status = PaymentStatus.FAILED;
-        failed.paymentId = UUID.randomUUID(); // Ensure unique ID
         failed.stripeInvoiceId = "stripe_inv_456";
 
         asserter.execute(() -> Panache.withTransaction(() ->
@@ -137,12 +142,13 @@ class PaymentHistoryRepositoryTest {
     void testCountBySubscriptionId(UniAsserter asserter) {
         // Given: multiple payments
         Subscription testSubscription = createTestSubscription();
+        final UUID[] subIdHolder = new UUID[1];
 
         asserter.execute(() -> Panache.withTransaction(() ->
             subscriptionRepository.persist(testSubscription).flatMap(sub -> {
+                subIdHolder[0] = sub.subscriptionId;
                 PaymentHistory p1 = createTestPayment(sub, 1999);
                 PaymentHistory p2 = createTestPayment(sub, 1999);
-                p2.paymentId = UUID.randomUUID(); // Ensure unique IDs
                 p2.stripeInvoiceId = "stripe_inv_125";
                 return paymentRepository.persist(p1).flatMap(payment1 ->
                     paymentRepository.persist(p2)
@@ -152,7 +158,7 @@ class PaymentHistoryRepositoryTest {
 
         // When: counting payments
         // Then: correct count is returned
-        asserter.assertThat(() -> Panache.withTransaction(() -> paymentRepository.countBySubscriptionId(testSubscription.subscriptionId)), count -> {
+        asserter.assertThat(() -> Panache.withTransaction(() -> paymentRepository.countBySubscriptionId(subIdHolder[0])), count -> {
             assertThat(count).isEqualTo(2);
         });
     }
@@ -167,7 +173,6 @@ class PaymentHistoryRepositoryTest {
             subscriptionRepository.persist(testSubscription).flatMap(sub -> {
                 PaymentHistory p1 = createTestPayment(sub, 1999);
                 PaymentHistory p2 = createTestPayment(sub, 2999);
-                p2.paymentId = UUID.randomUUID(); // Ensure unique IDs
                 p2.stripeInvoiceId = "stripe_inv_126";
                 return paymentRepository.persist(p1).flatMap(payment1 ->
                     paymentRepository.persist(p2)
@@ -184,25 +189,29 @@ class PaymentHistoryRepositoryTest {
 
     private Subscription createTestSubscription() {
         Subscription sub = new Subscription();
-        sub.subscriptionId = UUID.randomUUID();
+        // DO NOT SET sub.subscriptionId - let Hibernate auto-generate it
         sub.stripeSubscriptionId = "stripe_sub_test";
         sub.entityId = UUID.randomUUID();
         sub.entityType = EntityType.USER;
         sub.tier = SubscriptionTier.PRO;
         sub.status = SubscriptionStatus.ACTIVE;
+        sub.currentPeriodStart = Instant.now();
         sub.currentPeriodEnd = Instant.now().plus(30, ChronoUnit.DAYS);
+        sub.createdAt = Instant.now();
+        sub.updatedAt = Instant.now();
         return sub;
     }
 
     private PaymentHistory createTestPayment(Subscription subscription, Integer amount) {
         PaymentHistory payment = new PaymentHistory();
-        payment.paymentId = UUID.randomUUID();
+        // DO NOT SET payment.paymentId - let Hibernate auto-generate it
         payment.subscription = subscription;
         payment.stripeInvoiceId = "stripe_inv_123";
         payment.amount = amount;
         payment.currency = "usd";
         payment.status = PaymentStatus.SUCCEEDED;
         payment.paidAt = Instant.now();
+        payment.createdAt = Instant.now();
         return payment;
     }
 }

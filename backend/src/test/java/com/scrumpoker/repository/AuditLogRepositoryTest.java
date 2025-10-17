@@ -199,7 +199,7 @@ class AuditLogRepositoryTest {
 
     private User createTestUser(String email, String provider, String subject) {
         User user = new User();
-        user.userId = UUID.randomUUID();
+        // DO NOT SET user.userId - let Hibernate auto-generate it
         user.email = email;
         user.oauthProvider = provider;
         user.oauthSubject = subject;
@@ -210,11 +210,13 @@ class AuditLogRepositoryTest {
 
     private Organization createTestOrganization(String name, String domain) {
         Organization org = new Organization();
-        org.orgId = UUID.randomUUID();
+        // DO NOT SET org.orgId - let Hibernate auto-generate it
         org.name = name;
         org.domain = domain;
         org.ssoConfig = "{}";
         org.branding = "{}";
+        org.createdAt = Instant.now();
+        org.updatedAt = Instant.now();
         return org;
     }
 
