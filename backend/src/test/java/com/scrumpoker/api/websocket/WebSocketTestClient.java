@@ -1,6 +1,8 @@
 package com.scrumpoker.api.websocket;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.quarkus.arc.Arc;
+import io.quarkus.arc.ManagedContext;
 import jakarta.websocket.*;
 
 import java.net.URI;
@@ -18,6 +20,10 @@ import java.util.concurrent.TimeUnit;
  * Provides a simple interface for connecting to WebSocket endpoints,
  * sending messages, and receiving messages with timeout support.
  * </p>
+ * <p>
+ * Uses standard Jakarta WebSocket API. Security is disabled in test configuration
+ * to avoid RequestScoped context issues during client connection.
+ * </p>
  */
 @ClientEndpoint
 public class WebSocketTestClient {
@@ -28,18 +34,38 @@ public class WebSocketTestClient {
 
     /**
      * Connects to the WebSocket endpoint.
+     * <p>
+     * Activates the RequestScoped context before connecting to avoid
+     * ContextNotActiveException when the WebSocket container tries to
+     * access security-related beans.
+     * </p>
+     * <p>
+     * IMPORTANT: The request context is kept active after connection and must
+     * be explicitly terminated by calling close().
+     * </p>
      *
      * @param uri The WebSocket URI (e.g., "ws://localhost:8081/ws/room/abc123?token=xxx")
      * @throws Exception if connection fails
      */
     public void connect(String uri) throws Exception {
-        // Use Jetty's standalone WebSocket client to avoid Quarkus security context issues
-        WebSocketContainer container = org.eclipse.jetty.websocket.jakarta.client.JakartaWebSocketClientContainerProvider.getWebSocketContainer();
+        ManagedContext requestContext = Arc.container().requestContext();
+
+        // Activate request context for the connection and keep it active
+        if (!requestContext.isActive()) {
+            requestContext.activate();
+        }
+
+        WebSocketContainer container = ContainerProvider.getWebSocketContainer();
         session = container.connectToServer(this, URI.create(uri));
     }
 
     /**
      * Closes the WebSocket connection.
+     * <p>
+     * Note: We intentionally do NOT terminate the request context here because
+     * it may be shared across multiple WebSocket clients in the same test.
+     * The context will be automatically cleaned up when the test completes.
+     * </p>
      */
     public void close() {
         if (session != null && session.isOpen()) {

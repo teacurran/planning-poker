@@ -97,11 +97,15 @@ public class RoomWebSocketHandler {
      * Process:
      * <ol>
      *   <li>Extract JWT token from query parameter {@code ?token={jwt}}</li>
-     *   <li>Validate JWT token and extract user claims</li>
-     *   <li>Validate room exists and is not deleted</li>
+     *   <li>Validate JWT token and extract user claims (async)</li>
+     *   <li>Validate room exists and is not deleted (async)</li>
      *   <li>Register connection in connection registry</li>
      *   <li>Schedule join timeout (client must send room.join.v1 within 10s)</li>
      * </ol>
+     * </p>
+     * <p>
+     * Note: Token and room validation are performed reactively to avoid blocking
+     * the Vert.x event loop. If validation fails, the connection is closed asynchronously.
      * </p>
      *
      * @param session The WebSocket session
@@ -111,50 +115,59 @@ public class RoomWebSocketHandler {
     public void onOpen(Session session, @PathParam("roomId") String roomId) {
         Log.infof("WebSocket connection attempt: session %s, room %s", session.getId(), roomId);
 
-        try {
-            // Extract JWT token from query parameter
-            String token = extractTokenFromQuery(session);
-            if (token == null || token.isBlank()) {
-                closeWithError(session, 4000, "UNAUTHORIZED", "Missing or invalid JWT token");
-                return;
-            }
-
-            // Validate JWT token and extract claims
-            JwtClaims claims = validateToken(token);
-            if (claims == null) {
-                closeWithError(session, 4000, "UNAUTHORIZED", "Invalid or expired JWT token");
-                return;
-            }
-
-            // Validate room exists
-            Room room = validateRoomExists(roomId);
-            if (room == null) {
-                closeWithError(session, 4001, "ROOM_NOT_FOUND",
-                        "Room does not exist or has been deleted");
-                return;
-            }
-
-            // Store user ID and room ID in session properties
-            session.getUserProperties().put(USER_ID_KEY, claims.userId().toString());
-            session.getUserProperties().put(ROOM_ID_KEY, roomId);
-
-            // Track session for join timeout enforcement
-            sessionIdToSession.put(session.getId(), session);
-
-            // Register connection in registry
-            connectionRegistry.addConnection(roomId, session);
-
-            // Schedule join timeout (client must send room.join.v1 within 10 seconds)
-            scheduleJoinTimeout(session);
-
-            Log.infof("WebSocket connection established: user %s, room %s, session %s",
-                    claims.userId(), roomId, session.getId());
-
-        } catch (Exception e) {
-            Log.errorf(e, "Failed to establish WebSocket connection for session %s", session.getId());
-            closeWithError(session, 4999, "INTERNAL_SERVER_ERROR",
-                    "Failed to establish connection: " + e.getMessage());
+        // Extract JWT token from query parameter
+        String token = extractTokenFromQuery(session);
+        if (token == null || token.isBlank()) {
+            closeWithError(session, 4000, "UNAUTHORIZED", "Missing or invalid JWT token");
+            return;
         }
+
+        // Validate token and room reactively (async, non-blocking)
+        jwtTokenService.validateAccessToken(token)
+                .onItem().transformToUni(claims -> {
+                    // Token valid, now validate room
+                    return roomService.findById(roomId)
+                            .onItem().transform(room -> new ValidationResult(claims, room));
+                })
+                .subscribe().with(
+                        validationResult -> {
+                            // Success: both token and room are valid
+                            JwtClaims claims = validationResult.claims;
+
+                            // Store user ID and room ID in session properties
+                            session.getUserProperties().put(USER_ID_KEY, claims.userId().toString());
+                            session.getUserProperties().put(ROOM_ID_KEY, roomId);
+
+                            // Track session for join timeout enforcement
+                            sessionIdToSession.put(session.getId(), session);
+
+                            // Register connection in registry
+                            connectionRegistry.addConnection(roomId, session);
+
+                            // Schedule join timeout (client must send room.join.v1 within 10 seconds)
+                            scheduleJoinTimeout(session);
+
+                            Log.infof("WebSocket connection established: user %s, room %s, session %s",
+                                    claims.userId(), roomId, session.getId());
+                        },
+                        failure -> {
+                            // Failure: either token invalid or room not found
+                            Log.errorf(failure, "Failed to establish WebSocket connection for session %s", session.getId());
+
+                            if (failure instanceof RoomNotFoundException) {
+                                closeWithError(session, 4001, "ROOM_NOT_FOUND",
+                                        "Room does not exist or has been deleted");
+                            } else {
+                                closeWithError(session, 4000, "UNAUTHORIZED", "Invalid or expired JWT token");
+                            }
+                        }
+                );
+    }
+
+    /**
+     * Internal helper class to pass validation results through reactive chain.
+     */
+    private record ValidationResult(JwtClaims claims, Room room) {
     }
 
     /**
