@@ -72,7 +72,7 @@
     "acceptance_criteria": "WebSocket connects successfully to backend, Connection state tracked (connecting, connected, disconnected), Reconnection triggers automatically on disconnect, Sent messages appear in backend logs (vote.cast received), Received events update roomStore state, Heartbeat keeps connection alive (no timeout disconnect), Hook provides connection status to components",
     "dependencies": ["I4.T1"],
     "parallelizable": false,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I4.T6",

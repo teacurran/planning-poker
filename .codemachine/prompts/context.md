@@ -10,29 +10,25 @@ This is the full specification of the task you must complete.
 
 ```json
 {
-  "task_id": "I4.T4",
+  "task_id": "I4.T5",
   "iteration_id": "I4",
   "iteration_goal": "Implement WebSocket-based real-time voting functionality including connection management, vote casting, round lifecycle (start, reveal, reset), Redis Pub/Sub for event broadcasting across stateless nodes, and frontend voting UI.",
-  "description": "Create message handler classes for WebSocket messages per protocol spec. Implement `VoteCastHandler` (validate message, extract payload, call VotingService.castVote), `RoundRevealHandler` (validate host role, call VotingService.revealRound), `RoundStartHandler` (validate host, call VotingService.startRound), `RoundResetHandler` (validate host, call VotingService.resetRound), `ChatMessageHandler` (persist chat message, broadcast to room). Integrate handlers with RoomWebSocketHandler onMessage router (switch on message type). Validate authorization (only host can reveal/reset, all voters can cast votes). Return error messages for validation failures.",
-  "agent_type_hint": "BackendAgent",
-  "inputs": "WebSocket protocol spec from I2.T2, VotingService from I4.T3, Message type definitions",
+  "description": "Implement `WebSocketManager` class managing WebSocket connection lifecycle for React frontend. Features: connect to `/ws/room/{roomId}` with JWT token, handle connection states (connecting, connected, disconnected), implement reconnection logic with exponential backoff (1s, 2s, 4s, 8s, max 16s), send messages (vote.cast, chat.message), receive messages and dispatch to event handlers, maintain heartbeat (respond to ping with pong). Integrate with Zustand store (`roomStore`) to update room state on incoming events. Create React hook `useWebSocket(roomId)` for components.",
+  "agent_type_hint": "FrontendAgent",
+  "inputs": "WebSocket protocol spec from I2.T2, WebSocket connection lifecycle requirements, React + Zustand patterns",
   "input_files": [
     "api/websocket-protocol.md",
-    "backend/src/main/java/com/scrumpoker/domain/room/VotingService.java",
-    "backend/src/main/java/com/scrumpoker/api/websocket/RoomWebSocketHandler.java"
+    "frontend/src/stores/authStore.ts"
   ],
   "target_files": [
-    "backend/src/main/java/com/scrumpoker/api/websocket/handler/VoteCastHandler.java",
-    "backend/src/main/java/com/scrumpoker/api/websocket/handler/RoundRevealHandler.java",
-    "backend/src/main/java/com/scrumpoker/api/websocket/handler/RoundStartHandler.java",
-    "backend/src/main/java/com/scrumpoker/api/websocket/handler/RoundResetHandler.java",
-    "backend/src/main/java/com/scrumpoker/api/websocket/handler/ChatMessageHandler.java",
-    "backend/src/main/java/com/scrumpoker/api/websocket/MessageRouter.java"
+    "frontend/src/services/websocket.ts",
+    "frontend/src/hooks/useWebSocket.ts",
+    "frontend/src/stores/roomStore.ts"
   ],
-  "deliverables": "5 message handler classes processing specific message types, MessageRouter dispatching messages to handlers based on type, Authorization validation (host-only operations), Payload validation (Zod/Bean Validation for JSON payloads), Error responses sent back to client for validation failures, Integration with VotingService methods",
-  "acceptance_criteria": "vote.cast.v1 message triggers VotingService.castVote correctly, round.reveal.v1 from host reveals round successfully, round.reveal.v1 from non-host returns error message (403 Forbidden), Invalid payload structure returns error message (400 Bad Request), Chat message broadcasts to all room participants, Message router correctly dispatches to appropriate handler",
+  "deliverables": "WebSocketManager with methods: connect, disconnect, send, on(messageType, handler), Reconnection logic with exponential backoff, Heartbeat pong response, Message serialization (JS object → JSON string), Message deserialization and event dispatching, useWebSocket hook providing connection status and send function, roomStore integration updating state on vote.recorded, round.revealed events",
+  "acceptance_criteria": "WebSocket connects successfully to backend, Connection state tracked (connecting, connected, disconnected), Reconnection triggers automatically on disconnect, Sent messages appear in backend logs (vote.cast received), Received events update roomStore state, Heartbeat keeps connection alive (no timeout disconnect), Hook provides connection status to components",
   "dependencies": [
-    "I4.T3"
+    "I4.T1"
   ],
   "parallelizable": false,
   "done": false
@@ -45,210 +41,193 @@ This is the full specification of the task you must complete.
 
 The following are the relevant sections from the architecture and plan documents, which I found by analyzing the task description.
 
-### Context: WebSocket Message Types - Client to Server (from websocket-protocol.md)
+### Context: WebSocket Protocol Specification (from api/websocket-protocol.md)
 
-```markdown
-### 3.1 Client → Server Messages
+The complete WebSocket protocol specification has been defined and includes:
 
-These messages are sent by clients to the server to initiate actions.
-
-| Message Type | Direction | Description | Host Only |
-|--------------|-----------|-------------|-----------|
-| `room.join.v1` | Client → Server | Participant joins room (sent immediately after connection) | No |
-| `room.leave.v1` | Client → Server | Participant leaves room gracefully | No |
-| `vote.cast.v1` | Client → Server | Participant submits vote for current round | No |
-| `round.start.v1` | Client → Server | Start new estimation round | **Yes** |
-| `round.reveal.v1` | Client → Server | Reveal votes for current round | **Yes** |
-| `round.reset.v1` | Client → Server | Reset current round for re-voting | **Yes** |
-| `chat.message.v1` | Client → Server | Send chat message to room | No |
-| `presence.update.v1` | Client → Server | Update participant presence status | No |
+**Endpoint URL Pattern:**
+```
+wss://api.planningpoker.example.com/ws/room/{roomId}?token={jwt}
 ```
 
-### Context: Message Schemas for Vote Casting (from websocket-protocol.md)
-
-```markdown
-#### 4.1.3 `vote.cast.v1`
-
-**Purpose:** Participant casts vote for the current round.
-
-**Payload Schema:**
+**Message Envelope Format:**
 ```json
 {
-  "cardValue": "5"                    // Required, 1-10 characters, must match current deck
-}
-```
-
-**Valid Card Values (depends on deck type):**
-- Fibonacci: `"0"`, `"1"`, `"2"`, `"3"`, `"5"`, `"8"`, `"13"`, `"21"`, `"?"`
-- T-Shirt: `"XS"`, `"S"`, `"M"`, `"L"`, `"XL"`, `"XXL"`, `"?"`
-- Powers of 2: `"1"`, `"2"`, `"4"`, `"8"`, `"16"`, `"32"`, `"?"`
-- Custom: As defined in room configuration
-
-**Example:**
-```json
-{
-  "type": "vote.cast.v1",
+  "type": "message_type.v1",
   "requestId": "550e8400-e29b-41d4-a716-446655440000",
   "payload": {
-    "cardValue": "5"
+    // Message-specific payload
   }
 }
 ```
 
-**Server Broadcast:**
-- `vote.recorded.v1` to all participants (does NOT include vote value)
+**Key Message Types (Client → Server):**
+- `room.join.v1` - Participant joins room (sent immediately after connection)
+- `room.leave.v1` - Participant leaves room gracefully
+- `vote.cast.v1` - Participant submits vote for current round
+- `round.start.v1` - Start new estimation round (Host only)
+- `round.reveal.v1` - Reveal votes for current round (Host only)
+- `round.reset.v1` - Reset current round for re-voting (Host only)
+- `chat.message.v1` - Send chat message to room
 
-**Error Conditions:**
-- `4002`: Invalid vote (card value not in deck, no active round, already voted)
-- `4003`: Forbidden (observer role cannot vote)
-```
+**Key Message Types (Server → Client):**
+- `room.state.v1` - Initial room state snapshot (sent upon connection)
+- `room.participant_joined.v1` - Participant joined room (broadcast)
+- `room.participant_left.v1` - Participant left gracefully (broadcast)
+- `vote.recorded.v1` - Vote confirmed (does NOT reveal value) (broadcast)
+- `round.started.v1` - New round started (broadcast)
+- `round.revealed.v1` - Votes revealed with statistics (broadcast)
+- `round.reset.v1` - Round reset (broadcast)
+- `chat.message.v1` - Chat message broadcast
+- `error.v1` - Error response (unicast)
 
-### Context: Message Schemas for Round Start (from websocket-protocol.md)
+**Connection Lifecycle:**
+1. **WebSocket Handshake**: Client initiates with JWT token as query parameter
+2. **Server Setup**: Server validates JWT and subscribes to Redis Pub/Sub channel
+3. **Room Join**: Client MUST send `room.join.v1` within 10 seconds
+4. **Heartbeat Protocol**: Client sends ping every 30 seconds, server responds with pong
+5. **Graceful Disconnection**: Client sends `room.leave.v1` before closing
 
-```markdown
-#### 4.1.4 `round.start.v1` (Host Only)
+**Reconnection Strategy (Client-Side):**
+- Detect connection loss via WebSocket `onclose` event
+- Attempt reconnection with exponential backoff: 1s, 2s, 4s, 8s, 16s (max)
+- Include `lastEventId` in reconnection handshake to retrieve missed events
+- Server replays events from Redis or database within 5-minute window
 
-**Purpose:** Host starts a new estimation round.
+**Error Codes (4000-4999 range):**
+- `4000` - UNAUTHORIZED (invalid or expired JWT token)
+- `4001` - ROOM_NOT_FOUND (room does not exist or deleted)
+- `4002` - INVALID_VOTE (vote validation failed)
+- `4003` - FORBIDDEN (insufficient permissions)
+- `4004` - VALIDATION_ERROR (request payload validation failed)
+- `4005` - INVALID_STATE (action not valid in current room/round state)
+- `4008` - POLICY_VIOLATION (protocol violation, e.g., didn't send room.join.v1)
+- `4999` - INTERNAL_SERVER_ERROR (unexpected server error)
 
-**Payload Schema:**
-```json
-{
-  "storyTitle": "As a user, I want to...",  // Optional, max 500 characters
-  "timerDurationSeconds": 120               // Optional, 10-600 seconds
-}
-```
+### Context: WebSocket Communication Pattern (from 04_Behavior_and_Communication.md)
 
-**Example:**
-```json
-{
-  "type": "round.start.v1",
-  "requestId": "550e8400-e29b-41d4-a716-446655440000",
-  "payload": {
-    "storyTitle": "As a user, I want to login with Google OAuth2",
-    "timerDurationSeconds": 120
+**Asynchronous WebSocket (Event-Driven) Pattern:**
+
+Use Cases:
+- Real-time vote casting and vote state updates
+- Room state synchronization (participant joins/leaves, host controls)
+- Card reveal events with animated timing coordination
+- Presence updates (typing indicators, ready states)
+- Chat messages and emoji reactions
+
+Pattern Characteristics:
+- Persistent connection maintained for session duration
+- Events broadcast via Redis Pub/Sub to all application nodes
+- Client-side event handlers update local state optimistically, reconcile on server confirmation
+- Heartbeat/ping-pong protocol for connection liveness detection
+- Automatic reconnection with exponential backoff on connection loss
+
+Message Flow:
+1. Client sends WebSocket message: `{"type": "vote.cast.v1", "requestId": "uuid", "payload": {"cardValue": "5"}}`
+2. Server validates, persists vote to PostgreSQL
+3. Server publishes event to Redis channel: `room:{roomId}`
+4. All application nodes subscribed to channel receive event
+5. Each node broadcasts to locally connected clients in that room
+6. Clients receive: `{"type": "vote.recorded.v1", "requestId": "uuid", "payload": {"participantId": "...", "votedAt": "..."}}`
+
+### Context: WebSocket Connection Lifecycle (from websocket-protocol.md)
+
+**Connection Establishment Steps:**
+1. Client initiates: `wss://api.planningpoker.example.com/ws/room/{roomId}?token={jwt}`
+2. Server validates JWT token, extracts user/participant identity
+3. Server checks room existence and user authorization
+4. Server subscribes connection to Redis Pub/Sub channel: `room:{roomId}`
+5. WebSocket connection established (HTTP 101 Switching Protocols)
+6. Client MUST send `room.join.v1` message immediately after connection
+7. Server validates join request, creates/updates `RoomParticipant` record
+8. Server broadcasts `room.participant_joined.v1` event to existing participants
+9. Server sends `room.state.v1` (initial state snapshot) to newly connected client
+
+**Heartbeat Protocol:**
+- Client sends WebSocket `ping` frame every 30 seconds
+- Server responds with `pong` frame
+- Connection terminated if no `ping` received within 60 seconds (2x interval)
+
+**Reconnection Strategy (Client-Side):**
+```javascript
+class RoomWebSocket {
+  constructor(roomId, token) {
+    this.roomId = roomId;
+    this.token = token;
+    this.lastEventId = null;
+    this.reconnectAttempts = 0;
+    this.maxReconnectDelay = 16000; // 16 seconds
+    this.connect();
+  }
+
+  connect() {
+    const url = `wss://api.planningpoker.example.com/ws/room/${this.roomId}?token=${this.token}`;
+    this.ws = new WebSocket(url);
+
+    this.ws.onopen = () => {
+      console.log('Connected');
+      this.reconnectAttempts = 0;
+
+      // Send join message with lastEventId for replay
+      this.send({
+        type: 'room.join.v1',
+        requestId: uuidv4(),
+        payload: {
+          displayName: 'Alice',
+          role: 'VOTER',
+          lastEventId: this.lastEventId // For event replay
+        }
+      });
+    };
+
+    this.ws.onmessage = (event) => {
+      const message = JSON.parse(event.data);
+
+      // Store lastEventId for reconnection
+      if (message.payload && message.payload.lastEventId) {
+        this.lastEventId = message.payload.lastEventId;
+      }
+
+      this.handleMessage(message);
+    };
+
+    this.ws.onclose = (event) => {
+      if (event.code !== 1000) {
+        // Unexpected closure, attempt reconnection
+        this.reconnect();
+      }
+    };
+
+    this.ws.onerror = (error) => {
+      console.error('WebSocket error:', error);
+    };
+  }
+
+  reconnect() {
+    const delay = Math.min(
+      1000 * Math.pow(2, this.reconnectAttempts),
+      this.maxReconnectDelay
+    );
+    this.reconnectAttempts++;
+
+    console.log(`Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts})`);
+
+    setTimeout(() => {
+      this.connect();
+    }, delay);
+  }
+
+  send(message) {
+    if (this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify(message));
+    }
+  }
+
+  handleMessage(message) {
+    // Handle different message types
+    console.log('Received:', message);
   }
 }
-```
-
-**Server Broadcast:**
-- `round.started.v1` to all participants
-
-**Error Conditions:**
-- `4003`: Forbidden (only HOST role can start rounds)
-- `4005`: Invalid state (round already in progress)
-```
-
-### Context: Message Schemas for Round Reveal (from websocket-protocol.md)
-
-```markdown
-#### 4.1.5 `round.reveal.v1` (Host Only)
-
-**Purpose:** Host triggers reveal of votes for the current round.
-
-**Payload Schema:**
-```json
-{}  // Empty payload
-```
-
-**Example:**
-```json
-{
-  "type": "round.reveal.v1",
-  "requestId": "550e8400-e29b-41d4-a716-446655440000",
-  "payload": {}
-}
-```
-
-**Server Broadcast:**
-- `round.revealed.v1` to all participants with vote values and statistics
-
-**Error Conditions:**
-- `4003`: Forbidden (only HOST role can reveal)
-- `4005`: Invalid state (no active round, no votes cast, already revealed)
-```
-
-### Context: Message Schemas for Round Reset (from websocket-protocol.md)
-
-```markdown
-#### 4.1.6 `round.reset.v1` (Host Only)
-
-**Purpose:** Host resets current round for re-voting.
-
-**Payload Schema:**
-```json
-{
-  "clearVotes": true                  // Optional, default true
-}
-```
-
-**Example:**
-```json
-{
-  "type": "round.reset.v1",
-  "requestId": "550e8400-e29b-41d4-a716-446655440000",
-  "payload": {
-    "clearVotes": true
-  }
-}
-```
-
-**Server Broadcast:**
-- `round.reset.v1` to all participants
-
-**Error Conditions:**
-- `4003`: Forbidden (only HOST role can reset)
-- `4005`: Invalid state (no active round)
-```
-
-### Context: Message Schemas for Chat Messages (from websocket-protocol.md)
-
-```markdown
-#### 4.1.7 `chat.message.v1`
-
-**Purpose:** Participant sends chat message to room.
-
-**Payload Schema:**
-```json
-{
-  "message": "Hello team!",                           // Required, 1-2000 characters
-  "replyToMessageId": "550e8400-e29b-41d4-a716-..."   // Optional, UUID of message being replied to
-}
-```
-
-**Example:**
-```json
-{
-  "type": "chat.message.v1",
-  "requestId": "550e8400-e29b-41d4-a716-446655440000",
-  "payload": {
-    "message": "I think 8 points is too high for this story."
-  }
-}
-```
-
-**Server Broadcast:**
-- `chat.message.v1` to all participants with sender details and message ID
-```
-
-### Context: Error Code Catalog (from websocket-protocol.md)
-
-```markdown
-### 6.2 Error Code Catalog
-
-WebSocket application errors use the **4000-4999 range** (distinct from standard WebSocket close codes 1000-1999).
-
-| Code | Error | Description | Recovery Strategy |
-|------|-------|-------------|-------------------|
-| **4000** | `UNAUTHORIZED` | Invalid or expired JWT token | Refresh token and reconnect with new JWT |
-| **4001** | `ROOM_NOT_FOUND` | Room does not exist or has been deleted | Notify user, redirect to room list |
-| **4002** | `INVALID_VOTE` | Vote validation failed (invalid card value, no active round, already voted) | Show error to user, allow retry |
-| **4003** | `FORBIDDEN` | Insufficient permissions (e.g., observer trying to vote, non-host starting round) | Show permission error, update UI to reflect role |
-| **4004** | `VALIDATION_ERROR` | Request payload validation failed | Show field-specific errors, allow correction |
-| **4005** | `INVALID_STATE` | Action not valid in current room/round state | Update local state from server, retry if appropriate |
-| **4006** | `RATE_LIMIT_EXCEEDED` | Too many messages sent in short time | Throttle client-side message sending |
-| **4007** | `ROOM_FULL` | Room has reached participant limit | Notify user, cannot join |
-| **4008** | `POLICY_VIOLATION` | Protocol violation (e.g., didn't send room.join.v1 within 10s) | Reconnect with proper handshake |
-| **4999** | `INTERNAL_SERVER_ERROR` | Unexpected server error | Retry with exponential backoff |
 ```
 
 ---
@@ -260,196 +239,226 @@ The following analysis is based on my direct review of the current codebase. Use
 ### Relevant Existing Code
 
 *   **File:** `backend/src/main/java/com/scrumpoker/api/websocket/RoomWebSocketHandler.java`
-    *   **Summary:** This is the main WebSocket endpoint handler that manages connection lifecycle, authentication, and message routing. It already handles `room.join.v1` and `room.leave.v1` messages. The `onMessage` method (lines 212-267) currently has a placeholder comment indicating where message handlers should be integrated (line 254-260).
-    *   **Recommendation:** You MUST integrate your MessageRouter into the `onMessage` method after the existing `room.join.v1` and `room.leave.v1` handlers. The handler already extracts `userId` and `roomId` from session properties (lines 215-216), which you SHOULD reuse in your handlers.
-    *   **Key Pattern:** The handler uses a private method pattern for error handling: `sendError(session, requestId, code, error, message)` (line 619). You SHOULD use this method in your handlers when validation fails.
-    *   **Important:** The handler is annotated with `@ServerEndpoint` and `@ApplicationScoped`. Your message handlers should also be `@ApplicationScoped` CDI beans for injection into the MessageRouter.
+    *   **Summary:** This is the backend WebSocket endpoint implementation. It handles connection establishment, JWT authentication, heartbeat protocol, message routing, and connection cleanup. The endpoint is at `/ws/room/{roomId}` with JWT token passed as query parameter.
+    *   **Recommendation:** Your frontend WebSocket client MUST connect to this endpoint with the correct URL pattern: `wss://{host}/ws/room/{roomId}?token={jwt}`. You MUST send a `room.join.v1` message within 10 seconds of connection or the server will close the connection with code 4008.
+    *   **Critical Details:**
+        - Server expects JWT token in query parameter: `?token={jwt}`
+        - Client must send `room.join.v1` within 10 seconds (enforced by `enforceJoinTimeout()` scheduled task)
+        - Server sends ping frames every 30 seconds (via `sendHeartbeatPings()` task)
+        - Server closes connections that don't respond to ping within 60 seconds
+        - Server uses `ConnectionRegistry` to manage active connections per room
+        - Server uses `MessageRouter` to route messages to appropriate handlers
 
 *   **File:** `backend/src/main/java/com/scrumpoker/domain/room/VotingService.java`
-    *   **Summary:** This service implements all voting logic including `castVote`, `startRound`, `revealRound`, and `resetRound`. All methods return `Uni<>` reactive types and are already annotated with `@WithTransaction`.
-    *   **Recommendation:** Your handlers MUST call these VotingService methods. Note that `castVote` requires UUID parameters for `roundId` and `participantId` (line 58), so you will need to parse these from strings. The service already handles event publishing via RoomEventPublisher, so handlers do NOT need to manually publish events.
-    *   **Important:** The VotingService methods validate input (e.g., card value length on line 64-67) and throw `IllegalArgumentException` for invalid input. Your handlers MUST catch these exceptions and convert them to WebSocket error messages with code 4002 or 4004.
-    *   **Critical:** The VotingService already publishes events after successful operations, so your handlers only need to call the service methods and handle errors.
+    *   **Summary:** This service implements the voting logic including `castVote()`, `startRound()`, `revealRound()`, and `resetRound()` methods. It publishes events to Redis Pub/Sub via `RoomEventPublisher`.
+    *   **Recommendation:** The server is already set up to handle voting operations and publish events. Your frontend client should expect to receive `vote.recorded.v1`, `round.started.v1`, `round.revealed.v1`, and `round.reset.v1` events from the server.
+    *   **Event Payload Examples:**
+        - `vote.recorded.v1`: `{"participantId": "uuid", "votedAt": "timestamp"}`
+        - `round.revealed.v1`: `{"votes": [...], "stats": {"avg": 6.5, "median": "6.5", "consensus": false}, "revealedAt": "timestamp"}`
 
-*   **File:** `backend/src/main/java/com/scrumpoker/api/websocket/WebSocketMessage.java`
-    *   **Summary:** This class represents the message envelope structure with `type`, `requestId`, and `payload` fields. It includes static factory methods like `createError` (used in RoomWebSocketHandler line 620-622).
-    *   **Recommendation:** You SHOULD use the `getPayload()` method to access the message payload as a `Map<String, Object>`. For extracting typed values, you will need to cast appropriately and handle ClassCastException for invalid payloads.
+*   **File:** `backend/src/main/java/com/scrumpoker/event/RoomEventPublisher.java`
+    *   **Summary:** This service publishes events to Redis Pub/Sub channels using the pattern `room:{roomId}`. Events are serialized as JSON with the standard message envelope format (type, requestId, payload).
+    *   **Recommendation:** The backend is already configured to publish events in the correct format. Your frontend client should parse incoming WebSocket messages as JSON and extract the `type`, `requestId`, and `payload` fields.
 
-*   **File:** `backend/src/main/java/com/scrumpoker/api/websocket/ConnectionRegistry.java`
-    *   **Summary:** This registry manages active WebSocket connections and provides methods like `broadcastToRoom(roomId, message)` and `sendToSession(session, message)`.
-    *   **Recommendation:** Your ChatMessageHandler SHOULD use `ConnectionRegistry.broadcastToRoom()` to send chat messages to all participants. Vote/round events are already broadcasted via VotingService → RoomEventPublisher.
+*   **File:** `api/websocket-protocol.md` (complete protocol specification)
+    *   **Summary:** This is the comprehensive WebSocket protocol specification defining all message types, connection lifecycle, error codes, security requirements, and best practices.
+    *   **Recommendation:** You MUST follow this protocol specification exactly. Pay special attention to:
+        - Message envelope format (type, requestId, payload)
+        - Connection lifecycle (handshake → join → heartbeat → disconnect)
+        - Error handling (codes 4000-4999)
+        - Reconnection strategy (exponential backoff: 1s, 2s, 4s, 8s, 16s max)
+        - Heartbeat protocol (client sends ping every 30s, server responds with pong)
 
-*   **File:** `backend/src/main/java/com/scrumpoker/domain/room/RoomParticipant.java`
-    *   **Summary:** This entity includes a `role` field of type `RoomRole` enum which determines permissions.
-    *   **Recommendation:** You MUST check the participant's role before executing host-only operations. The role values are defined in the `RoomRole` enum (HOST, VOTER, OBSERVER). You will need to query RoomParticipantRepository to fetch the participant's role.
+*   **File:** `frontend/src/stores/authStore.ts`
+    *   **Summary:** This Zustand store manages authentication state including access tokens. The WebSocket client will need to get the JWT token from this store.
+    *   **Recommendation:** You SHOULD import and use the `authStore` to get the current user's JWT access token when establishing WebSocket connections. The token is required for authentication.
 
 ### Implementation Tips & Notes
 
-*   **Tip:** The WebSocket protocol specification (api/websocket-protocol.md) is comprehensive and includes exact payload schemas for all message types. You MUST validate payloads against these schemas.
+*   **Tip:** The backend WebSocket server is fully implemented and ready to accept connections. Task I4.T1 (WebSocket Connection Handler) is already complete. Your focus is purely on the frontend client implementation.
 
-*   **Note:** The RoomWebSocketHandler already has a TODO comment at line 254-260 listing the exact message types that need handlers. Your MessageRouter MUST handle all these types: `vote.cast.v1`, `round.start.v1`, `round.reveal.v1`, `round.reset.v1`, `chat.message.v1`, `presence.update.v1`.
+*   **Note:** The backend enforces a strict 10-second timeout for sending `room.join.v1` after connection. Ensure your `WebSocketManager` sends this message immediately in the `onopen` handler.
 
-*   **Tip:** For chat message handling, you will likely need to create a simple broadcast-only implementation for now. The protocol spec shows chat messages should be broadcast with sender details and a message ID. Since chat persistence is not required for this task, you can broadcast directly via ConnectionRegistry.
+*   **Tip:** For heartbeat implementation, the browser's native WebSocket API handles ping/pong frames automatically in most cases. However, you should still implement ping sending on the client side every 30 seconds to keep the connection alive. Use `setInterval()` to send ping frames.
 
-*   **Architecture Pattern:** The task requires creating separate handler classes (VoteCastHandler, RoundRevealHandler, etc.) which should all implement a common interface. A recommended pattern would be:
-    ```java
-    public interface MessageHandler {
-        Uni<Void> handle(Session session, WebSocketMessage message, String userId, String roomId);
+*   **Note:** The backend uses Redis Pub/Sub for event broadcasting across multiple application nodes. This means events published from one backend instance will be received by WebSocket clients connected to different backend instances. Your frontend client doesn't need to worry about this - just handle incoming events from the WebSocket connection.
+
+*   **Warning:** When implementing reconnection logic, you MUST use exponential backoff (1s, 2s, 4s, 8s, max 16s) to avoid overwhelming the server with rapid reconnection attempts. Reset the backoff counter to 0 on successful connection.
+
+*   **Tip:** Store the `lastEventId` from `room.state.v1` and broadcast messages. Include this in the `room.join.v1` payload when reconnecting to request replay of missed events within the 5-minute window.
+
+*   **Note:** For Zustand store integration, you should create a `roomStore` that maintains room state including:
+    - Current room ID
+    - Room configuration (deck type, privacy mode, etc.)
+    - Participants list with vote status (hasVoted: true/false)
+    - Current round information
+    - Revealed votes and statistics (after reveal)
+
+*   **Tip:** Create event handlers using a simple mapping pattern:
+    ```typescript
+    const eventHandlers = new Map<string, (payload: any) => void>();
+
+    eventHandlers.set('vote.recorded.v1', (payload) => {
+      roomStore.getState().updateParticipantVoteStatus(payload.participantId, true);
+    });
+
+    eventHandlers.set('round.revealed.v1', (payload) => {
+      roomStore.getState().setRevealedVotes(payload.votes, payload.stats);
+    });
+    ```
+
+*   **Warning:** The WebSocket URL differs between development and production environments. Use environment variables or configuration to set the correct WebSocket base URL. In development, it might be `ws://localhost:8080`, while in production it will be `wss://api.scrumpoker.com`.
+
+*   **Tip:** Implement optimistic UI updates for vote casting. When the user casts a vote, immediately update the local state to show "Voted" status, then reconcile with the server's `vote.recorded.v1` event.
+
+*   **Note:** The `useWebSocket` hook should provide:
+    - `connectionStatus`: 'connecting' | 'connected' | 'disconnected'
+    - `send`: function to send messages
+    - `isConnected`: boolean derived from connectionStatus
+    - Error state and last error message
+
+*   **Tip:** For TypeScript types, define interfaces for all message payloads:
+    ```typescript
+    interface VoteCastPayload {
+      cardValue: string;
+    }
+
+    interface VoteRecordedPayload {
+      participantId: string;
+      votedAt: string;
+    }
+
+    interface RoundRevealedPayload {
+      votes: Array<{participantId: string; cardValue: string}>;
+      stats: {avg: number | null; median: string | null; consensus: boolean};
+      revealedAt: string;
     }
     ```
-    Each handler class should be `@ApplicationScoped` and implement this interface.
 
-*   **Authorization Strategy:** For host-only operations, you MUST:
-    1. Extract `userId` from session properties (already done in RoomWebSocketHandler line 215)
-    2. Query RoomParticipantRepository to get the participant's role
-    3. Check if role == RoomRole.HOST
-    4. If not, call `sendError(session, requestId, 4003, "FORBIDDEN", "Only host can perform this action")`
-    5. Return early without calling VotingService
+*   **Warning:** Remember to clean up WebSocket connections and timers when components unmount. Use React's `useEffect` cleanup function to call `disconnect()` and clear intervals.
 
-*   **Reactive Error Handling:** Since VotingService methods return `Uni<>`, you SHOULD use `.onFailure().recoverWithUni()` to catch exceptions and convert them to error messages. Example pattern:
-    ```java
-    votingService.castVote(roomId, roundId, participantId, cardValue)
-        .onFailure(IllegalArgumentException.class).recoverWithUni(e -> {
-            sendError(session, requestId, 4002, "INVALID_VOTE", e.getMessage());
-            return Uni.createFrom().voidItem();
-        })
-        .onFailure().recoverWithUni(e -> {
-            sendError(session, requestId, 4999, "INTERNAL_SERVER_ERROR", "Unexpected error");
-            return Uni.createFrom().voidItem();
-        })
-        .subscribe().with(
-            success -> Log.infof("Vote cast successfully"),
-            failure -> Log.errorf("Failed to handle vote.cast.v1: %s", failure)
-        );
+*   **Tip:** Consider using a state machine pattern for connection state management:
+    ```
+    DISCONNECTED → CONNECTING → CONNECTED
+                ↑                  ↓
+                └──────────────────┘
+                  (on error/close)
     ```
 
-*   **Payload Extraction Pattern:** The payload is a `Map<String, Object>`. You SHOULD create helper methods to safely extract typed values:
-    ```java
-    private String extractString(Map<String, Object> payload, String key, boolean required) {
-        Object value = payload.get(key);
-        if (value == null && required) {
-            throw new IllegalArgumentException(key + " is required");
-        }
-        return value != null ? value.toString() : null;
-    }
+*   **Note:** The frontend project already has the necessary dependencies installed (React, TypeScript, Zustand). You don't need to install additional packages for WebSocket support - use the browser's native `WebSocket` API.
+
+*   **Architecture Pattern:** Your WebSocketManager class should be a singleton instance that can be imported and used across the application. Consider creating it as a module with a single exported instance rather than a class that needs to be instantiated multiple times.
+
+*   **Environment Configuration:** You MUST determine the WebSocket URL based on the current environment. The backend server runs on port 8080 in development. Create a configuration file or use Vite's environment variables:
+    ```typescript
+    const WS_BASE_URL = import.meta.env.VITE_WS_BASE_URL ||
+      (window.location.protocol === 'https:' ? 'wss:' : 'ws:') +
+      '//' + window.location.hostname + ':8080';
     ```
 
-*   **Warning:** The RoomWebSocketHandler is annotated with `@ApplicationScoped`, but WebSocket endpoints in Quarkus are typically instantiated once per connection. However, since the handler is marked `@ApplicationScoped`, it's shared across connections. Your handler classes should also be `@ApplicationScoped` and stateless to avoid concurrency issues. Do NOT store state in handler fields.
+*   **User Information:** When sending the `room.join.v1` message, you need to include the user's display name and role. You SHOULD get this from the authStore or user profile data. For now, you can use a default or fetch from the user's profile.
 
-*   **Testing Consideration:** The acceptance criteria states "round.reveal.v1 from non-host returns error message (403 Forbidden)". This means you MUST verify authorization BEFORE calling VotingService methods, not rely on the service to do authorization checks.
+*   **UUID Generation:** You will need to generate UUIDs for requestId fields. Use the `crypto.randomUUID()` function available in modern browsers, or install a lightweight UUID library if needed.
 
-*   **Current Round Tracking:** For vote casting, the payload only includes `cardValue`, not `roundId`. This means you will need to query the current active round for the room. You SHOULD add a helper method or query to RoundRepository like `findActiveRoundByRoomId(String roomId)` which returns the latest round where `revealedAt` is null. Alternatively, use `findLatestByRoomId()` and check if it's active.
+### Recommended Implementation Structure
 
-*   **Chat Message Broadcast:** Unlike vote/round events which are published via RoomEventPublisher (already integrated with Redis Pub/Sub), chat messages should broadcast directly via ConnectionRegistry since they don't need Redis Pub/Sub for this task (chat persistence is out of scope). Use:
-    ```java
-    WebSocketMessage chatBroadcast = WebSocketMessage.create("chat.message.v1", UUID.randomUUID().toString(), chatPayload);
-    connectionRegistry.broadcastToRoom(roomId, chatBroadcast);
-    ```
-
-*   **MessageRouter Integration:** In RoomWebSocketHandler.onMessage(), after handling `room.join.v1` and `room.leave.v1`, add:
-    ```java
-    // Route to message handlers
-    messageRouter.route(session, message, userId, roomId)
-        .subscribe().with(
-            success -> Log.debugf("Message handled: %s", message.getType()),
-            failure -> Log.errorf(failure, "Failed to handle message: %s", message.getType())
-        );
-    ```
-
-*   **Participant ID Resolution:** For vote casting, you need to resolve the WebSocket session's userId to a RoomParticipant ID. You SHOULD query RoomParticipantRepository with:
-    ```java
-    roomParticipantRepository.findByRoomIdAndUserId(roomId, userId)
-        .onItem().transformToUni(participant -> {
-            if (participant == null) {
-                return Uni.createFrom().failure(
-                    new IllegalArgumentException("Participant not found in room")
-                );
-            }
-            return votingService.castVote(roomId, roundId, participant.participantId, cardValue);
-        })
-    ```
-
-*   **Error Response Pattern:** Always send errors back to the requesting client before returning. Use the existing sendError method from RoomWebSocketHandler. If creating a centralized error handler, inject ConnectionRegistry and create a reusable error sender.
-
-### Recommended Class Structure
-
-```java
-// Common interface for all message handlers
-public interface MessageHandler {
-    String getMessageType();
-    Uni<Void> handle(Session session, WebSocketMessage message, String userId, String roomId);
+```typescript
+// frontend/src/services/websocket.ts
+interface WebSocketMessage {
+  type: string;
+  requestId: string;
+  payload: any;
 }
 
-@ApplicationScoped
-public class VoteCastHandler implements MessageHandler {
-    @Inject VotingService votingService;
-    @Inject RoomParticipantRepository participantRepository;
-    @Inject RoundRepository roundRepository;
-    @Inject ConnectionRegistry connectionRegistry;
+type ConnectionStatus = 'connecting' | 'connected' | 'disconnected';
+type MessageHandler = (payload: any) => void;
 
-    @Override
-    public String getMessageType() { return "vote.cast.v1"; }
+class WebSocketManager {
+  private ws: WebSocket | null = null;
+  private roomId: string | null = null;
+  private token: string | null = null;
+  private connectionStatus: ConnectionStatus = 'disconnected';
+  private reconnectAttempts = 0;
+  private maxReconnectDelay = 16000;
+  private eventHandlers = new Map<string, Set<MessageHandler>>();
+  private heartbeatInterval: NodeJS.Timeout | null = null;
+  private lastEventId: string | null = null;
 
-    @Override
-    public Uni<Void> handle(Session session, WebSocketMessage message, String userId, String roomId) {
-        // 1. Extract and validate payload
-        // 2. Find current active round
-        // 3. Resolve participant ID
-        // 4. Call votingService.castVote()
-        // 5. Handle errors and send error responses
-    }
+  connect(roomId: string, token: string): void {
+    // Implementation
+  }
+
+  disconnect(): void {
+    // Implementation
+  }
+
+  send(type: string, payload: any): void {
+    // Implementation
+  }
+
+  on(messageType: string, handler: MessageHandler): () => void {
+    // Implementation - returns unsubscribe function
+  }
+
+  private reconnect(): void {
+    // Exponential backoff logic
+  }
+
+  private startHeartbeat(): void {
+    // Send ping every 30 seconds
+  }
+
+  private handleMessage(message: WebSocketMessage): void {
+    // Dispatch to event handlers
+  }
 }
 
-@ApplicationScoped
-public class MessageRouter {
-    @Inject Instance<MessageHandler> handlers;  // CDI will inject all MessageHandler beans
+export const wsManager = new WebSocketManager();
 
-    private Map<String, MessageHandler> handlerMap;
+// frontend/src/hooks/useWebSocket.ts
+export function useWebSocket(roomId: string | null) {
+  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('disconnected');
+  const token = useAuthStore(state => state.accessToken);
 
-    @PostConstruct
-    void init() {
-        handlerMap = new HashMap<>();
-        for (MessageHandler handler : handlers) {
-            handlerMap.put(handler.getMessageType(), handler);
-        }
-    }
+  useEffect(() => {
+    if (!roomId || !token) return;
 
-    public Uni<Void> route(Session session, WebSocketMessage message, String userId, String roomId) {
-        MessageHandler handler = handlerMap.get(message.getType());
-        if (handler == null) {
-            return Uni.createFrom().voidItem(); // Unknown message type, ignore
-        }
-        return handler.handle(session, message, userId, roomId);
-    }
+    wsManager.connect(roomId, token);
+
+    // Subscribe to connection status changes
+    const unsubscribe = wsManager.on('connection.status', (status) => {
+      setConnectionStatus(status);
+    });
+
+    return () => {
+      unsubscribe();
+      wsManager.disconnect();
+    };
+  }, [roomId, token]);
+
+  return {
+    connectionStatus,
+    send: wsManager.send.bind(wsManager),
+    isConnected: connectionStatus === 'connected',
+  };
 }
+
+// frontend/src/stores/roomStore.ts
+interface RoomState {
+  roomId: string | null;
+  participants: Map<string, Participant>;
+  currentRound: Round | null;
+  revealedVotes: Vote[] | null;
+  statistics: Statistics | null;
+
+  // Actions
+  updateParticipantVoteStatus: (participantId: string, hasVoted: boolean) => void;
+  setRevealedVotes: (votes: Vote[], stats: Statistics) => void;
+  addParticipant: (participant: Participant) => void;
+  removeParticipant: (participantId: string) => void;
+}
+
+export const useRoomStore = create<RoomState>((set) => ({
+  // Implementation
+}));
 ```
-
----
-
-## Summary Checklist for Coder Agent
-
-Before you start coding, ensure you understand:
-
-- [ ] Create 5 handler classes implementing MessageHandler interface: VoteCastHandler, RoundStartHandler, RoundRevealHandler, RoundResetHandler, ChatMessageHandler
-- [ ] All handlers must be `@ApplicationScoped` and stateless
-- [ ] Create MessageRouter that uses CDI Instance<MessageHandler> to discover and route messages
-- [ ] Integrate MessageRouter into RoomWebSocketHandler.onMessage() method
-- [ ] Implement authorization checks for host-only operations (start, reveal, reset)
-- [ ] Extract and validate payload fields with proper error messages
-- [ ] Call VotingService methods with reactive error handling
-- [ ] Use ConnectionRegistry.sendToSession() for sending error messages
-- [ ] Use ConnectionRegistry.broadcastToRoom() for chat messages
-- [ ] Resolve current active round for vote casting (query for roundId)
-- [ ] Resolve participant ID from userId + roomId for vote casting
-- [ ] Handle all exceptions and convert to WebSocket error codes (4002, 4003, 4004, 4005, 4999)
-- [ ] Return Uni<Void> from all handler methods
-- [ ] Follow reactive programming patterns with onFailure().recoverWithUni()
-
-**Next Steps:**
-1. Create MessageHandler interface in `backend/src/main/java/com/scrumpoker/api/websocket/handler/`
-2. Implement 5 handler classes (VoteCastHandler, RoundStartHandler, RoundRevealHandler, RoundResetHandler, ChatMessageHandler)
-3. Create MessageRouter with CDI-based handler discovery
-4. Integrate MessageRouter into RoomWebSocketHandler.onMessage()
-5. Test each message type with authorization and validation checks
-
-Good luck! Remember to handle authorization BEFORE calling service methods, and use reactive error handling throughout.
