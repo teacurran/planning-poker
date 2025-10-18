@@ -57,7 +57,7 @@
     "acceptance_criteria": "vote.cast.v1 message triggers VotingService.castVote correctly, round.reveal.v1 from host reveals round successfully, round.reveal.v1 from non-host returns error message (403 Forbidden), Invalid payload structure returns error message (400 Bad Request), Chat message broadcasts to all room participants, Message router correctly dispatches to appropriate handler",
     "dependencies": ["I4.T3"],
     "parallelizable": false,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I4.T5",

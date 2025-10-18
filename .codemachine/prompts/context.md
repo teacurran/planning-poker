@@ -10,26 +10,30 @@ This is the full specification of the task you must complete.
 
 ```json
 {
-  "task_id": "I4.T3",
+  "task_id": "I4.T4",
   "iteration_id": "I4",
   "iteration_goal": "Implement WebSocket-based real-time voting functionality including connection management, vote casting, round lifecycle (start, reveal, reset), Redis Pub/Sub for event broadcasting across stateless nodes, and frontend voting UI.",
-  "description": "Create `VotingService` domain service implementing voting logic. Methods: `castVote(roomId, roundId, participantId, cardValue)` (persist vote to database, publish `vote.recorded` event), `startRound(roomId, storyTitle)` (create Round entity, publish `round.started` event), `revealRound(roomId, roundId)` (query all votes, calculate average/median/consensus, update Round entity with stats, publish `round.revealed` event with all votes), `resetRound(roomId, roundId)` (delete votes, reset Round entity). Use `RoundRepository`, `VoteRepository`, `RoomEventPublisher`. Implement consensus algorithm (variance threshold < 2 points for Fibonacci deck). Handle duplicate vote prevention (upsert vote if participant votes twice).",
+  "description": "Create message handler classes for WebSocket messages per protocol spec. Implement `VoteCastHandler` (validate message, extract payload, call VotingService.castVote), `RoundRevealHandler` (validate host role, call VotingService.revealRound), `RoundStartHandler` (validate host, call VotingService.startRound), `RoundResetHandler` (validate host, call VotingService.resetRound), `ChatMessageHandler` (persist chat message, broadcast to room). Integrate handlers with RoomWebSocketHandler onMessage router (switch on message type). Validate authorization (only host can reveal/reset, all voters can cast votes). Return error messages for validation failures.",
   "agent_type_hint": "BackendAgent",
-  "inputs": "Voting requirements from product spec, Vote sequence diagram from architecture blueprint, Round and Vote entities from I1",
+  "inputs": "WebSocket protocol spec from I2.T2, VotingService from I4.T3, Message type definitions",
   "input_files": [
-    ".codemachine/artifacts/architecture/04_Behavior_and_Communication.md",
-    "backend/src/main/java/com/scrumpoker/domain/room/Round.java",
-    "backend/src/main/java/com/scrumpoker/domain/room/Vote.java",
-    "backend/src/main/java/com/scrumpoker/repository/RoundRepository.java",
-    "backend/src/main/java/com/scrumpoker/repository/VoteRepository.java"
+    "api/websocket-protocol.md",
+    "backend/src/main/java/com/scrumpoker/domain/room/VotingService.java",
+    "backend/src/main/java/com/scrumpoker/api/websocket/RoomWebSocketHandler.java"
   ],
   "target_files": [
-    "backend/src/main/java/com/scrumpoker/domain/room/VotingService.java",
-    "backend/src/main/java/com/scrumpoker/domain/room/ConsensusCalculator.java"
+    "backend/src/main/java/com/scrumpoker/api/websocket/handler/VoteCastHandler.java",
+    "backend/src/main/java/com/scrumpoker/api/websocket/handler/RoundRevealHandler.java",
+    "backend/src/main/java/com/scrumpoker/api/websocket/handler/RoundStartHandler.java",
+    "backend/src/main/java/com/scrumpoker/api/websocket/handler/RoundResetHandler.java",
+    "backend/src/main/java/com/scrumpoker/api/websocket/handler/ChatMessageHandler.java",
+    "backend/src/main/java/com/scrumpoker/api/websocket/MessageRouter.java"
   ],
-  "deliverables": "VotingService with methods: castVote, startRound, revealRound, resetRound, Vote persistence with duplicate handling (upsert by participant + round), Round creation with story title, started timestamp, Reveal logic: query votes, calculate stats (avg, median, consensus), persist, ConsensusCalculator determining consensus based on variance threshold, Event publishing after each operation (vote recorded, round started, revealed, reset)",
-  "acceptance_criteria": "Cast vote persists to database and publishes event, Starting round creates Round entity with correct timestamp, Reveal round calculates correct average and median (test with known vote values), Consensus detection works (e.g., all votes 5 → consensus true, votes 3,5,8 → false), Duplicate vote from same participant updates existing vote (not create new), Reset round deletes votes and resets Round entity",
-  "dependencies": ["I2.T3", "I4.T2"],
+  "deliverables": "5 message handler classes processing specific message types, MessageRouter dispatching messages to handlers based on type, Authorization validation (host-only operations), Payload validation (Zod/Bean Validation for JSON payloads), Error responses sent back to client for validation failures, Integration with VotingService methods",
+  "acceptance_criteria": "vote.cast.v1 message triggers VotingService.castVote correctly, round.reveal.v1 from host reveals round successfully, round.reveal.v1 from non-host returns error message (403 Forbidden), Invalid payload structure returns error message (400 Bad Request), Chat message broadcasts to all room participants, Message router correctly dispatches to appropriate handler",
+  "dependencies": [
+    "I4.T3"
+  ],
   "parallelizable": false,
   "done": false
 }
@@ -41,84 +45,210 @@ This is the full specification of the task you must complete.
 
 The following are the relevant sections from the architecture and plan documents, which I found by analyzing the task description.
 
-### Context: Vote Casting and Round Reveal Sequence Diagram (from 04_Behavior_and_Communication.md)
+### Context: WebSocket Message Types - Client to Server (from websocket-protocol.md)
 
 ```markdown
-#### Key Interaction Flow: Vote Casting and Round Reveal
+### 3.1 Client → Server Messages
 
-##### Description
+These messages are sent by clients to the server to initiate actions.
 
-This sequence diagram illustrates the critical real-time workflow for a Scrum Poker estimation round, from initial vote casting through final reveal and consensus calculation. The flow demonstrates WebSocket message handling, Redis Pub/Sub event distribution across stateless application nodes, and optimistic UI updates with server reconciliation.
-
-**Scenario:**
-1. Two participants (Alice and Bob) connected to different application nodes due to load balancer sticky session routing
-2. Alice casts vote "5", Bob casts vote "8"
-3. Host triggers reveal after all votes submitted
-4. System calculates statistics (average: 6.5, median: 6.5, no consensus due to variance)
-5. All participants receive synchronized reveal event with results
-
-**Key Operations from Sequence:**
-
-**Vote Casting:**
-```
-WS_A -> VS_A : castVote(roomId="abc123", participantId="alice", cardValue="5")
-VS_A -> DB : INSERT INTO vote (round_id, participant_id, card_value, voted_at) VALUES (...)
-DB --> VS_A : Success
-VS_A -> Redis : PUBLISH room:abc123 {"type":"vote.recorded.v1", "payload":{"participantId":"alice", "votedAt":"..."}}
+| Message Type | Direction | Description | Host Only |
+|--------------|-----------|-------------|-----------|
+| `room.join.v1` | Client → Server | Participant joins room (sent immediately after connection) | No |
+| `room.leave.v1` | Client → Server | Participant leaves room gracefully | No |
+| `vote.cast.v1` | Client → Server | Participant submits vote for current round | No |
+| `round.start.v1` | Client → Server | Start new estimation round | **Yes** |
+| `round.reveal.v1` | Client → Server | Reveal votes for current round | **Yes** |
+| `round.reset.v1` | Client → Server | Reset current round for re-voting | **Yes** |
+| `chat.message.v1` | Client → Server | Send chat message to room | No |
+| `presence.update.v1` | Client → Server | Update participant presence status | No |
 ```
 
-**Round Reveal:**
-```
-WS_C -> VS_C : revealRound(roomId="abc123", roundId="...")
-VS_C -> DB : SELECT card_value FROM vote WHERE round_id = ... AND participant_id IN (...)
-DB --> VS_C : [{"participantId":"alice","cardValue":"5"},{"participantId":"bob","cardValue":"8"}]
-
-VS_C -> VS_C : Calculate:
-  - Average: (5+8)/2 = 6.5
-  - Median: 6.5
-  - Consensus: false (variance > threshold)
-
-VS_C -> DB : UPDATE round SET revealed_at = NOW(), average = 6.5, median = 6.5, consensus_reached = false WHERE round_id = ...
-DB --> VS_C : Success
-
-VS_C -> Redis : PUBLISH room:abc123 {"type":"round.revealed.v1", "payload":{"votes":[...], "stats":{"avg":6.5,"median":6.5,"consensus":false}}}
-```
-```
-
-### Context: Communication Patterns - WebSocket (from 04_Behavior_and_Communication.md)
+### Context: Message Schemas for Vote Casting (from websocket-protocol.md)
 
 ```markdown
-##### Asynchronous WebSocket (Event-Driven)
+#### 4.1.3 `vote.cast.v1`
 
-**Use Cases:**
-- Real-time vote casting and vote state updates
-- Room state synchronization (participant joins/leaves, host controls)
-- Card reveal events with animated timing coordination
-- Presence updates (typing indicators, ready states)
-- Chat messages and emoji reactions
+**Purpose:** Participant casts vote for the current round.
 
-**Pattern Characteristics:**
-- Persistent connection maintained for session duration
-- Events broadcast via Redis Pub/Sub to all application nodes
-- Client-side event handlers update local state optimistically, reconcile on server confirmation
-- Heartbeat/ping-pong protocol for connection liveness detection
-- Automatic reconnection with exponential backoff on connection loss
+**Payload Schema:**
+```json
+{
+  "cardValue": "5"                    // Required, 1-10 characters, must match current deck
+}
+```
 
-**Message Flow:**
-1. Client sends WebSocket message: `{"type": "vote.cast.v1", "requestId": "uuid", "payload": {"cardValue": "5"}}`
-2. Server validates, persists vote to PostgreSQL
-3. Server publishes event to Redis channel: `room:{roomId}`
-4. All application nodes subscribed to channel receive event
-5. Each node broadcasts to locally connected clients in that room
-6. Clients receive: `{"type": "vote.recorded.v1", "requestId": "uuid", "payload": {"participantId": "...", "votedAt": "..."}}`
+**Valid Card Values (depends on deck type):**
+- Fibonacci: `"0"`, `"1"`, `"2"`, `"3"`, `"5"`, `"8"`, `"13"`, `"21"`, `"?"`
+- T-Shirt: `"XS"`, `"S"`, `"M"`, `"L"`, `"XL"`, `"XXL"`, `"?"`
+- Powers of 2: `"1"`, `"2"`, `"4"`, `"8"`, `"16"`, `"32"`, `"?"`
+- Custom: As defined in room configuration
 
-**WebSocket Message Types:**
-- `vote.cast.v1` - Participant submits vote
-- `vote.recorded.v1` - Server confirms vote persisted (broadcast to room)
-- `round.reveal.v1` - Host triggers card reveal
-- `round.revealed.v1` - Server broadcasts reveal with statistics
-- `round.reset.v1` - Host resets round for re-voting
-- `round.started.v1` - Host starts new round (implied from other messages)
+**Example:**
+```json
+{
+  "type": "vote.cast.v1",
+  "requestId": "550e8400-e29b-41d4-a716-446655440000",
+  "payload": {
+    "cardValue": "5"
+  }
+}
+```
+
+**Server Broadcast:**
+- `vote.recorded.v1` to all participants (does NOT include vote value)
+
+**Error Conditions:**
+- `4002`: Invalid vote (card value not in deck, no active round, already voted)
+- `4003`: Forbidden (observer role cannot vote)
+```
+
+### Context: Message Schemas for Round Start (from websocket-protocol.md)
+
+```markdown
+#### 4.1.4 `round.start.v1` (Host Only)
+
+**Purpose:** Host starts a new estimation round.
+
+**Payload Schema:**
+```json
+{
+  "storyTitle": "As a user, I want to...",  // Optional, max 500 characters
+  "timerDurationSeconds": 120               // Optional, 10-600 seconds
+}
+```
+
+**Example:**
+```json
+{
+  "type": "round.start.v1",
+  "requestId": "550e8400-e29b-41d4-a716-446655440000",
+  "payload": {
+    "storyTitle": "As a user, I want to login with Google OAuth2",
+    "timerDurationSeconds": 120
+  }
+}
+```
+
+**Server Broadcast:**
+- `round.started.v1` to all participants
+
+**Error Conditions:**
+- `4003`: Forbidden (only HOST role can start rounds)
+- `4005`: Invalid state (round already in progress)
+```
+
+### Context: Message Schemas for Round Reveal (from websocket-protocol.md)
+
+```markdown
+#### 4.1.5 `round.reveal.v1` (Host Only)
+
+**Purpose:** Host triggers reveal of votes for the current round.
+
+**Payload Schema:**
+```json
+{}  // Empty payload
+```
+
+**Example:**
+```json
+{
+  "type": "round.reveal.v1",
+  "requestId": "550e8400-e29b-41d4-a716-446655440000",
+  "payload": {}
+}
+```
+
+**Server Broadcast:**
+- `round.revealed.v1` to all participants with vote values and statistics
+
+**Error Conditions:**
+- `4003`: Forbidden (only HOST role can reveal)
+- `4005`: Invalid state (no active round, no votes cast, already revealed)
+```
+
+### Context: Message Schemas for Round Reset (from websocket-protocol.md)
+
+```markdown
+#### 4.1.6 `round.reset.v1` (Host Only)
+
+**Purpose:** Host resets current round for re-voting.
+
+**Payload Schema:**
+```json
+{
+  "clearVotes": true                  // Optional, default true
+}
+```
+
+**Example:**
+```json
+{
+  "type": "round.reset.v1",
+  "requestId": "550e8400-e29b-41d4-a716-446655440000",
+  "payload": {
+    "clearVotes": true
+  }
+}
+```
+
+**Server Broadcast:**
+- `round.reset.v1` to all participants
+
+**Error Conditions:**
+- `4003`: Forbidden (only HOST role can reset)
+- `4005`: Invalid state (no active round)
+```
+
+### Context: Message Schemas for Chat Messages (from websocket-protocol.md)
+
+```markdown
+#### 4.1.7 `chat.message.v1`
+
+**Purpose:** Participant sends chat message to room.
+
+**Payload Schema:**
+```json
+{
+  "message": "Hello team!",                           // Required, 1-2000 characters
+  "replyToMessageId": "550e8400-e29b-41d4-a716-..."   // Optional, UUID of message being replied to
+}
+```
+
+**Example:**
+```json
+{
+  "type": "chat.message.v1",
+  "requestId": "550e8400-e29b-41d4-a716-446655440000",
+  "payload": {
+    "message": "I think 8 points is too high for this story."
+  }
+}
+```
+
+**Server Broadcast:**
+- `chat.message.v1` to all participants with sender details and message ID
+```
+
+### Context: Error Code Catalog (from websocket-protocol.md)
+
+```markdown
+### 6.2 Error Code Catalog
+
+WebSocket application errors use the **4000-4999 range** (distinct from standard WebSocket close codes 1000-1999).
+
+| Code | Error | Description | Recovery Strategy |
+|------|-------|-------------|-------------------|
+| **4000** | `UNAUTHORIZED` | Invalid or expired JWT token | Refresh token and reconnect with new JWT |
+| **4001** | `ROOM_NOT_FOUND` | Room does not exist or has been deleted | Notify user, redirect to room list |
+| **4002** | `INVALID_VOTE` | Vote validation failed (invalid card value, no active round, already voted) | Show error to user, allow retry |
+| **4003** | `FORBIDDEN` | Insufficient permissions (e.g., observer trying to vote, non-host starting round) | Show permission error, update UI to reflect role |
+| **4004** | `VALIDATION_ERROR` | Request payload validation failed | Show field-specific errors, allow correction |
+| **4005** | `INVALID_STATE` | Action not valid in current room/round state | Update local state from server, retry if appropriate |
+| **4006** | `RATE_LIMIT_EXCEEDED` | Too many messages sent in short time | Throttle client-side message sending |
+| **4007** | `ROOM_FULL` | Room has reached participant limit | Notify user, cannot join |
+| **4008** | `POLICY_VIOLATION` | Protocol violation (e.g., didn't send room.join.v1 within 10s) | Reconnect with proper handshake |
+| **4999** | `INTERNAL_SERVER_ERROR` | Unexpected server error | Retry with exponential backoff |
 ```
 
 ---
@@ -129,154 +259,168 @@ The following analysis is based on my direct review of the current codebase. Use
 
 ### Relevant Existing Code
 
-*   **File:** `backend/src/main/java/com/scrumpoker/domain/room/RoomService.java`
-    *   **Summary:** This file contains the domain service for room management with reactive patterns using Quarkus Mutiny. It demonstrates the established pattern for domain services in this project: using `@ApplicationScoped`, `@WithTransaction` for transactional methods, `@WithSession` for read-only methods, and returning `Uni<>` for single results or `Multi<>` for lists.
-    *   **Recommendation:** You MUST follow the exact same architectural pattern in `VotingService`. Use `@WithTransaction` for write operations (castVote, startRound, revealRound, resetRound) and return reactive `Uni<>` types. Inject repositories using `@Inject`.
-    *   **Pattern Example:** The service uses `@Inject ObjectMapper` for JSON serialization/deserialization, which you may also need for building event payloads.
+*   **File:** `backend/src/main/java/com/scrumpoker/api/websocket/RoomWebSocketHandler.java`
+    *   **Summary:** This is the main WebSocket endpoint handler that manages connection lifecycle, authentication, and message routing. It already handles `room.join.v1` and `room.leave.v1` messages. The `onMessage` method (lines 212-267) currently has a placeholder comment indicating where message handlers should be integrated (line 254-260).
+    *   **Recommendation:** You MUST integrate your MessageRouter into the `onMessage` method after the existing `room.join.v1` and `room.leave.v1` handlers. The handler already extracts `userId` and `roomId` from session properties (lines 215-216), which you SHOULD reuse in your handlers.
+    *   **Key Pattern:** The handler uses a private method pattern for error handling: `sendError(session, requestId, code, error, message)` (line 619). You SHOULD use this method in your handlers when validation fails.
+    *   **Important:** The handler is annotated with `@ServerEndpoint` and `@ApplicationScoped`. Your message handlers should also be `@ApplicationScoped` CDI beans for injection into the MessageRouter.
 
-*   **File:** `backend/src/main/java/com/scrumpoker/event/RoomEventPublisher.java`
-    *   **Summary:** This file implements the Redis Pub/Sub event publisher that broadcasts WebSocket events to all application nodes. It provides the `publishEvent(roomId, type, requestId, payload)` method that serializes events to JSON and publishes them to Redis channels named `room:{roomId}`.
-    *   **Recommendation:** You MUST inject and use `RoomEventPublisher` in your `VotingService` to broadcast events after each operation. For example, after casting a vote, call `roomEventPublisher.publishEvent(roomId, "vote.recorded.v1", requestId, payload)` where payload is a `Map<String, Object>` containing participantId and votedAt fields.
-    *   **Critical:** Event publishing should happen AFTER successful database persistence to ensure consistency. Use reactive chaining: `persist().onItem().call(entity -> publishEvent(...))` to ensure events only fire for successfully committed changes.
+*   **File:** `backend/src/main/java/com/scrumpoker/domain/room/VotingService.java`
+    *   **Summary:** This service implements all voting logic including `castVote`, `startRound`, `revealRound`, and `resetRound`. All methods return `Uni<>` reactive types and are already annotated with `@WithTransaction`.
+    *   **Recommendation:** Your handlers MUST call these VotingService methods. Note that `castVote` requires UUID parameters for `roundId` and `participantId` (line 58), so you will need to parse these from strings. The service already handles event publishing via RoomEventPublisher, so handlers do NOT need to manually publish events.
+    *   **Important:** The VotingService methods validate input (e.g., card value length on line 64-67) and throw `IllegalArgumentException` for invalid input. Your handlers MUST catch these exceptions and convert them to WebSocket error messages with code 4002 or 4004.
+    *   **Critical:** The VotingService already publishes events after successful operations, so your handlers only need to call the service methods and handle errors.
 
-*   **File:** `backend/src/main/java/com/scrumpoker/domain/room/Round.java`
-    *   **Summary:** This JPA entity defines the Round table structure with fields: `roundId` (UUID), `room` (ManyToOne relationship), `roundNumber` (Integer), `storyTitle` (String, max 500 chars), `startedAt` (Instant), `revealedAt` (Instant, nullable), `average` (BigDecimal for numeric average), `median` (String to support non-numeric cards like ?, ∞, ☕), and `consensusReached` (Boolean).
-    *   **Recommendation:** When creating a Round in `startRound()`, you MUST set `startedAt = Instant.now()` and ensure `revealedAt` is null initially. In `revealRound()`, you MUST update `revealedAt`, `average`, `median`, and `consensusReached` fields. The median field is VARCHAR(10) to support special card values.
-    *   **Note:** The Round has a unique constraint on `(room_id, round_number)`. You must fetch the Room entity and set `round.room = roomEntity` when creating a new round.
+*   **File:** `backend/src/main/java/com/scrumpoker/api/websocket/WebSocketMessage.java`
+    *   **Summary:** This class represents the message envelope structure with `type`, `requestId`, and `payload` fields. It includes static factory methods like `createError` (used in RoomWebSocketHandler line 620-622).
+    *   **Recommendation:** You SHOULD use the `getPayload()` method to access the message payload as a `Map<String, Object>`. For extracting typed values, you will need to cast appropriately and handle ClassCastException for invalid payloads.
 
-*   **File:** `backend/src/main/java/com/scrumpoker/domain/room/Vote.java`
-    *   **Summary:** This JPA entity defines the Vote table with fields: `voteId` (UUID), `round` (ManyToOne to Round), `participant` (ManyToOne to RoomParticipant), `cardValue` (String, max 10 chars), and `votedAt` (Instant). There's a unique constraint on `(round_id, participant_id)` preventing duplicate votes per participant per round.
-    *   **Recommendation:** For duplicate vote handling in `castVote()`, you MUST use the repository's `findByRoundIdAndParticipantId()` method first. If a vote exists, UPDATE the existing vote's cardValue and votedAt timestamp. If not, create a new Vote entity. This is an UPSERT pattern. DO NOT try to insert twice - the unique constraint will fail.
-    *   **Critical:** When creating a new Vote, you must fetch the Round entity and RoomParticipant entity to set the relationships: `vote.round = roundEntity` and `vote.participant = participantEntity`.
-
-*   **File:** `backend/src/main/java/com/scrumpoker/repository/RoundRepository.java`
-    *   **Summary:** This Panache repository provides reactive query methods for Round entities, including `findByRoomId()`, `findByRoomIdAndRoundNumber()`, `findLatestByRoomId()`, and `countByRoomId()`. All methods return `Uni<>` or `Uni<List<>>` for reactive execution.
-    *   **Recommendation:** You SHOULD use `findLatestByRoomId(roomId)` in `startRound()` to determine the next round number (latest.roundNumber + 1, or 1 if no rounds exist). You will also need to inject `RoomRepository` to fetch the Room entity when creating rounds.
-
-*   **File:** `backend/src/main/java/com/scrumpoker/repository/VoteRepository.java`
-    *   **Summary:** This Panache repository provides vote query methods including `findByRoundId()` (critical for reveal), `findByRoundIdAndParticipantId()` (for duplicate detection), and `countByRoundId()`. All methods are reactive.
-    *   **Recommendation:** You MUST use `findByRoundId(roundId)` in `revealRound()` to retrieve all votes for statistics calculation. Use `findByRoundIdAndParticipantId(roundId, participantId)` in `castVote()` for upsert logic. For `resetRound()`, you SHOULD use `delete("round.roundId", roundId)` to bulk delete all votes for the round.
+*   **File:** `backend/src/main/java/com/scrumpoker/api/websocket/ConnectionRegistry.java`
+    *   **Summary:** This registry manages active WebSocket connections and provides methods like `broadcastToRoom(roomId, message)` and `sendToSession(session, message)`.
+    *   **Recommendation:** Your ChatMessageHandler SHOULD use `ConnectionRegistry.broadcastToRoom()` to send chat messages to all participants. Vote/round events are already broadcasted via VotingService → RoomEventPublisher.
 
 *   **File:** `backend/src/main/java/com/scrumpoker/domain/room/RoomParticipant.java`
-    *   **Summary:** This entity represents participants in a room with fields: `participantId` (UUID), `room`, `user` (nullable for anonymous), `anonymousId` (nullable, for anonymous users), `displayName`, `role` (enum: HOST, VOTER, OBSERVER), `connectedAt`, `disconnectedAt`. The Vote entity has a foreign key to this participant_id.
-    *   **Recommendation:** Your `castVote()` method signature should accept a `participantId` (UUID) parameter, which will be the `RoomParticipant.participantId`, not the user ID directly. You will need to inject `RoomParticipantRepository` to fetch the RoomParticipant entity when creating votes.
+    *   **Summary:** This entity includes a `role` field of type `RoomRole` enum which determines permissions.
+    *   **Recommendation:** You MUST check the participant's role before executing host-only operations. The role values are defined in the `RoomRole` enum (HOST, VOTER, OBSERVER). You will need to query RoomParticipantRepository to fetch the participant's role.
 
 ### Implementation Tips & Notes
 
-*   **Tip - Consensus Algorithm:** The specification says "variance threshold < 2 points for Fibonacci deck". Here's the algorithm:
-    1. Filter votes to only numeric values (1, 2, 3, 5, 8, 13)
-    2. If any votes are non-numeric (?, ∞, ☕), consensus is automatically FALSE
-    3. If all votes are the same value, consensus is TRUE (variance = 0)
-    4. Calculate variance: σ² = Σ(xi - μ)² / n where μ is mean
-    5. If variance < 2.0, consensus is TRUE; otherwise FALSE
+*   **Tip:** The WebSocket protocol specification (api/websocket-protocol.md) is comprehensive and includes exact payload schemas for all message types. You MUST validate payloads against these schemas.
 
-    Create a separate `ConsensusCalculator` utility class with a static method like `public static boolean calculateConsensus(List<Vote> votes)` that returns a boolean. Include a constant `VARIANCE_THRESHOLD = 2.0`.
+*   **Note:** The RoomWebSocketHandler already has a TODO comment at line 254-260 listing the exact message types that need handlers. Your MessageRouter MUST handle all these types: `vote.cast.v1`, `round.start.v1`, `round.reveal.v1`, `round.reset.v1`, `chat.message.v1`, `presence.update.v1`.
 
-*   **Tip - Median Calculation:** For median:
-    - If all votes are numeric: sort values, take middle value (or average of two middle values if even count)
-    - If any votes are non-numeric: set median to the most common vote value, or "mixed" if no clear majority
-    - The median field in Round is VARCHAR(10) to support both numeric ("5") and non-numeric ("?") values
+*   **Tip:** For chat message handling, you will likely need to create a simple broadcast-only implementation for now. The protocol spec shows chat messages should be broadcast with sender details and a message ID. Since chat persistence is not required for this task, you can broadcast directly via ConnectionRegistry.
 
-*   **Tip - Average Calculation:** For average:
-    - Only include numeric votes in calculation
-    - Filter out non-numeric card values (?, ∞, ☕)
-    - Use `BigDecimal.valueOf(sum / count)` and set scale to 2 with `RoundingMode.HALF_UP`
-    - If no numeric votes exist, set average to NULL
-
-*   **Note - Event Payload Structure:** The event payloads MUST match the WebSocket protocol specification:
-    - `vote.recorded.v1` payload: `{"participantId": "uuid-string", "votedAt": "2025-10-17T12:34:56Z"}`
-    - `round.started.v1` payload: `{"roundId": "uuid-string", "roundNumber": 1, "storyTitle": "User story", "startedAt": "..."}`
-    - `round.revealed.v1` payload: `{"votes": [{"participantId": "...", "cardValue": "5"}, ...], "stats": {"avg": 6.5, "median": "6.5", "consensus": false}, "revealedAt": "..."}`
-    - `round.reset.v1` payload: `{"roundId": "uuid-string"}`
-
-*   **Note - Reactive Programming Pattern:** All service methods should return `Uni<>` types. Chain operations using `.onItem().transformToUni()` or `.flatMap()` for sequential async operations. Example pattern for castVote:
+*   **Architecture Pattern:** The task requires creating separate handler classes (VoteCastHandler, RoundRevealHandler, etc.) which should all implement a common interface. A recommended pattern would be:
     ```java
-    return voteRepository.findByRoundIdAndParticipantId(roundId, participantId)
-        .onItem().transformToUni(existingVote -> {
-            if (existingVote != null) {
-                // Update existing
-                existingVote.cardValue = cardValue;
-                existingVote.votedAt = Instant.now();
-                return voteRepository.persist(existingVote);
-            } else {
-                // Create new - need to fetch Round and RoomParticipant first
-                return fetchEntitiesAndCreateVote(roundId, participantId, cardValue);
-            }
+    public interface MessageHandler {
+        Uni<Void> handle(Session session, WebSocketMessage message, String userId, String roomId);
+    }
+    ```
+    Each handler class should be `@ApplicationScoped` and implement this interface.
+
+*   **Authorization Strategy:** For host-only operations, you MUST:
+    1. Extract `userId` from session properties (already done in RoomWebSocketHandler line 215)
+    2. Query RoomParticipantRepository to get the participant's role
+    3. Check if role == RoomRole.HOST
+    4. If not, call `sendError(session, requestId, 4003, "FORBIDDEN", "Only host can perform this action")`
+    5. Return early without calling VotingService
+
+*   **Reactive Error Handling:** Since VotingService methods return `Uni<>`, you SHOULD use `.onFailure().recoverWithUni()` to catch exceptions and convert them to error messages. Example pattern:
+    ```java
+    votingService.castVote(roomId, roundId, participantId, cardValue)
+        .onFailure(IllegalArgumentException.class).recoverWithUni(e -> {
+            sendError(session, requestId, 4002, "INVALID_VOTE", e.getMessage());
+            return Uni.createFrom().voidItem();
         })
-        .onItem().call(vote -> publishVoteRecordedEvent(roomId, vote));
+        .onFailure().recoverWithUni(e -> {
+            sendError(session, requestId, 4999, "INTERNAL_SERVER_ERROR", "Unexpected error");
+            return Uni.createFrom().voidItem();
+        })
+        .subscribe().with(
+            success -> Log.infof("Vote cast successfully"),
+            failure -> Log.errorf("Failed to handle vote.cast.v1: %s", failure)
+        );
     ```
 
-*   **Warning - Transaction Boundaries:** Each method that modifies data (castVote, startRound, revealRound, resetRound) MUST be annotated with `@WithTransaction` to ensure atomicity. Event publishing should happen INSIDE the transaction scope but AFTER the database operation succeeds using `.onItem().call()` to ensure we only publish events for successfully persisted changes.
-
-*   **Warning - Entity Relationships:** When creating a Round or Vote, you MUST fetch and set the entity relationships correctly:
-    - For Round: fetch Room entity via `RoomRepository.findById(roomId)` and set `round.room = roomEntity`
-    - For Vote: fetch Round entity via `RoundRepository.findById(roundId)` and RoomParticipant via `RoomParticipantRepository.findById(participantId)`, then set `vote.round = roundEntity` and `vote.participant = participantEntity`
-    - Do NOT try to set relationships using just IDs - Hibernate requires actual entity references
-
-*   **Critical - Reset Round Logic:** For `resetRound()`, you should NOT delete the Round entity itself - only delete the votes and reset the Round's statistics fields (set `revealedAt = null`, `average = null`, `median = null`, `consensusReached = false`). This maintains the audit trail of rounds while allowing re-voting. The pattern:
+*   **Payload Extraction Pattern:** The payload is a `Map<String, Object>`. You SHOULD create helper methods to safely extract typed values:
     ```java
-    @WithTransaction
-    public Uni<Round> resetRound(String roomId, UUID roundId) {
-        return Uni.combine().all().unis(
-            voteRepository.delete("round.roundId", roundId),  // Delete all votes
-            roundRepository.findById(roundId)                  // Fetch round
-        ).asTuple()
-        .onItem().transformToUni(tuple -> {
-            Round round = tuple.getItem2();
-            round.revealedAt = null;
-            round.average = null;
-            round.median = null;
-            round.consensusReached = false;
-            return roundRepository.persist(round);
-        })
-        .onItem().call(round -> publishResetEvent(roomId, round));
+    private String extractString(Map<String, Object> payload, String key, boolean required) {
+        Object value = payload.get(key);
+        if (value == null && required) {
+            throw new IllegalArgumentException(key + " is required");
+        }
+        return value != null ? value.toString() : null;
     }
     ```
 
-*   **Critical - Repository Injections:** You will need to inject FOUR repositories in VotingService:
-    1. `@Inject RoundRepository roundRepository;`
-    2. `@Inject VoteRepository voteRepository;`
-    3. `@Inject RoomRepository roomRepository;` (to fetch Room entity when creating rounds)
-    4. `@Inject RoomParticipantRepository roomParticipantRepository;` (to fetch RoomParticipant when creating votes)
+*   **Warning:** The RoomWebSocketHandler is annotated with `@ApplicationScoped`, but WebSocket endpoints in Quarkus are typically instantiated once per connection. However, since the handler is marked `@ApplicationScoped`, it's shared across connections. Your handler classes should also be `@ApplicationScoped` and stateless to avoid concurrency issues. Do NOT store state in handler fields.
 
-    Plus:
-    5. `@Inject RoomEventPublisher roomEventPublisher;` (for event broadcasting)
+*   **Testing Consideration:** The acceptance criteria states "round.reveal.v1 from non-host returns error message (403 Forbidden)". This means you MUST verify authorization BEFORE calling VotingService methods, not rely on the service to do authorization checks.
 
-### Package Organization
+*   **Current Round Tracking:** For vote casting, the payload only includes `cardValue`, not `roundId`. This means you will need to query the current active round for the room. You SHOULD add a helper method or query to RoundRepository like `findActiveRoundByRoomId(String roomId)` which returns the latest round where `revealedAt` is null. Alternatively, use `findLatestByRoomId()` and check if it's active.
 
-*   Both `VotingService.java` and `ConsensusCalculator.java` belong in `backend/src/main/java/com/scrumpoker/domain/room/`
-*   Follow existing naming conventions: service classes use noun names with "Service" suffix
-*   Use `@ApplicationScoped` for VotingService to make it a CDI singleton
-*   ConsensusCalculator should be a utility class with static methods (no CDI annotations needed)
+*   **Chat Message Broadcast:** Unlike vote/round events which are published via RoomEventPublisher (already integrated with Redis Pub/Sub), chat messages should broadcast directly via ConnectionRegistry since they don't need Redis Pub/Sub for this task (chat persistence is out of scope). Use:
+    ```java
+    WebSocketMessage chatBroadcast = WebSocketMessage.create("chat.message.v1", UUID.randomUUID().toString(), chatPayload);
+    connectionRegistry.broadcastToRoom(roomId, chatBroadcast);
+    ```
 
-### Method Signatures (Recommended)
+*   **MessageRouter Integration:** In RoomWebSocketHandler.onMessage(), after handling `room.join.v1` and `room.leave.v1`, add:
+    ```java
+    // Route to message handlers
+    messageRouter.route(session, message, userId, roomId)
+        .subscribe().with(
+            success -> Log.debugf("Message handled: %s", message.getType()),
+            failure -> Log.errorf(failure, "Failed to handle message: %s", message.getType())
+        );
+    ```
+
+*   **Participant ID Resolution:** For vote casting, you need to resolve the WebSocket session's userId to a RoomParticipant ID. You SHOULD query RoomParticipantRepository with:
+    ```java
+    roomParticipantRepository.findByRoomIdAndUserId(roomId, userId)
+        .onItem().transformToUni(participant -> {
+            if (participant == null) {
+                return Uni.createFrom().failure(
+                    new IllegalArgumentException("Participant not found in room")
+                );
+            }
+            return votingService.castVote(roomId, roundId, participant.participantId, cardValue);
+        })
+    ```
+
+*   **Error Response Pattern:** Always send errors back to the requesting client before returning. Use the existing sendError method from RoomWebSocketHandler. If creating a centralized error handler, inject ConnectionRegistry and create a reusable error sender.
+
+### Recommended Class Structure
 
 ```java
-@ApplicationScoped
-public class VotingService {
-
-    @WithTransaction
-    public Uni<Vote> castVote(String roomId, UUID roundId, UUID participantId, String cardValue) { ... }
-
-    @WithTransaction
-    public Uni<Round> startRound(String roomId, String storyTitle) { ... }
-
-    @WithTransaction
-    public Uni<Round> revealRound(String roomId, UUID roundId) { ... }
-
-    @WithTransaction
-    public Uni<Round> resetRound(String roomId, UUID roundId) { ... }
+// Common interface for all message handlers
+public interface MessageHandler {
+    String getMessageType();
+    Uni<Void> handle(Session session, WebSocketMessage message, String userId, String roomId);
 }
 
-public class ConsensusCalculator {
+@ApplicationScoped
+public class VoteCastHandler implements MessageHandler {
+    @Inject VotingService votingService;
+    @Inject RoomParticipantRepository participantRepository;
+    @Inject RoundRepository roundRepository;
+    @Inject ConnectionRegistry connectionRegistry;
 
-    private static final double VARIANCE_THRESHOLD = 2.0;
+    @Override
+    public String getMessageType() { return "vote.cast.v1"; }
 
-    public static boolean calculateConsensus(List<Vote> votes) { ... }
+    @Override
+    public Uni<Void> handle(Session session, WebSocketMessage message, String userId, String roomId) {
+        // 1. Extract and validate payload
+        // 2. Find current active round
+        // 3. Resolve participant ID
+        // 4. Call votingService.castVote()
+        // 5. Handle errors and send error responses
+    }
+}
 
-    private static boolean isNumericCardValue(String cardValue) { ... }
+@ApplicationScoped
+public class MessageRouter {
+    @Inject Instance<MessageHandler> handlers;  // CDI will inject all MessageHandler beans
 
-    private static double calculateVariance(List<Double> numericValues) { ... }
+    private Map<String, MessageHandler> handlerMap;
+
+    @PostConstruct
+    void init() {
+        handlerMap = new HashMap<>();
+        for (MessageHandler handler : handlers) {
+            handlerMap.put(handler.getMessageType(), handler);
+        }
+    }
+
+    public Uni<Void> route(Session session, WebSocketMessage message, String userId, String roomId) {
+        MessageHandler handler = handlerMap.get(message.getType());
+        if (handler == null) {
+            return Uni.createFrom().voidItem(); // Unknown message type, ignore
+        }
+        return handler.handle(session, message, userId, roomId);
+    }
 }
 ```
 
@@ -286,24 +430,26 @@ public class ConsensusCalculator {
 
 Before you start coding, ensure you understand:
 
-- [x] Service must follow reactive Mutiny patterns with `Uni<>` return types
-- [x] Use `@WithTransaction` for all write operations
-- [x] Inject 4 repositories: Round, Vote, Room, RoomParticipant
-- [x] Inject RoomEventPublisher for broadcasting events
-- [x] Implement upsert logic for duplicate votes using findByRoundIdAndParticipantId
-- [x] Fetch entity references (Room, Round, RoomParticipant) before creating related entities
-- [x] Calculate consensus using variance threshold < 2.0 for numeric votes only
-- [x] Handle non-numeric card values (?, ∞, ☕) in median calculation
-- [x] Event publishing happens AFTER successful persistence using `.onItem().call()`
-- [x] Reset round deletes votes but preserves Round entity (sets fields to null)
-- [x] Use `findLatestByRoomId()` to determine next round number in startRound
-- [x] Event payloads must match WebSocket protocol specification format
+- [ ] Create 5 handler classes implementing MessageHandler interface: VoteCastHandler, RoundStartHandler, RoundRevealHandler, RoundResetHandler, ChatMessageHandler
+- [ ] All handlers must be `@ApplicationScoped` and stateless
+- [ ] Create MessageRouter that uses CDI Instance<MessageHandler> to discover and route messages
+- [ ] Integrate MessageRouter into RoomWebSocketHandler.onMessage() method
+- [ ] Implement authorization checks for host-only operations (start, reveal, reset)
+- [ ] Extract and validate payload fields with proper error messages
+- [ ] Call VotingService methods with reactive error handling
+- [ ] Use ConnectionRegistry.sendToSession() for sending error messages
+- [ ] Use ConnectionRegistry.broadcastToRoom() for chat messages
+- [ ] Resolve current active round for vote casting (query for roundId)
+- [ ] Resolve participant ID from userId + roomId for vote casting
+- [ ] Handle all exceptions and convert to WebSocket error codes (4002, 4003, 4004, 4005, 4999)
+- [ ] Return Uni<Void> from all handler methods
+- [ ] Follow reactive programming patterns with onFailure().recoverWithUni()
 
 **Next Steps:**
-1. Create `ConsensusCalculator.java` utility class with variance calculation
-2. Implement `VotingService.java` with all four methods
-3. Ensure proper entity relationship handling for Vote and Round creation
-4. Implement reactive event publishing after each operation
-5. Test with known vote values to verify statistics calculations
+1. Create MessageHandler interface in `backend/src/main/java/com/scrumpoker/api/websocket/handler/`
+2. Implement 5 handler classes (VoteCastHandler, RoundStartHandler, RoundRevealHandler, RoundResetHandler, ChatMessageHandler)
+3. Create MessageRouter with CDI-based handler discovery
+4. Integrate MessageRouter into RoomWebSocketHandler.onMessage()
+5. Test each message type with authorization and validation checks
 
-Good luck! Remember to follow the reactive programming patterns and ensure proper transaction boundaries throughout.
+Good luck! Remember to handle authorization BEFORE calling service methods, and use reactive error handling throughout.

@@ -88,6 +88,9 @@ public class RoomWebSocketHandler {
     @Inject
     ObjectMapper objectMapper;
 
+    @Inject
+    MessageRouter messageRouter;
+
     /**
      * Called when a WebSocket connection is established.
      * <p>
@@ -246,18 +249,14 @@ public class RoomWebSocketHandler {
                 return;
             }
 
-            // Route to message handlers (placeholder for Task I4.T4)
-            // For now, just log that we received the message
-            Log.infof("Message received: type=%s, requestId=%s, session=%s",
-                    message.getType(), message.getRequestId(), sessionId);
-
-            // TODO (I4.T4): Implement message handlers for:
-            // - vote.cast.v1
-            // - round.start.v1
-            // - round.reveal.v1
-            // - round.reset.v1
-            // - chat.message.v1
-            // - presence.update.v1
+            // Route to message handlers via MessageRouter
+            messageRouter.route(session, message, userId, roomId)
+                    .subscribe().with(
+                            success -> Log.debugf("Message handled: type=%s, requestId=%s",
+                                    message.getType(), message.getRequestId()),
+                            failure -> Log.errorf(failure, "Failed to handle message: type=%s, requestId=%s",
+                                    message.getType(), message.getRequestId())
+                    );
 
         } catch (Exception e) {
             Log.errorf(e, "Failed to process message from session %s: %s", sessionId, messageText);
