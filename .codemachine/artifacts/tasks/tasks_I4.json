@@ -87,7 +87,7 @@
     "acceptance_criteria": "RoomPage loads and joins room via WebSocket, Clicking card sends vote.cast message (visible in Network tab), ParticipantList updates when other users vote (via vote.recorded event), Host clicking Reveal triggers round.reveal message, RevealView displays after reveal event with all votes visible, Statistics display (average, median, consensus badge), UI responsive on mobile, tablet, desktop, Animations smooth (card flip using CSS transitions)",
     "dependencies": ["I4.T5"],
     "parallelizable": false,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I4.T7",
