@@ -36,13 +36,18 @@ class AuditLogRepositoryTest {
     @Inject
     UserRepository userRepository;
 
+    @Inject
+    RoomParticipantRepository participantRepository;
+
     private Organization testOrg;
     private User testUser;
 
     @BeforeEach
     @RunOnVertxContext
     void setUp(UniAsserter asserter) {
+        // Clean up in dependency order: children first, then parents
         asserter.execute(() -> Panache.withTransaction(() -> auditLogRepository.deleteAll()));
+        asserter.execute(() -> Panache.withTransaction(() -> participantRepository.deleteAll()));
         asserter.execute(() -> Panache.withTransaction(() -> organizationRepository.deleteAll()));
         asserter.execute(() -> Panache.withTransaction(() -> userRepository.deleteAll()));
 

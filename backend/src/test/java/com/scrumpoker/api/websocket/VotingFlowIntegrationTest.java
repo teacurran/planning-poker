@@ -89,24 +89,23 @@ class VotingFlowIntegrationTest {
                 .chain(() -> roundRepository.persist(round))
         ));
 
-        // Generate JWT tokens synchronously
+        // Generate JWT tokens and run WebSocket test - all in worker thread (not on event loop)
         final TokenPair[] tokens = new TokenPair[2];
-        asserter.execute(() -> jwtTokenService.generateTokens(alice)
-            .chain(aliceTokens -> jwtTokenService.generateTokens(bob).map(bobTokens -> {
-                tokens[0] = aliceTokens;
-                tokens[1] = bobTokens;
-                return null;
-            }))
-        );
+        asserter.execute(() -> io.smallrye.mutiny.Uni.createFrom().emitter(emitter -> {
+            io.smallrye.mutiny.infrastructure.Infrastructure.getDefaultWorkerPool().execute(() -> {
+                try {
+                    // Generate tokens (blocking Redis operations)
+                    TokenPair aliceTokens = jwtTokenService.generateTokens(alice).await().indefinitely();
+                    TokenPair bobTokens = jwtTokenService.generateTokens(bob).await().indefinitely();
 
-        // Wait for all async setup to complete before running WebSocket tests
-        asserter.execute(() -> {
-            try {
-                runCompleteVotingFlowTest(tokens[0], tokens[1], aliceParticipant, bobParticipant);
-            } catch (Exception e) {
-                throw new RuntimeException("WebSocket test failed", e);
-            }
-        });
+                    // Run WebSocket test
+                    runCompleteVotingFlowTest(aliceTokens, bobTokens, aliceParticipant, bobParticipant);
+                    emitter.complete(null);
+                } catch (Exception e) {
+                    emitter.fail(e);
+                }
+            });
+        }));
     }
 
     private void runCompleteVotingFlowTest(TokenPair aliceTokens, TokenPair bobTokens,
@@ -184,6 +183,7 @@ class VotingFlowIntegrationTest {
         RoomParticipant bobParticipant = createTestParticipant(room, bob, "Bob", RoomRole.VOTER);
         Round round = createTestRound(room, 1, "Sync Story");
 
+        // Persist test data
         asserter.execute(() -> Panache.withTransaction(() ->
             userRepository.persist(alice)
                 .chain(() -> userRepository.persist(bob))
@@ -193,47 +193,46 @@ class VotingFlowIntegrationTest {
                 .chain(() -> roundRepository.persist(round))
         ));
 
-        final TokenPair[] tokens = new TokenPair[2];
-        asserter.execute(() -> jwtTokenService.generateTokens(alice)
-            .chain(aliceTokens -> jwtTokenService.generateTokens(bob).map(bobTokens -> {
-                tokens[0] = aliceTokens;
-                tokens[1] = bobTokens;
-                return null;
-            }))
-        );
-
-        asserter.execute(() -> {
-            try {
-                WebSocketTestClient aliceClient = new WebSocketTestClient();
-                WebSocketTestClient bobClient = new WebSocketTestClient();
-
+        // Generate JWT tokens and run WebSocket test - all in worker thread (not on event loop)
+        asserter.execute(() -> io.smallrye.mutiny.Uni.createFrom().emitter(emitter -> {
+            io.smallrye.mutiny.infrastructure.Infrastructure.getDefaultWorkerPool().execute(() -> {
                 try {
-                    aliceClient.connect(WS_BASE_URL + "sync01?token=" + tokens[0].accessToken());
-                    aliceClient.send("room.join.v1", payload("displayName", "Alice"));
-                    aliceClient.awaitMessage("room.participant_joined.v1", MESSAGE_TIMEOUT);
+                    // Generate tokens (blocking Redis operations)
+                    TokenPair aliceTokens = jwtTokenService.generateTokens(alice).await().indefinitely();
+                    TokenPair bobTokens = jwtTokenService.generateTokens(bob).await().indefinitely();
 
-                    bobClient.connect(WS_BASE_URL + "sync01?token=" + tokens[1].accessToken());
-                    bobClient.send("room.join.v1", payload("displayName", "Bob"));
-                    aliceClient.awaitMessage("room.participant_joined.v1", MESSAGE_TIMEOUT);
-                    bobClient.awaitMessage("room.participant_joined.v1", MESSAGE_TIMEOUT);
+                    WebSocketTestClient aliceClient = new WebSocketTestClient();
+                    WebSocketTestClient bobClient = new WebSocketTestClient();
 
-                    // Alice casts vote
-                    aliceClient.send("vote.cast.v1", payload("cardValue", "13"));
+                    try {
+                        aliceClient.connect(WS_BASE_URL + "sync01?token=" + aliceTokens.accessToken());
+                        aliceClient.send("room.join.v1", payload("displayName", "Alice"));
+                        aliceClient.awaitMessage("room.participant_joined.v1", MESSAGE_TIMEOUT);
 
-                    // Bob receives the vote through Redis Pub/Sub
-                    WebSocketMessage bobReceivedVote = bobClient.awaitMessage("vote.recorded.v1", MESSAGE_TIMEOUT);
-                    assertThat(bobReceivedVote).isNotNull();
-                    assertThat(bobReceivedVote.getPayload().get("participantId"))
-                        .isEqualTo(aliceParticipant.participantId.toString());
+                        bobClient.connect(WS_BASE_URL + "sync01?token=" + bobTokens.accessToken());
+                        bobClient.send("room.join.v1", payload("displayName", "Bob"));
+                        aliceClient.awaitMessage("room.participant_joined.v1", MESSAGE_TIMEOUT);
+                        bobClient.awaitMessage("room.participant_joined.v1", MESSAGE_TIMEOUT);
 
-                } finally {
-                    aliceClient.close();
-                    bobClient.close();
+                        // Alice casts vote
+                        aliceClient.send("vote.cast.v1", payload("cardValue", "13"));
+
+                        // Bob receives the vote through Redis Pub/Sub
+                        WebSocketMessage bobReceivedVote = bobClient.awaitMessage("vote.recorded.v1", MESSAGE_TIMEOUT);
+                        assertThat(bobReceivedVote).isNotNull();
+                        assertThat(bobReceivedVote.getPayload().get("participantId"))
+                            .isEqualTo(aliceParticipant.participantId.toString());
+
+                        emitter.complete(null);
+                    } finally {
+                        aliceClient.close();
+                        bobClient.close();
+                    }
+                } catch (Exception e) {
+                    emitter.fail(e);
                 }
-            } catch (Exception e) {
-                throw new RuntimeException("Sync test failed", e);
-            }
-        });
+            });
+        }));
     }
 
     /**
@@ -250,6 +249,7 @@ class VotingFlowIntegrationTest {
         RoomParticipant bobParticipant = createTestParticipant(room, bob, "Bob", RoomRole.VOTER);
         Round round = createTestRound(room, 1, "Auth Story");
 
+        // Persist test data
         asserter.execute(() -> Panache.withTransaction(() ->
             userRepository.persist(alice)
                 .chain(() -> userRepository.persist(bob))
@@ -259,37 +259,38 @@ class VotingFlowIntegrationTest {
                 .chain(() -> roundRepository.persist(round))
         ));
 
-        final TokenPair[] tokens = new TokenPair[1];
-        asserter.execute(() -> jwtTokenService.generateTokens(bob).map(bobTokens -> {
-            tokens[0] = bobTokens;
-            return null;
-        }));
-
-        asserter.execute(() -> {
-            try {
-                WebSocketTestClient bobClient = new WebSocketTestClient();
-
+        // Generate JWT token and run WebSocket test - all in worker thread (not on event loop)
+        asserter.execute(() -> io.smallrye.mutiny.Uni.createFrom().emitter(emitter -> {
+            io.smallrye.mutiny.infrastructure.Infrastructure.getDefaultWorkerPool().execute(() -> {
                 try {
-                    bobClient.connect(WS_BASE_URL + "auth01?token=" + tokens[0].accessToken());
-                    bobClient.send("room.join.v1", payload("displayName", "Bob"));
-                    bobClient.awaitMessage("room.participant_joined.v1", MESSAGE_TIMEOUT);
+                    // Generate token (blocking Redis operations)
+                    TokenPair bobTokens = jwtTokenService.generateTokens(bob).await().indefinitely();
 
-                    // Bob tries to reveal round (should fail with FORBIDDEN)
-                    String requestId = bobClient.send("round.reveal.v1", payload());
-                    WebSocketMessage errorMsg = bobClient.awaitMessage("error.v1", MESSAGE_TIMEOUT);
+                    WebSocketTestClient bobClient = new WebSocketTestClient();
 
-                    assertThat(errorMsg).isNotNull();
-                    assertThat(errorMsg.getRequestId()).isEqualTo(requestId);
-                    assertThat(errorMsg.getPayload().get("code")).isEqualTo(4003);
-                    assertThat(errorMsg.getPayload().get("error")).isEqualTo("FORBIDDEN");
+                    try {
+                        bobClient.connect(WS_BASE_URL + "auth01?token=" + bobTokens.accessToken());
+                        bobClient.send("room.join.v1", payload("displayName", "Bob"));
+                        bobClient.awaitMessage("room.participant_joined.v1", MESSAGE_TIMEOUT);
 
-                } finally {
-                    bobClient.close();
+                        // Bob tries to reveal round (should fail with FORBIDDEN)
+                        String requestId = bobClient.send("round.reveal.v1", payload());
+                        WebSocketMessage errorMsg = bobClient.awaitMessage("error.v1", MESSAGE_TIMEOUT);
+
+                        assertThat(errorMsg).isNotNull();
+                        assertThat(errorMsg.getRequestId()).isEqualTo(requestId);
+                        assertThat(errorMsg.getPayload().get("code")).isEqualTo(4003);
+                        assertThat(errorMsg.getPayload().get("error")).isEqualTo("FORBIDDEN");
+
+                        emitter.complete(null);
+                    } finally {
+                        bobClient.close();
+                    }
+                } catch (Exception e) {
+                    emitter.fail(e);
                 }
-            } catch (Exception e) {
-                throw new RuntimeException("Authorization test failed", e);
-            }
-        });
+            });
+        }));
     }
 
     /**
@@ -300,10 +301,11 @@ class VotingFlowIntegrationTest {
     @RunOnVertxContext
     void testReconnectionPreservesRoomState(UniAsserter asserter) throws Exception {
         User alice = createTestUser("alice4@example.com", "Alice");
-        Room room = createTestRoom("recon01", "Reconnection Test Room", alice);
+        Room room = createTestRoom("recon1", "Reconnection Test Room", alice);
         RoomParticipant aliceParticipant = createTestParticipant(room, alice, "Alice", RoomRole.HOST);
         Round round = createTestRound(room, 1, "Reconnection Story");
 
+        // Persist test data
         asserter.execute(() -> Panache.withTransaction(() ->
             userRepository.persist(alice)
                 .chain(() -> roomRepository.persist(room))
@@ -311,42 +313,42 @@ class VotingFlowIntegrationTest {
                 .chain(() -> roundRepository.persist(round))
         ));
 
-        final TokenPair[] tokens = new TokenPair[1];
-        asserter.execute(() -> jwtTokenService.generateTokens(alice).map(aliceTokens -> {
-            tokens[0] = aliceTokens;
-            return null;
+        // Generate JWT token and run WebSocket test - all in worker thread (not on event loop)
+        asserter.execute(() -> io.smallrye.mutiny.Uni.createFrom().emitter(emitter -> {
+            io.smallrye.mutiny.infrastructure.Infrastructure.getDefaultWorkerPool().execute(() -> {
+                try {
+                    // Generate token (blocking Redis operations)
+                    TokenPair aliceTokens = jwtTokenService.generateTokens(alice).await().indefinitely();
+
+                    WebSocketTestClient aliceClient1 = new WebSocketTestClient();
+
+                    aliceClient1.connect(WS_BASE_URL + "recon1?token=" + aliceTokens.accessToken());
+                    aliceClient1.send("room.join.v1", payload("displayName", "Alice"));
+                    aliceClient1.awaitMessage("room.participant_joined.v1", MESSAGE_TIMEOUT);
+
+                    aliceClient1.send("vote.cast.v1", payload("cardValue", "3"));
+                    assertThat(aliceClient1.awaitMessage("vote.recorded.v1", MESSAGE_TIMEOUT)).isNotNull();
+
+                    aliceClient1.close();
+                    Thread.sleep(500);
+
+                    // Reconnect
+                    WebSocketTestClient aliceClient2 = new WebSocketTestClient();
+                    aliceClient2.connect(WS_BASE_URL + "recon1?token=" + aliceTokens.accessToken());
+                    aliceClient2.send("room.join.v1", payload("displayName", "Alice"));
+                    aliceClient2.awaitMessage("room.participant_joined.v1", MESSAGE_TIMEOUT);
+
+                    // Can still cast vote (update)
+                    aliceClient2.send("vote.cast.v1", payload("cardValue", "5"));
+                    assertThat(aliceClient2.awaitMessage("vote.recorded.v1", MESSAGE_TIMEOUT)).isNotNull();
+
+                    aliceClient2.close();
+                    emitter.complete(null);
+                } catch (Exception e) {
+                    emitter.fail(e);
+                }
+            });
         }));
-
-        asserter.execute(() -> {
-            try {
-                WebSocketTestClient aliceClient1 = new WebSocketTestClient();
-
-                aliceClient1.connect(WS_BASE_URL + "recon01?token=" + tokens[0].accessToken());
-                aliceClient1.send("room.join.v1", payload("displayName", "Alice"));
-                aliceClient1.awaitMessage("room.participant_joined.v1", MESSAGE_TIMEOUT);
-
-                aliceClient1.send("vote.cast.v1", payload("cardValue", "3"));
-                assertThat(aliceClient1.awaitMessage("vote.recorded.v1", MESSAGE_TIMEOUT)).isNotNull();
-
-                aliceClient1.close();
-                Thread.sleep(500);
-
-                // Reconnect
-                WebSocketTestClient aliceClient2 = new WebSocketTestClient();
-                aliceClient2.connect(WS_BASE_URL + "recon01?token=" + tokens[0].accessToken());
-                aliceClient2.send("room.join.v1", payload("displayName", "Alice"));
-                aliceClient2.awaitMessage("room.participant_joined.v1", MESSAGE_TIMEOUT);
-
-                // Can still cast vote (update)
-                aliceClient2.send("vote.cast.v1", payload("cardValue", "5"));
-                assertThat(aliceClient2.awaitMessage("vote.recorded.v1", MESSAGE_TIMEOUT)).isNotNull();
-
-                aliceClient2.close();
-
-            } catch (Exception e) {
-                throw new RuntimeException("Reconnection test failed", e);
-            }
-        });
     }
 
     // Helper methods

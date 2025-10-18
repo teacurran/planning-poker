@@ -33,7 +33,8 @@ public class WebSocketTestClient {
      * @throws Exception if connection fails
      */
     public void connect(String uri) throws Exception {
-        WebSocketContainer container = ContainerProvider.getWebSocketContainer();
+        // Use Jetty's standalone WebSocket client to avoid Quarkus security context issues
+        WebSocketContainer container = org.eclipse.jetty.websocket.jakarta.client.JakartaWebSocketClientContainerProvider.getWebSocketContainer();
         session = container.connectToServer(this, URI.create(uri));
     }
 

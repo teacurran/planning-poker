@@ -6,11 +6,15 @@ The previous code submission did not pass verification. You must fix the followi
 
 ## Original Task Description
 
-Create integration tests for complete voting flow using Quarkus test WebSocket client. Test scenarios: connect to room, cast vote, receive vote.recorded event, host reveals round, receive round.revealed event with statistics, reset round, votes cleared. Test multi-client scenario (2+ clients in same room, votes synchronize). Test authorization (non-host cannot reveal). Test disconnect/reconnect (client disconnects, reconnects, state restored). Use Testcontainers for Redis and PostgreSQL.
+**Task I4.T7**: Create integration tests for complete voting flow using Quarkus test WebSocket client. Test scenarios:
+1. Connect to room, cast vote, receive vote.recorded event, host reveals round, receive round.revealed event with statistics, reset round, votes cleared
+2. Multi-client scenario (2+ clients in same room, votes synchronize via Redis Pub/Sub)
+3. Authorization (non-host cannot reveal)
+4. Disconnect/reconnect (client disconnects, reconnects, state restored)
 
-**Target File:** `backend/src/test/java/com/scrumpoker/api/websocket/VotingFlowIntegrationTest.java`
+Use Testcontainers for Redis and PostgreSQL.
 
-**Acceptance Criteria:**
+**Acceptance Criteria**:
 - `mvn verify` runs WebSocket integration tests successfully
 - Vote cast by client A received by client B via Redis Pub/Sub
 - Reveal calculates correct statistics (known vote inputs)
@@ -22,131 +26,74 @@ Create integration tests for complete voting flow using Quarkus test WebSocket c
 
 ## Issues Detected
 
-### Issue 1: IllegalStateException - Blocking Vert.x Event Loop Thread
+*   **WebSocket Client Context Issue:** All 4 VotingFlowIntegrationTest tests are failing with `ContextNotActiveException: RequestScoped context was not active when trying to obtain a bean instance for a client proxy of CLASS bean [class=io.quarkus.security.runtime.SecurityIdentityAssociation]`
 
-**Problem:** All four tests are failing with `IllegalStateException: The current thread cannot be blocked: vert.x-eventloop-thread-0`. This occurs because the WebSocket test methods are running blocking operations (WebSocket connect, send, receive with timeout) on a Vert.x event loop thread, which is prohibited in reactive applications.
+*   **Root Cause Analysis:**
+    - The WebSocket test client (`WebSocketTestClient.java`) is trying to connect to the server from within a test execution context
+    - Quarkus's `ContainerProvider.getWebSocketContainer()` returns the server's WebSocket container, which has security enabled and requires an active `RequestScoped` context
+    - When the client tries to establish a connection, it attempts to access `SecurityIdentityAssociation` bean, which is `@RequestScoped`
+    - Since the WebSocket client is being initialized outside of a request context, this fails
+    - Attempted fix using Jetty's standalone client (`JakartaWebSocketClientContainerProvider.getWebSocketContainer()`) did not work - it still delegates to Quarkus's server container
 
-**Stack Trace:**
-```
-java.lang.IllegalStateException: The current thread cannot be blocked: vert.x-eventloop-thread-0
-	at io.smallrye.mutiny.operators.uni.builders.UniBlockingConsumer.await(UniBlockingConsumer.java:99)
-	at io.smallrye.mutiny.groups.UniAwait.atMost(UniAwait.java:65)
-```
-
-**Root Cause:** The test methods use `@RunOnVertxContext` which runs the test on the Vert.x event loop thread. However, the `runCompleteVotingFlowTest()` and similar methods call blocking WebSocket operations like `aliceClient.connect()`, `aliceClient.awaitMessage()`, etc. These blocking calls are not allowed on event loop threads.
-
-### Issue 2: ConstraintViolationException - Invalid RoomId Length
-
-**Problem:** One test (`testReconnectionPreservesRoomState`) fails with `jakarta.validation.ConstraintViolationException` because the roomId "recon01" is only 7 characters, but the `Room` entity requires exactly 6 characters.
-
-**Constraint Definition:**
-```java
-@Size(min = 6, max = 6)
-@Column(name = "room_id", length = 6)
-public String roomId;
-```
-
-**Current Invalid RoomIds:**
-- "recon01" - 7 characters ❌
-
-**Valid RoomIds in other tests:**
-- "flow01" - 6 characters ✅
-- "sync01" - 6 characters ✅
-- "auth01" - 6 characters ✅
+*   **Configuration Issues Fixed:**
+    - ✅ Redis Dev Services configuration - Fixed by adding `%prod` and `%dev` prefixes to `quarkus.redis.hosts` in main `application.properties` so tests use Dev Services
+    - ✅ Database constraint violations in `AuditLogRepositoryTest` and `OrgMemberRepositoryTest` - Fixed by adding `RoomParticipantRepository` cleanup before deleting users
 
 ---
 
 ## Best Approach to Fix
 
-You MUST make the following changes to `VotingFlowIntegrationTest.java`:
+The WebSocket client security context issue requires one of the following solutions:
 
-### Fix 1: Remove @RunOnVertxContext and Use Blocking Test Pattern
+### Option 1: Use Jetty Standalone Client Directly (Recommended)
+Modify `WebSocketTestClient.java` to bypass Quarkus's container provider entirely by directly instantiating Jetty's internal WebSocket client:
 
-**Explanation:** WebSocket integration tests need to run blocking operations (connect, send, receive). These cannot run on Vert.x event loop threads. The solution is to:
-1. Remove `@RunOnVertxContext` annotation from all test methods
-2. Use `@RunOnVertxContext` ONLY for the `setUp()` method (which needs it for reactive database cleanup)
-3. Run the WebSocket test logic directly in the test method WITHOUT wrapping in `asserter.execute()`
-4. For database setup operations, use `Uni.await().indefinitely()` to block and wait for completion
-
-**Pattern to Follow:**
 ```java
-@Test
-@Order(1)
-void testCompleteVotingFlow_CastRevealReset() throws Exception {
-    // Setup test data (synchronously using .await().indefinitely())
-    User alice = createTestUser("alice@example.com", "Alice");
-    User bob = createTestUser("bob@example.com", "Bob");
-    Room room = createTestRoom("flow01", "Test Room", alice);
-    RoomParticipant aliceParticipant = createTestParticipant(room, alice, "Alice", RoomRole.HOST);
-    RoomParticipant bobParticipant = createTestParticipant(room, bob, "Bob", RoomRole.VOTER);
-    Round round = createTestRound(room, 1, "Test Story");
+import org.eclipse.jetty.websocket.jakarta.client.internal.JakartaWebSocketClientContainer;
 
-    // Persist to database (blocking wait)
-    Panache.withTransaction(() ->
-        userRepository.persist(alice)
-            .chain(() -> userRepository.persist(bob))
-            .chain(() -> roomRepository.persist(room))
-            .chain(() -> participantRepository.persist(aliceParticipant))
-            .chain(() -> participantRepository.persist(bobParticipant))
-            .chain(() -> roundRepository.persist(round))
-    ).await().indefinitely();
+public class WebSocketTestClient {
+    private static JakartaWebSocketClientContainer jettyClient;
 
-    // Generate JWT tokens (blocking wait)
-    TokenPair aliceTokens = jwtTokenService.generateTokens(alice).await().indefinitely();
-    TokenPair bobTokens = jwtTokenService.generateTokens(bob).await().indefinitely();
+    static {
+        try {
+            jettyClient = new JakartaWebSocketClientContainer();
+            jettyClient.start();
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to start Jetty WebSocket client", e);
+        }
+    }
 
-    // Run WebSocket test (blocking operations are OK here)
-    runCompleteVotingFlowTest(aliceTokens, bobTokens, aliceParticipant, bobParticipant);
+    public void connect(String uri) throws Exception {
+        session = jettyClient.connectToServer(this, URI.create(uri));
+    }
 }
 ```
 
-**Apply this pattern to ALL four test methods:**
-- `testCompleteVotingFlow_CastRevealReset()`
-- `testMultipleClientsReceiveSynchronizedEvents()`
-- `testNonHostCannotRevealRound_ReturnsForbidden()`
-- `testReconnectionPreservesRoomState()`
-
-**Key Changes:**
-1. Remove `UniAsserter asserter` parameter from all test method signatures
-2. Remove `@RunOnVertxContext` from all test methods (keep ONLY on `setUp()`)
-3. Remove all `asserter.execute()` wrappers
-4. Replace the `TokenPair[]` array pattern with direct variable assignment using `.await().indefinitely()`
-5. Remove the `try-catch` wrapper that converts exceptions to `RuntimeException`
-6. Call the `runXxxTest()` methods directly (not inside `asserter.execute()`)
-
-### Fix 2: Change RoomId "recon01" to "recon1" (6 Characters)
-
-In the `testReconnectionPreservesRoomState()` test method, change:
-```java
-Room room = createTestRoom("recon01", "Reconnection Test Room", alice);
+### Option 2: Disable Security for WebSocket Tests
+Add to `src/test/resources/application.properties`:
+```properties
+quarkus.security.enabled=false
+quarkus.oidc.enabled=false
+quarkus.http.auth.proactive=false
 ```
 
-To:
+### Option 3: Activate Request Context in Tests
+Wrap the WebSocket connection code in `@ActivateRequestContext` or manually activate the request context:
 ```java
-Room room = createTestRoom("recon1", "Reconnection Test Room", alice);
+@ActivateRequestContext
+public void connect(String uri) throws Exception {
+    // connection code
+}
 ```
 
-And update all WebSocket connection URLs from:
-```java
-aliceClient1.connect(WS_BASE_URL + "recon01?token=" + tokens[0].accessToken());
-```
-
-To:
-```java
-aliceClient1.connect(WS_BASE_URL + "recon1?token=" + aliceTokens.accessToken());
-```
-
-(Note: Also update variable name from `tokens[0]` to `aliceTokens` after applying Fix 1)
+**Recommended Action:** Try Option 1 first (use Jetty internal client directly). If that doesn't work due to classpath issues, try Option 2 (disable security entirely for tests since auth is already bypassed via `permit-all` policy).
 
 ---
 
-## Summary of Required Changes
+## Additional Notes
 
-1. **Remove `@RunOnVertxContext` from all test methods** (keep only on `setUp()`)
-2. **Remove `UniAsserter asserter` parameter from all test method signatures**
-3. **Replace `asserter.execute()` pattern with direct `.await().indefinitely()` calls for database operations**
-4. **Replace `TokenPair[]` array pattern with direct variable assignment**
-5. **Remove exception wrapping in try-catch blocks** (throw directly)
-6. **Fix roomId "recon01" to "recon1"** in reconnection test
-
-After these fixes, run `mvn verify -Dtest=VotingFlowIntegrationTest` to verify all tests pass.
+- All other test failures have been resolved:
+  - Redis Dev Services now properly starts via Testcontainers
+  - Database cleanup order fixed to prevent foreign key constraint violations
+- The VotingFlowIntegrationTest code itself is correct and complete
+- Tests just need the WebSocket client context issue resolved to pass
