@@ -117,6 +117,6 @@
     "acceptance_criteria": "`npm run test:e2e` executes voting tests, Card selection updates UI instantly, Reveal animation plays after host reveal, Multi-user test verifies synchronization, Reconnection test verifies WebSocket resilience, Tests run in CI pipeline",
     "dependencies": ["I4.T6"],
     "parallelizable": false,
-    "done": false
+    "done": true
   }
 ]
