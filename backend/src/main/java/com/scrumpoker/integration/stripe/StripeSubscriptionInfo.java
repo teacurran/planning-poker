@@ -8,41 +8,22 @@ import java.time.Instant;
 /**
  * DTO containing Stripe subscription details.
  * Maps Stripe subscription object to domain model fields.
+ *
+ * @param subscriptionId Stripe subscription ID (sub_...)
+ * @param customerId Stripe customer ID (cus_...)
+ * @param tier Subscription tier (derived from Stripe price ID)
+ * @param status Subscription status
+ * @param currentPeriodStart Current billing period start timestamp
+ * @param currentPeriodEnd Current billing period end timestamp
+ * @param canceledAt Cancellation timestamp (null if not canceled)
  */
 public record StripeSubscriptionInfo(
-    /**
-     * Stripe subscription ID (sub_...)
-     */
     String subscriptionId,
-
-    /**
-     * Stripe customer ID (cus_...)
-     */
     String customerId,
-
-    /**
-     * Subscription tier (derived from Stripe price ID)
-     */
     SubscriptionTier tier,
-
-    /**
-     * Subscription status
-     */
     SubscriptionStatus status,
-
-    /**
-     * Current billing period start timestamp
-     */
     Instant currentPeriodStart,
-
-    /**
-     * Current billing period end timestamp
-     */
     Instant currentPeriodEnd,
-
-    /**
-     * Cancellation timestamp (null if not canceled)
-     */
     Instant canceledAt
 ) {
 }

@@ -32,19 +32,34 @@ import java.util.UUID;
 @ApplicationScoped
 public class StripeAdapter {
 
+    /**
+     * Logger instance for this class.
+     */
     private static final Logger LOG = Logger.getLogger(StripeAdapter.class);
 
+    /**
+     * Stripe API secret key (sk_test_... or sk_live_...).
+     */
     @ConfigProperty(name = "stripe.api-key")
-    String stripeApiKey;
+    private String stripeApiKey;
 
+    /**
+     * Stripe price ID for PRO tier subscription.
+     */
     @ConfigProperty(name = "stripe.price.pro")
-    String proPriceId;
+    private String proPriceId;
 
+    /**
+     * Stripe price ID for PRO_PLUS tier subscription.
+     */
     @ConfigProperty(name = "stripe.price.pro-plus")
-    String proPlusPriceId;
+    private String proPlusPriceId;
 
+    /**
+     * Stripe price ID for ENTERPRISE tier subscription.
+     */
     @ConfigProperty(name = "stripe.price.enterprise")
-    String enterprisePriceId;
+    private String enterprisePriceId;
 
     /**
      * Initializes the Stripe SDK with the API key.
@@ -60,46 +75,60 @@ public class StripeAdapter {
     /**
      * Creates a Stripe checkout session for subscription upgrade.
      *
-     * @param userId The user's unique identifier (stored in customer metadata)
-     * @param tier The target subscription tier (PRO, PRO_PLUS, or ENTERPRISE)
+     * @param userId The user's unique identifier
+     * @param tier The target subscription tier
      * @param successUrl URL to redirect on successful payment
      * @param cancelUrl URL to redirect on canceled payment
      * @return CheckoutSessionResult containing sessionId and checkoutUrl
      * @throws StripeException if Stripe API call fails
      */
-    public CheckoutSessionResult createCheckoutSession(UUID userId, SubscriptionTier tier,
-                                                       String successUrl, String cancelUrl) {
+    public CheckoutSessionResult createCheckoutSession(
+            final UUID userId,
+            final SubscriptionTier tier,
+            final String successUrl,
+            final String cancelUrl) {
         try {
             String priceId = getPriceIdForTier(tier);
 
             if (priceId == null) {
-                throw new StripeException("Cannot create checkout session for tier: " + tier +
-                                        " (FREE tier has no price)");
+                throw new StripeException(
+                        "Cannot create checkout session for tier: "
+                        + tier
+                        + " (FREE tier has no price)");
             }
 
-            SessionCreateParams.Builder paramsBuilder = SessionCreateParams.builder()
-                .setMode(SessionCreateParams.Mode.SUBSCRIPTION)
-                .setSuccessUrl(successUrl)
-                .setCancelUrl(cancelUrl)
-                .addLineItem(
-                    SessionCreateParams.LineItem.builder()
-                        .setPrice(priceId)
-                        .setQuantity(1L)
-                        .build()
-                )
-                .putMetadata("userId", userId.toString())
-                .putMetadata("tier", tier.name());
+            SessionCreateParams.Builder paramsBuilder =
+                    SessionCreateParams.builder()
+                    .setMode(SessionCreateParams.Mode.SUBSCRIPTION)
+                    .setSuccessUrl(successUrl)
+                    .setCancelUrl(cancelUrl)
+                    .addLineItem(
+                        SessionCreateParams.LineItem.builder()
+                            .setPrice(priceId)
+                            .setQuantity(1L)
+                            .build()
+                    )
+                    .putMetadata("userId", userId.toString())
+                    .putMetadata("tier", tier.name());
 
             Session session = Session.create(paramsBuilder.build());
 
-            LOG.infof("Created Stripe checkout session %s for user %s (tier: %s)",
-                     session.getId(), userId, tier);
+            LOG.infof(
+                    "Created Stripe checkout session %s for user %s (tier: %s)",
+                    session.getId(),
+                    userId,
+                    tier);
 
             return new CheckoutSessionResult(session.getId(), session.getUrl());
 
         } catch (com.stripe.exception.StripeException e) {
-            LOG.errorf(e, "Failed to create checkout session for user %s (tier: %s)", userId, tier);
-            throw new StripeException("Failed to create checkout session", e);
+            LOG.errorf(
+                    e,
+                    "Failed to create checkout session for user %s (tier: %s)",
+                    userId,
+                    tier);
+            throw new StripeException(
+                    "Failed to create checkout session", e);
         }
     }
 
@@ -111,7 +140,7 @@ public class StripeAdapter {
      * @return The Stripe customer ID (cus_...)
      * @throws StripeException if customer creation fails
      */
-    public String createCustomer(UUID userId, String email) {
+    public String createCustomer(final UUID userId, final String email) {
         try {
             CustomerCreateParams params = CustomerCreateParams.builder()
                 .setEmail(email)
@@ -121,13 +150,20 @@ public class StripeAdapter {
 
             Customer customer = Customer.create(params);
 
-            LOG.infof("Created Stripe customer %s for user %s (%s)",
-                     customer.getId(), userId, email);
+            LOG.infof(
+                    "Created Stripe customer %s for user %s (%s)",
+                    customer.getId(),
+                    userId,
+                    email);
 
             return customer.getId();
 
         } catch (com.stripe.exception.StripeException e) {
-            LOG.errorf(e, "Failed to create Stripe customer for user %s (%s)", userId, email);
+            LOG.errorf(
+                    e,
+                    "Failed to create Stripe customer for user %s (%s)",
+                    userId,
+                    email);
             throw new StripeException("Failed to create customer", e);
         }
     }
@@ -139,40 +175,52 @@ public class StripeAdapter {
      * @return StripeSubscriptionInfo with subscription details
      * @throws StripeException if retrieval fails
      */
-    public StripeSubscriptionInfo getSubscription(String stripeSubscriptionId) {
+    public StripeSubscriptionInfo getSubscription(
+            final String stripeSubscriptionId) {
         try {
-            Subscription subscription = Subscription.retrieve(stripeSubscriptionId);
+            Subscription subscription =
+                    Subscription.retrieve(stripeSubscriptionId);
 
             return mapToSubscriptionInfo(subscription);
 
         } catch (com.stripe.exception.StripeException e) {
-            LOG.errorf(e, "Failed to retrieve Stripe subscription %s", stripeSubscriptionId);
+            LOG.errorf(
+                    e,
+                    "Failed to retrieve Stripe subscription %s",
+                    stripeSubscriptionId);
             throw new StripeException("Failed to retrieve subscription", e);
         }
     }
 
     /**
      * Cancels a Stripe subscription at period end.
-     * The subscription remains active until the end of the current billing period.
+     * The subscription remains active until the end of the current
+     * billing period.
      *
      * @param stripeSubscriptionId The Stripe subscription ID to cancel
      * @throws StripeException if cancellation fails
      */
-    public void cancelSubscription(String stripeSubscriptionId) {
+    public void cancelSubscription(final String stripeSubscriptionId) {
         try {
-            Subscription subscription = Subscription.retrieve(stripeSubscriptionId);
+            Subscription subscription =
+                    Subscription.retrieve(stripeSubscriptionId);
 
-            // Cancel at period end (subscription remains active until end of billing period)
+            // Cancel at period end (remains active until billing period end)
             Map<String, Object> params = new HashMap<>();
             params.put("cancel_at_period_end", true);
 
             subscription.update(params);
 
-            LOG.infof("Canceled Stripe subscription %s (cancel_at_period_end=true)",
-                     stripeSubscriptionId);
+            LOG.infof(
+                    "Canceled Stripe subscription %s "
+                            + "(cancel_at_period_end=true)",
+                    stripeSubscriptionId);
 
         } catch (com.stripe.exception.StripeException e) {
-            LOG.errorf(e, "Failed to cancel Stripe subscription %s", stripeSubscriptionId);
+            LOG.errorf(
+                    e,
+                    "Failed to cancel Stripe subscription %s",
+                    stripeSubscriptionId);
             throw new StripeException("Failed to cancel subscription", e);
         }
     }
@@ -185,39 +233,53 @@ public class StripeAdapter {
      * @param newTier The new subscription tier
      * @throws StripeException if update fails
      */
-    public void updateSubscription(String stripeSubscriptionId, SubscriptionTier newTier) {
+    public void updateSubscription(
+            final String stripeSubscriptionId,
+            final SubscriptionTier newTier) {
         try {
             String newPriceId = getPriceIdForTier(newTier);
 
             if (newPriceId == null) {
-                throw new StripeException("Cannot update to tier: " + newTier +
-                                        " (FREE tier has no price - use cancelSubscription instead)");
+                throw new StripeException("Cannot update to tier: "
+                        + newTier
+                        + " (FREE tier has no price - use cancelSubscription)");
             }
 
-            Subscription subscription = Subscription.retrieve(stripeSubscriptionId);
+            Subscription subscription =
+                    Subscription.retrieve(stripeSubscriptionId);
 
-            // Get the first subscription item (we only have one price per subscription)
-            SubscriptionItem item = subscription.getItems().getData().get(0);
+            // Get first subscription item (one price per subscription)
+            SubscriptionItem item =
+                    subscription.getItems().getData().get(0);
 
-            SubscriptionUpdateParams params = SubscriptionUpdateParams.builder()
-                .addItem(
-                    SubscriptionUpdateParams.Item.builder()
-                        .setId(item.getId())
-                        .setPrice(newPriceId)
-                        .build()
-                )
-                .setProrationBehavior(SubscriptionUpdateParams.ProrationBehavior.CREATE_PRORATIONS)
-                .putMetadata("tier", newTier.name())
-                .build();
+            SubscriptionUpdateParams params =
+                    SubscriptionUpdateParams.builder()
+                    .addItem(
+                        SubscriptionUpdateParams.Item.builder()
+                            .setId(item.getId())
+                            .setPrice(newPriceId)
+                            .build()
+                    )
+                    .setProrationBehavior(
+                            SubscriptionUpdateParams.ProrationBehavior
+                                    .CREATE_PRORATIONS)
+                    .putMetadata("tier", newTier.name())
+                    .build();
 
             subscription.update(params);
 
-            LOG.infof("Updated Stripe subscription %s to tier %s (price: %s)",
-                     stripeSubscriptionId, newTier, newPriceId);
+            LOG.infof(
+                    "Updated Stripe subscription %s to tier %s (price: %s)",
+                    stripeSubscriptionId,
+                    newTier,
+                    newPriceId);
 
         } catch (com.stripe.exception.StripeException e) {
-            LOG.errorf(e, "Failed to update Stripe subscription %s to tier %s",
-                      stripeSubscriptionId, newTier);
+            LOG.errorf(
+                    e,
+                    "Failed to update Stripe subscription %s to tier %s",
+                    stripeSubscriptionId,
+                    newTier);
             throw new StripeException("Failed to update subscription", e);
         }
     }
@@ -228,20 +290,24 @@ public class StripeAdapter {
      * @param subscription Stripe subscription object
      * @return StripeSubscriptionInfo DTO
      */
-    private StripeSubscriptionInfo mapToSubscriptionInfo(Subscription subscription) {
+    private StripeSubscriptionInfo mapToSubscriptionInfo(
+            final Subscription subscription) {
         // Derive tier from price ID
-        String priceId = subscription.getItems().getData().get(0).getPrice().getId();
+        String priceId =
+                subscription.getItems().getData().get(0).getPrice().getId();
         SubscriptionTier tier = getTierFromPriceId(priceId);
 
         // Map Stripe status to domain status
         SubscriptionStatus status = mapStatus(subscription.getStatus());
 
         // Convert timestamps
-        Instant currentPeriodStart = Instant.ofEpochSecond(subscription.getCurrentPeriodStart());
-        Instant currentPeriodEnd = Instant.ofEpochSecond(subscription.getCurrentPeriodEnd());
+        Instant currentPeriodStart =
+                Instant.ofEpochSecond(subscription.getCurrentPeriodStart());
+        Instant currentPeriodEnd =
+                Instant.ofEpochSecond(subscription.getCurrentPeriodEnd());
         Instant canceledAt = subscription.getCanceledAt() != null
-            ? Instant.ofEpochSecond(subscription.getCanceledAt())
-            : null;
+                ? Instant.ofEpochSecond(subscription.getCanceledAt())
+                : null;
 
         return new StripeSubscriptionInfo(
             subscription.getId(),
@@ -260,15 +326,18 @@ public class StripeAdapter {
      * @param stripeStatus Stripe subscription status
      * @return Domain SubscriptionStatus
      */
-    private SubscriptionStatus mapStatus(String stripeStatus) {
+    private SubscriptionStatus mapStatus(final String stripeStatus) {
         return switch (stripeStatus) {
             case "active" -> SubscriptionStatus.ACTIVE;
             case "past_due" -> SubscriptionStatus.PAST_DUE;
             case "canceled" -> SubscriptionStatus.CANCELED;
             case "trialing" -> SubscriptionStatus.TRIALING;
-            case "incomplete", "incomplete_expired", "unpaid" -> SubscriptionStatus.PAST_DUE;
+            case "incomplete", "incomplete_expired", "unpaid"
+                    -> SubscriptionStatus.PAST_DUE;
             default -> {
-                LOG.warnf("Unknown Stripe status '%s', defaulting to PAST_DUE", stripeStatus);
+                LOG.warnf(
+                        "Unknown Stripe status '%s', defaulting to PAST_DUE",
+                        stripeStatus);
                 yield SubscriptionStatus.PAST_DUE;
             }
         };
@@ -280,7 +349,7 @@ public class StripeAdapter {
      * @param tier The subscription tier
      * @return Stripe price ID, or null for FREE tier
      */
-    private String getPriceIdForTier(SubscriptionTier tier) {
+    private String getPriceIdForTier(final SubscriptionTier tier) {
         return switch (tier) {
             case FREE -> null;
             case PRO -> proPriceId;
@@ -295,7 +364,7 @@ public class StripeAdapter {
      * @param priceId Stripe price ID
      * @return Subscription tier
      */
-    private SubscriptionTier getTierFromPriceId(String priceId) {
+    private SubscriptionTier getTierFromPriceId(final String priceId) {
         if (priceId.equals(proPriceId)) {
             return SubscriptionTier.PRO;
         } else if (priceId.equals(proPlusPriceId)) {
@@ -303,7 +372,9 @@ public class StripeAdapter {
         } else if (priceId.equals(enterprisePriceId)) {
             return SubscriptionTier.ENTERPRISE;
         } else {
-            LOG.warnf("Unknown price ID '%s', defaulting to FREE tier", priceId);
+            LOG.warnf(
+                    "Unknown price ID '%s', defaulting to FREE tier",
+                    priceId);
             return SubscriptionTier.FREE;
         }
     }
