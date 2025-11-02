@@ -27,7 +27,7 @@
     "acceptance_criteria": "Creating subscription persists to database and creates Stripe subscription, Upgrading tier updates both database and Stripe, Canceling subscription sets `canceled_at`, subscription remains active until period end, Tier enforcement prevents invalid transitions (e.g., Enterprise → Free not allowed directly), User.subscription_tier reflects current subscription status, Sync method updates subscription status from webhook events",
     "dependencies": ["I5.T1"],
     "parallelizable": false,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I5.T3",

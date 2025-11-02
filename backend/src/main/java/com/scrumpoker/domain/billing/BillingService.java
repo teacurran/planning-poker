@@ -41,22 +41,27 @@ public class BillingService {
         Logger.getLogger(BillingService.class);
 
     /**
+     * Default trial period duration in days for new subscriptions.
+     */
+    private static final int DEFAULT_TRIAL_PERIOD_DAYS = 30;
+
+    /**
      * Stripe integration adapter for payment processing.
      */
     @Inject
-    StripeAdapter stripeAdapter;
+    private StripeAdapter stripeAdapter;
 
     /**
      * Repository for subscription entity persistence.
      */
     @Inject
-    SubscriptionRepository subscriptionRepository;
+    private SubscriptionRepository subscriptionRepository;
 
     /**
      * Repository for user entity persistence.
      */
     @Inject
-    UserRepository userRepository;
+    private UserRepository userRepository;
 
     /**
      * Creates a new subscription for a user upgrading from FREE to paid tier.
@@ -107,8 +112,8 @@ public class BillingService {
                         if (existingSubscription != null) {
                             return Uni.createFrom().failure(
                                 new IllegalStateException(
-                                    "User already has an active " +
-                                    "subscription"));
+                                    "User already has an active "
+                                        + "subscription"));
                         }
 
                         // Create Subscription entity (checkout session will
@@ -122,7 +127,8 @@ public class BillingService {
                         subscription.status = SubscriptionStatus.TRIALING;
                         subscription.currentPeriodStart = Instant.now();
                         subscription.currentPeriodEnd =
-                            Instant.now().plus(30, ChronoUnit.DAYS);
+                            Instant.now().plus(DEFAULT_TRIAL_PERIOD_DAYS,
+                                ChronoUnit.DAYS);
 
                         return subscriptionRepository.persist(subscription);
                     });
@@ -137,8 +143,8 @@ public class BillingService {
                     subscription.subscriptionId, userId, tier)
             )
             .onFailure().invoke(throwable ->
-                LOG.errorf(throwable, "Failed to create subscription for " +
-                    "user %s (tier: %s)", userId, tier)
+                LOG.errorf(throwable, "Failed to create subscription for "
+                    + "user %s (tier: %s)", userId, tier)
             );
     }
 
@@ -191,9 +197,9 @@ public class BillingService {
                             return Uni.createFrom().failure(
                                 new IllegalArgumentException(
                                     String.format(
-                                        "Invalid tier transition: %s → %s. " +
-                                        "Downgrades not allowed via upgrade " +
-                                        "method.",
+                                        "Invalid tier transition: %s → %s. "
+                                            + "Downgrades not allowed via "
+                                            + "upgrade method.",
                                         subscription.tier, newTier)));
                         }
 
@@ -227,8 +233,8 @@ public class BillingService {
                     subscription.subscriptionId, userId, newTier)
             )
             .onFailure().invoke(throwable ->
-                LOG.errorf(throwable, "Failed to upgrade subscription for " +
-                    "user %s to tier %s", userId, newTier)
+                LOG.errorf(throwable, "Failed to upgrade subscription for "
+                    + "user %s to tier %s", userId, newTier)
             );
     }
 
@@ -266,8 +272,8 @@ public class BillingService {
                         if (subscription == null) {
                             // No active subscription, return successfully
                             // (idempotent)
-                            LOG.infof("User %s has no active subscription " +
-                                "to cancel", userId);
+                            LOG.infof("User %s has no active subscription "
+                                + "to cancel", userId);
                             return Uni.createFrom().voidItem();
                         }
 
@@ -295,8 +301,8 @@ public class BillingService {
                 LOG.infof("Canceled subscription for user %s", userId)
             )
             .onFailure().invoke(throwable ->
-                LOG.errorf(throwable, "Failed to cancel subscription for " +
-                    "user %s", userId)
+                LOG.errorf(throwable, "Failed to cancel subscription for "
+                    + "user %s", userId)
             );
     }
 
@@ -319,8 +325,8 @@ public class BillingService {
                 userId, EntityType.USER)
             .onItem().invoke(subscription -> {
                 if (subscription != null) {
-                    LOG.debugf("Found active subscription %s for user %s " +
-                        "(tier: %s)", subscription.subscriptionId,
+                    LOG.debugf("Found active subscription %s for user %s "
+                        + "(tier: %s)", subscription.subscriptionId,
                         userId, subscription.tier);
                 } else {
                     LOG.debugf("No active subscription for user %s", userId);
@@ -358,15 +364,15 @@ public class BillingService {
     public Uni<Void> syncSubscriptionStatus(final String
                                                  stripeSubscriptionId,
                                              final SubscriptionStatus status) {
-        LOG.infof("Syncing subscription status for Stripe subscription %s " +
-            "to %s", stripeSubscriptionId, status);
+        LOG.infof("Syncing subscription status for Stripe subscription %s "
+            + "to %s", stripeSubscriptionId, status);
 
         return subscriptionRepository.findByStripeSubscriptionId(
                 stripeSubscriptionId)
             .onItem().transformToUni(subscription -> {
                 if (subscription == null) {
-                    LOG.warnf("Subscription not found for Stripe " +
-                        "subscription ID %s", stripeSubscriptionId);
+                    LOG.warnf("Subscription not found for Stripe "
+                        + "subscription ID %s", stripeSubscriptionId);
                     return Uni.createFrom().voidItem();
                 }
 
@@ -405,12 +411,12 @@ public class BillingService {
                     .replaceWithVoid();
             })
             .onItem().invoke(() ->
-                LOG.infof("Synced subscription status for Stripe " +
-                    "subscription %s to %s", stripeSubscriptionId, status)
+                LOG.infof("Synced subscription status for Stripe "
+                    + "subscription %s to %s", stripeSubscriptionId, status)
             )
             .onFailure().invoke(throwable ->
-                LOG.errorf(throwable, "Failed to sync subscription status " +
-                    "for Stripe subscription %s", stripeSubscriptionId)
+                LOG.errorf(throwable, "Failed to sync subscription status "
+                    + "for Stripe subscription %s", stripeSubscriptionId)
             );
     }
 
