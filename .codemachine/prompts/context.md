@@ -10,25 +10,24 @@ This is the full specification of the task you must complete.
 
 ```json
 {
-  "task_id": "I5.T2",
+  "task_id": "I5.T1",
   "iteration_id": "I5",
   "iteration_goal": "Implement Stripe subscription billing, tier enforcement (Free/Pro/Pro+/Enterprise), payment flows, webhook handling for subscription lifecycle events, and frontend upgrade UI.",
-  "description": "Create `BillingService` domain service managing subscription lifecycle. Methods: `createSubscription(userId, tier)` (create Subscription entity, call StripeAdapter to create Stripe subscription), `upgradeSubscription(userId, newTier)` (update Subscription entity, call Stripe update), `cancelSubscription(userId)` (soft cancel, sets `canceled_at`, subscription active until period end), `getActiveSubscription(userId)`, `syncSubscriptionStatus(stripeSubscriptionId, status)` (called by webhook handler). Use `SubscriptionRepository`. Handle tier transitions (Free → Pro, Pro → Pro+). Update User.subscription_tier on tier change.",
+  "description": "Create `StripeAdapter` service wrapping Stripe Java SDK. Configure Stripe API key (secret key from environment variable). Implement methods: `createCheckoutSession(userId, tier)` (creates Stripe checkout session for subscription), `createCustomer(userId, email)` (creates Stripe customer), `getSubscription(stripeSubscriptionId)`, `cancelSubscription(stripeSubscriptionId)`, `updateSubscription(stripeSubscriptionId, newTier)`. Handle Stripe exceptions, map to domain exceptions. Use Stripe test mode for development/staging.",
   "agent_type_hint": "BackendAgent",
-  "inputs": "Subscription entity from I1, StripeAdapter from I5.T1, Subscription tier enforcement requirements",
+  "inputs": "Stripe integration requirements from architecture blueprint, Stripe Java SDK documentation, Subscription tier pricing (Free: $0, Pro: $10/mo, Pro+: $30/mo, Enterprise: $100/mo)",
   "input_files": [
-    "backend/src/main/java/com/scrumpoker/domain/billing/Subscription.java",
-    "backend/src/main/java/com/scrumpoker/repository/SubscriptionRepository.java",
-    "backend/src/main/java/com/scrumpoker/integration/stripe/StripeAdapter.java"
+    ".codemachine/artifacts/architecture/05_Operational_Architecture.md"
   ],
   "target_files": [
-    "backend/src/main/java/com/scrumpoker/domain/billing/BillingService.java",
-    "backend/src/main/java/com/scrumpoker/domain/billing/SubscriptionTier.java"
+    "backend/src/main/java/com/scrumpoker/integration/stripe/StripeAdapter.java",
+    "backend/src/main/java/com/scrumpoker/integration/stripe/StripeException.java",
+    "backend/src/main/resources/application.properties"
   ],
-  "deliverables": "BillingService with methods: createSubscription, upgradeSubscription, cancelSubscription, getActiveSubscription, syncSubscriptionStatus, Subscription entity creation with Stripe subscription ID, Tier transition logic (validate allowed transitions), User.subscription_tier update on subscription change, Subscription status sync from Stripe webhooks",
-  "acceptance_criteria": "Creating subscription persists to database and creates Stripe subscription, Upgrading tier updates both database and Stripe, Canceling subscription sets `canceled_at`, subscription remains active until period end, Tier enforcement prevents invalid transitions (e.g., Enterprise → Free not allowed directly), User.subscription_tier reflects current subscription status, Sync method updates subscription status from webhook events",
-  "dependencies": ["I5.T1"],
-  "parallelizable": false,
+  "deliverables": "StripeAdapter with 5 core methods wrapping Stripe SDK, Stripe customer creation linked to User entity, Checkout session creation for subscription upgrades, Subscription retrieval, cancellation, update methods, Exception handling for Stripe API errors, Configuration properties for API key, webhook secret, price IDs",
+  "acceptance_criteria": "Checkout session created successfully (returns session ID and URL), Stripe customer created and ID stored, Subscription retrieved by Stripe ID, Subscription cancellation marks subscription as canceled in Stripe, Stripe exceptions mapped to domain exceptions, Test mode API key used in dev/staging environments",
+  "dependencies": [],
+  "parallelizable": true,
   "done": false
 }
 ```
@@ -39,45 +38,48 @@ This is the full specification of the task you must complete.
 
 The following are the relevant sections from the architecture and plan documents, which I found by analyzing the task description.
 
-### Context: monetization-requirements (from 01_Context_and_Drivers.md)
+### Context: Data Protection & Payment Security (from 05_Operational_Architecture.md)
 
 ```markdown
-#### Monetization Requirements
-- **Stripe Integration:** Subscription management, payment processing, webhook handling
-- **Tier Enforcement:** Feature gating based on subscription level (ads, reports, room privacy, branding)
-- **Upgrade Flows:** In-app prompts, modal CTAs, settings panel upsells
-- **Billing Dashboard:** Subscription status, payment history, plan management
+**Data Protection:**
+- **Encryption at Rest:** PostgreSQL Transparent Data Encryption (TDE) for sensitive columns (email, payment metadata)
+- **PII Handling:** User emails hashed in logs, full values only in database and audit logs
+- **Secrets Management:** Kubernetes Secrets for database credentials, OAuth client secrets, JWT signing keys
+- **Payment Security:** Stripe tokenization for card details, no PCI-sensitive data stored in application database
 ```
 
-### Context: subscription-tier-pricing (from 02_Iteration_I5.md)
+### Context: Stripe Configuration Section (from application.properties)
 
 ```markdown
-Subscription tier pricing (Free: $0, Pro: $10/mo, Pro+: $30/mo, Enterprise: $100/mo)
+# ==========================================
+# Stripe Configuration (Billing & Subscriptions)
+# ==========================================
+# Stripe API Key (secret key for server-side API calls)
+# PRODUCTION NOTE: Use test mode key (sk_test_...) for dev/staging
+# Set STRIPE_API_KEY environment variable with live key (sk_live_...) in production
+stripe.api-key=${STRIPE_API_KEY:sk_test_51234567890abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789}
+
+# Stripe Webhook Secret for signature verification
+# Obtain from Stripe Dashboard → Developers → Webhooks → Signing secret
+stripe.webhook-secret=${STRIPE_WEBHOOK_SECRET:whsec_test_1234567890abcdefghijklmnopqrstuvwxyz}
+
+# Stripe Price IDs for subscription tiers
+# Create prices in Stripe Dashboard → Products → Create price
+# Each tier maps to a Stripe Price object with recurring billing
+# Note: FREE tier has no Stripe price (no charge)
+stripe.price.pro=${STRIPE_PRICE_PRO:price_1234567890ProMonthly}
+stripe.price.pro-plus=${STRIPE_PRICE_PRO_PLUS:price_1234567890ProPlusMonthly}
+stripe.price.enterprise=${STRIPE_PRICE_ENTERPRISE:price_1234567890EnterpriseMonthly}
 ```
 
-### Context: task-i5-t2 (from 02_Iteration_I5.md)
+### Context: Subscription Tier Pricing (from task inputs)
 
 ```markdown
-**Task 5.2: Implement Billing Service (Subscription Management)**
-    *   **Task ID:** `I5.T2`
-    *   **Description:** Create `BillingService` domain service managing subscription lifecycle. Methods: `createSubscription(userId, tier)` (create Subscription entity, call StripeAdapter to create Stripe subscription), `upgradeSubscription(userId, newTier)` (update Subscription entity, call Stripe update), `cancelSubscription(userId)` (soft cancel, sets `canceled_at`, subscription active until period end), `getActiveSubscription(userId)`, `syncSubscriptionStatus(stripeSubscriptionId, status)` (called by webhook handler). Use `SubscriptionRepository`. Handle tier transitions (Free → Pro, Pro → Pro+). Update User.subscription_tier on tier change.
-    *   **Acceptance Criteria:**
-        *   Creating subscription persists to database and creates Stripe subscription
-        *   Upgrading tier updates both database and Stripe
-        *   Canceling subscription sets `canceled_at`, subscription remains active until period end
-        *   Tier enforcement prevents invalid transitions (e.g., Enterprise → Free not allowed directly)
-        *   User.subscription_tier reflects current subscription status
-        *   Sync method updates subscription status from webhook events
-```
-
-### Context: authentication-and-authorization (from 05_Operational_Architecture.md)
-
-```markdown
-**Role-Based Access Control (RBAC):**
-- **Roles:** `ANONYMOUS`, `USER`, `PRO_USER`, `ORG_ADMIN`, `ORG_MEMBER`
-- **Implementation:** Quarkus Security annotations (`@RolesAllowed`) on REST endpoints and service methods
-- **JWT Claims:** Access token includes `roles` array for authorization decisions
-- **Dynamic Role Mapping:** Subscription tier (`FREE`, `PRO`, `PRO_PLUS`, `ENTERPRISE`) mapped to roles during token generation
+**Subscription Tier Pricing:**
+- **FREE:** $0/month (no Stripe price, default tier for all users)
+- **PRO:** $10/month (requires Stripe checkout session)
+- **PRO_PLUS:** $30/month (requires Stripe checkout session)
+- **ENTERPRISE:** $100/month (requires Stripe checkout session, unlocks organization features)
 ```
 
 ---
@@ -89,183 +91,120 @@ The following analysis is based on my direct review of the current codebase. Use
 ### Relevant Existing Code
 
 *   **File:** `backend/src/main/java/com/scrumpoker/integration/stripe/StripeAdapter.java`
-    *   **Summary:** This is a fully implemented Stripe integration adapter that wraps the Stripe Java SDK. It provides methods for creating checkout sessions, creating Stripe customers, retrieving subscriptions, canceling subscriptions, and updating subscriptions. The adapter is already configured with Stripe API keys and price IDs for each tier (PRO, PRO_PLUS, ENTERPRISE). All methods are synchronous/blocking as the Stripe SDK is blocking.
-    *   **Recommendation:** You MUST import and use this `StripeAdapter` class in your `BillingService`. Call its methods to interact with Stripe. The adapter methods throw `StripeException` which you should catch and handle appropriately.
-    *   **Key Methods to Use:**
-        *   `createCustomer(UUID userId, String email)` - Returns Stripe customer ID (String)
-        *   `createCheckoutSession(UUID userId, SubscriptionTier tier, String successUrl, String cancelUrl)` - Returns `CheckoutSessionResult` with sessionId and URL
-        *   `getSubscription(String stripeSubscriptionId)` - Returns `StripeSubscriptionInfo` DTO
-        *   `cancelSubscription(String stripeSubscriptionId)` - Cancels subscription at period end (void)
-        *   `updateSubscription(String stripeSubscriptionId, SubscriptionTier newTier)` - Updates subscription to new tier with proration (void)
+    *   **Summary:** **THIS FILE ALREADY EXISTS AND IS FULLY IMPLEMENTED.** The StripeAdapter class is complete with all 5 required methods: `createCheckoutSession()`, `createCustomer()`, `getSubscription()`, `cancelSubscription()`, and `updateSubscription()`. The implementation includes proper Stripe SDK integration, error handling, logging, and configuration management.
+    *   **Recommendation:** **YOU SHOULD VERIFY THIS FILE IS COMPLETE AND MARK THE TASK AS DONE.** The task deliverables have already been satisfied. The file contains 381 lines of production-ready code with comprehensive Javadoc documentation.
+    *   **Implementation Details Found:**
+        - Stripe SDK initialized in `@PostConstruct init()` method with API key from configuration
+        - Checkout session creation with metadata (userId, tier) for webhook processing
+        - Customer creation with email and userId metadata
+        - Subscription retrieval with mapping to domain `StripeSubscriptionInfo` DTO
+        - Cancellation using `cancel_at_period_end=true` (graceful cancellation)
+        - Subscription updates with proration enabled
+        - Complete error handling wrapping `com.stripe.exception.StripeException` into domain `StripeException`
+        - Helper methods for tier ↔ price ID mapping
+        - Helper methods for Stripe status ↔ domain status mapping
 
-*   **File:** `backend/src/main/java/com/scrumpoker/domain/billing/Subscription.java`
-    *   **Summary:** This is the JPA entity for subscription records. It uses polymorphic entity references (can be linked to User OR Organization via `entityId` and `entityType`). The entity includes fields for `stripeSubscriptionId`, `tier`, `status`, `currentPeriodStart`, `currentPeriodEnd`, `canceledAt`, and timestamps.
-    *   **Recommendation:** You MUST use this entity when creating/updating subscription records. Create new instances with `new Subscription()`, set all required fields, and use the repository to persist. The `canceledAt` field MUST be set when canceling subscriptions.
-    *   **Important Fields:**
-        *   `subscriptionId` (UUID) - Primary key, auto-generated
-        *   `stripeSubscriptionId` (String) - Links to Stripe subscription (required, unique)
-        *   `entityId` (UUID) - Foreign key to User or Organization
-        *   `entityType` (EntityType enum) - USER or ORG
-        *   `tier` (SubscriptionTier enum) - FREE, PRO, PRO_PLUS, ENTERPRISE
-        *   `status` (SubscriptionStatus enum) - ACTIVE, CANCELED, PAST_DUE, TRIALING
-        *   `canceledAt` (Instant) - Timestamp when subscription was canceled (null if active)
+*   **File:** `backend/src/main/java/com/scrumpoker/integration/stripe/StripeException.java`
+    *   **Summary:** **THIS FILE ALREADY EXISTS AND IS COMPLETE.** The custom exception class wraps Stripe SDK exceptions into unchecked runtime exceptions for reactive programming patterns.
+    *   **Recommendation:** This file is fully implemented with three constructors for different exception scenarios. No changes needed.
 
-*   **File:** `backend/src/main/java/com/scrumpoker/repository/SubscriptionRepository.java`
-    *   **Summary:** This is the reactive Panache repository for Subscription entities. It provides custom finder methods for common queries, including `findActiveByEntityIdAndType`, `findByStripeSubscriptionId`, and `findByStatus`. All methods return reactive `Uni<>` types.
-    *   **Recommendation:** You MUST inject this repository using `@Inject SubscriptionRepository subscriptionRepository;`. Use its reactive methods to query and persist subscriptions. The most important method for this task is `findActiveByEntityIdAndType(UUID entityId, EntityType entityType)` which returns the active subscription for a user.
-    *   **Key Methods:**
-        *   `findActiveByEntityIdAndType(UUID entityId, EntityType entityType)` - Returns active subscription for user/org
-        *   `findByStripeSubscriptionId(String stripeSubscriptionId)` - Finds subscription by Stripe ID (for webhook sync)
-        *   `persist(Subscription)` - Saves new or updated subscription (inherited from Panache)
+*   **File:** `backend/src/main/java/com/scrumpoker/integration/stripe/CheckoutSessionResult.java`
+    *   **Summary:** **THIS FILE EXISTS.** This is a record DTO containing `sessionId` and `checkoutUrl` returned by the `createCheckoutSession()` method.
+    *   **Recommendation:** This supporting class is already implemented. No changes needed.
 
-*   **File:** `backend/src/main/java/com/scrumpoker/domain/user/User.java`
-    *   **Summary:** This is the User JPA entity with OAuth authentication fields. It includes a `subscriptionTier` field (enum) that must be kept in sync with the Subscription entity. Default value is `SubscriptionTier.FREE`.
-    *   **Recommendation:** You MUST update the `User.subscriptionTier` field whenever a subscription is created, upgraded, or canceled. Use the `UserRepository` to fetch the user and update this field. This field is used for JWT claims and authorization decisions.
-    *   **Critical Field:** `subscriptionTier` (SubscriptionTier enum) - MUST be updated to match the active subscription tier
+*   **File:** `backend/src/main/java/com/scrumpoker/integration/stripe/StripeSubscriptionInfo.java`
+    *   **Summary:** **THIS FILE EXISTS.** This is a record DTO mapping Stripe subscription data to domain fields, including `subscriptionId`, `customerId`, `tier`, `status`, billing period timestamps, and `canceledAt`.
+    *   **Recommendation:** This supporting class is already implemented and maps correctly to domain enums (`SubscriptionTier`, `SubscriptionStatus`). No changes needed.
+
+*   **File:** `backend/src/main/resources/application.properties`
+    *   **Summary:** **STRIPE CONFIGURATION ALREADY EXISTS.** Lines 113-130 contain complete Stripe configuration with environment variable placeholders for API key, webhook secret, and price IDs for all three paid tiers.
+    *   **Recommendation:** Configuration is complete. The default values are placeholders (test mode keys), which is correct for development. Production deployment will override with real environment variables.
+
+*   **File:** `backend/pom.xml`
+    *   **Summary:** Stripe Java SDK dependency already added at line 140: `stripe-java` version 24.18.0.
+    *   **Recommendation:** Dependency is correctly configured. This is a current version of the Stripe SDK (released 2024).
 
 *   **File:** `backend/src/main/java/com/scrumpoker/domain/user/SubscriptionTier.java`
-    *   **Summary:** This is the SubscriptionTier enum with values: FREE, PRO, PRO_PLUS, ENTERPRISE. This enum is already defined and matches the database subscription_tier_enum type.
-    *   **Recommendation:** NOTE that the target file `backend/src/main/java/com/scrumpoker/domain/billing/SubscriptionTier.java` is INCORRECT. The SubscriptionTier enum already exists in the `domain.user` package, NOT in `domain.billing`. You do NOT need to create this file. Use the existing enum from `com.scrumpoker.domain.user.SubscriptionTier`.
+    *   **Summary:** Enum defining the four subscription tiers: `FREE`, `PRO`, `PRO_PLUS`, `ENTERPRISE`.
+    *   **Recommendation:** This enum is referenced by the StripeAdapter for tier mapping. It correctly matches the database `subscription_tier_enum` type.
+
+*   **File:** `backend/src/main/java/com/scrumpoker/domain/user/User.java`
+    *   **Summary:** User entity with `subscriptionTier` field (line 59) storing the current tier. Default value is `SubscriptionTier.FREE`.
+    *   **Recommendation:** The User entity is ready to track subscription tier changes. When implementing the BillingService (next task I5.T2), you will update this field when subscriptions are created/upgraded.
 
 ### Implementation Tips & Notes
 
-*   **Tip:** The StripeAdapter methods are synchronous/blocking. You MUST wrap them in reactive `Uni` types using `Uni.createFrom().item(() -> stripeAdapter.someMethod())` or use `@Blocking` annotation on service methods to run them on a worker thread.
+*   **Tip:** **THE TASK IS ALREADY COMPLETE.** All three target files specified in the task are fully implemented and production-ready. The StripeAdapter has been implemented ahead of schedule (likely completed during an earlier iteration or setup phase).
 
-*   **Note:** The task requires tier transition validation. You SHOULD implement logic to prevent invalid transitions (e.g., Enterprise → Free is not allowed directly, must cancel subscription instead). Valid upgrade paths are: FREE → PRO, FREE → PRO_PLUS, FREE → ENTERPRISE, PRO → PRO_PLUS, PRO → ENTERPRISE, PRO_PLUS → ENTERPRISE. Downgrades should use the cancel flow.
+*   **Note:** The implementation uses **synchronous (blocking) Stripe SDK calls**, as documented in the class Javadoc comment (line 28-29 of StripeAdapter.java). This is intentional and correct—the service layer (I5.T2 BillingService) will wrap these calls in reactive `Uni<>` types using `Uni.createFrom().item(() -> stripeAdapter.methodCall())` to maintain non-blocking behavior.
 
-*   **Note:** The `Subscription.canceledAt` timestamp MUST be set when `cancelSubscription` is called, but the subscription status remains ACTIVE until the current period ends. This allows users to continue using premium features until their billing period expires.
+*   **Note:** The StripeAdapter correctly handles the **FREE tier edge case**—the `getPriceIdForTier()` helper method returns `null` for FREE tier (line 354), and both `createCheckoutSession()` and `updateSubscription()` validate and throw `StripeException` if called with FREE tier (lines 94-98, 243-246). This is correct because FREE tier users should never interact with Stripe billing.
 
-*   **Tip:** For the `syncSubscriptionStatus` method (used by webhook handler), you should update the Subscription entity status and related timestamps based on the Stripe webhook event. This method should also update the User.subscriptionTier to reflect the current state.
+*   **Note:** Subscription cancellation uses `cancel_at_period_end=true` (line 210), which is the **graceful cancellation pattern** recommended by Stripe. The subscription remains active until the end of the current billing period, preventing immediate service disruption.
 
-*   **Warning:** The Subscription entity uses a polymorphic design with `entityId` + `entityType`. For this task, focus on USER subscriptions (set `entityType = EntityType.USER` and `entityId = userId`). Organization subscriptions will be handled in a later iteration.
+*   **Note:** The implementation includes **comprehensive logging** using JBoss Logger at INFO level for operational visibility (session creation, customer creation, subscription updates) and ERROR level for Stripe API failures with full stack traces.
 
-*   **Tip:** You will need to inject `UserRepository` to fetch and update the User entity's `subscriptionTier` field. Use the reactive pattern: fetch user → update tier → persist user.
+*   **Warning:** The configuration properties in `application.properties` use **placeholder default values** (test API keys). These are intentionally fake values for local development. In production/staging, you MUST set real Stripe credentials via environment variables: `STRIPE_API_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_PRO`, `STRIPE_PRICE_PRO_PLUS`, `STRIPE_PRICE_ENTERPRISE`.
 
-*   **Note:** The project uses Quarkus reactive patterns with Mutiny. All service methods SHOULD return `Uni<>` for single results or `Multi<>` for streams. Chain operations using `.onItem().transform()`, `.onItem().transformToUni()`, and `.flatMap()`.
+*   **Warning:** The task acceptance criteria mentions "Stripe customer created and ID stored". The current StripeAdapter returns the customer ID as a String (line 159). The BillingService (I5.T2) will be responsible for storing this in the User or Subscription entity. You may need to add a `stripeCustomerId` field to the User entity or Subscription entity in the next task.
 
-*   **Tip:** Use `@ApplicationScoped` annotation on the BillingService class to make it a CDI bean. Use `@Inject` for dependency injection of StripeAdapter, SubscriptionRepository, and UserRepository.
+### Acceptance Criteria Verification
 
-*   **Warning:** The StripeAdapter already handles mapping between Stripe subscription objects and domain DTOs (see `StripeSubscriptionInfo` class). You should use this DTO when working with Stripe subscription data.
+Based on my code review, here's the status of each acceptance criterion:
 
-*   **Tip:** For error handling, catch `StripeException` from the adapter and decide whether to propagate it or wrap it in a domain-specific exception. Consider creating a `BillingException` or `SubscriptionException` for domain-layer errors.
+1. ✅ **Checkout session created successfully (returns session ID and URL):** Implemented in lines 85-133, returns `CheckoutSessionResult` record with both fields.
 
-*   **Note:** The acceptance criteria requires that "User.subscription_tier reflects current subscription status". This means whenever subscription state changes (create, upgrade, cancel, sync from webhook), you MUST update the User entity's subscriptionTier field to match the Subscription entity's tier field.
+2. ✅ **Stripe customer created and ID stored:** Customer creation implemented in lines 143-169, returns customer ID string. Note: Storage in database entity is deferred to I5.T2 BillingService.
 
-*   **Tip:** The `getActiveSubscription` method should use `SubscriptionRepository.findActiveByEntityIdAndType(userId, EntityType.USER)` to fetch the active subscription. This method returns null if no active subscription exists (user is on FREE tier).
+3. ✅ **Subscription retrieved by Stripe ID:** Implemented in lines 178-193, calls `Subscription.retrieve()` and maps to `StripeSubscriptionInfo` DTO.
 
-*   **Warning:** FREE tier users do not have a Subscription entity in the database. They only have `User.subscriptionTier = FREE`. When creating a subscription for a FREE tier user, you are creating their FIRST subscription record. This is different from upgrading between paid tiers.
+4. ✅ **Subscription cancellation marks subscription as canceled in Stripe:** Implemented in lines 203-226, uses `cancel_at_period_end=true` parameter.
 
-*   **Best Practice:** Add transaction management using `@Transactional` annotation on methods that modify database state. This ensures atomic operations (e.g., creating subscription + updating user tier happens together or not at all).
+5. ✅ **Stripe exceptions mapped to domain exceptions:** All methods wrap `com.stripe.exception.StripeException` in custom `StripeException` (lines 124-132, 161-168, 186-192, 219-225, 277-284).
 
-*   **Best Practice:** Add comprehensive logging using `org.jboss.logging.Logger` to track subscription lifecycle events. Log at INFO level for successful operations and ERROR level for failures. Include userId and tier in log messages.
+6. ✅ **Test mode API key used in dev/staging environments:** Configuration property defaults to test mode key (line 118), with detection logged at initialization (line 71-72).
 
-*   **Testing Consideration:** While you don't need to write tests in this task (I5.T7 handles testing), ensure your service methods are testable by using constructor or field injection for all dependencies.
+### Recommended Next Steps
 
-### Method Signatures Expected
+1. **Verify the implementation** by reviewing the StripeAdapter.java file yourself to confirm it meets all task requirements.
 
-Based on the task description, your `BillingService` should have these method signatures:
+2. **Mark task I5.T1 as DONE** by updating `.codemachine/artifacts/tasks/tasks_I5.json` and setting `"done": true` for this task.
 
-```java
-/**
- * Creates a new subscription for a user.
- * Creates Stripe subscription and persists to database.
- * Updates User.subscriptionTier to match new tier.
- *
- * @param userId The user's unique identifier
- * @param tier The target subscription tier (PRO, PRO_PLUS, or ENTERPRISE)
- * @return Uni containing the created Subscription entity
- */
-public Uni<Subscription> createSubscription(UUID userId, SubscriptionTier tier);
+3. **Run the application** in dev mode (`mvn quarkus:dev`) to verify Stripe SDK initialization succeeds with the test API key.
 
-/**
- * Upgrades an existing subscription to a higher tier.
- * Updates both database and Stripe subscription.
- * Validates tier transition is allowed.
- * Updates User.subscriptionTier to match new tier.
- *
- * @param userId The user's unique identifier
- * @param newTier The new subscription tier
- * @return Uni containing the updated Subscription entity
- */
-public Uni<Subscription> upgradeSubscription(UUID userId, SubscriptionTier newTier);
+4. **Optionally write a simple integration test** (though not required by this task) to verify Stripe API connectivity. You could use Stripe's test mode API to create a test customer and verify the customer ID is returned.
 
-/**
- * Cancels a user's subscription (soft cancel).
- * Sets canceledAt timestamp but subscription remains active until period end.
- * Does NOT immediately update User.subscriptionTier (stays active until period end).
- *
- * @param userId The user's unique identifier
- * @return Uni<Void> indicating completion
- */
-public Uni<Void> cancelSubscription(UUID userId);
-
-/**
- * Gets the active subscription for a user.
- * Returns null if user is on FREE tier (no subscription).
- *
- * @param userId The user's unique identifier
- * @return Uni containing the active Subscription or null
- */
-public Uni<Subscription> getActiveSubscription(UUID userId);
-
-/**
- * Syncs subscription status from Stripe webhook events.
- * Updates Subscription entity and User.subscriptionTier based on Stripe status.
- * Called by webhook handler (I5.T3).
- *
- * @param stripeSubscriptionId The Stripe subscription ID
- * @param status The new subscription status from Stripe
- * @return Uni<Void> indicating completion
- */
-public Uni<Void> syncSubscriptionStatus(String stripeSubscriptionId, SubscriptionStatus status);
-```
-
-### Reactive Pattern Example
-
-Here's how to properly chain reactive operations with blocking Stripe calls:
-
-```java
-public Uni<Subscription> createSubscription(UUID userId, SubscriptionTier tier) {
-    return userRepository.findById(userId)
-        .onItem().ifNull().failWith(() -> new UserNotFoundException(userId))
-        .onItem().transformToUni(user -> {
-            // Blocking Stripe call wrapped in Uni
-            return Uni.createFrom().item(() -> {
-                try {
-                    String customerId = stripeAdapter.createCustomer(userId, user.email);
-                    // ... create checkout session or subscription
-                    return customerId;
-                } catch (StripeException e) {
-                    throw new RuntimeException("Failed to create Stripe customer", e);
-                }
-            });
-        })
-        .onItem().transformToUni(stripeData -> {
-            // Create and persist Subscription entity
-            Subscription subscription = new Subscription();
-            // ... set fields
-            return subscriptionRepository.persist(subscription);
-        })
-        .onItem().transformToUni(subscription -> {
-            // Update User.subscriptionTier
-            return updateUserTier(userId, tier)
-                .replaceWith(subscription);
-        });
-}
-```
+5. **Proceed to I5.T2 (BillingService)**, which will use this StripeAdapter to implement the domain service layer for subscription management. You will need to decide whether to store `stripeCustomerId` in the User entity or create it lazily in the BillingService when needed.
 
 ---
 
-**End of Task Briefing Package**
+## 4. Additional Context
 
-You now have all the information needed to implement the BillingService. Focus on:
+### Stripe SDK Version Information
 
-1. Creating BillingService with @ApplicationScoped annotation
-2. Injecting StripeAdapter, SubscriptionRepository, and UserRepository
-3. Implementing the 5 core methods with proper reactive patterns
-4. Adding tier transition validation logic
-5. Ensuring User.subscriptionTier is always kept in sync
-6. Adding @Transactional annotations for database operations
-7. Including comprehensive error handling and logging
+The project uses **Stripe Java SDK version 24.18.0** (from pom.xml line 141). This is a recent version released in 2024 with support for:
+- Checkout Sessions v2 API (used for subscription checkout)
+- Customer Portal integration (for user self-service subscription management)
+- Payment Intent API (for one-time payments, if needed in future)
+- Webhook signature verification (required for I5.T3 webhook handler)
 
-Good luck with the implementation!
+### Project-Wide Exception Handling Pattern
+
+The codebase follows a consistent pattern for external service integration exceptions:
+- OAuth integration uses `OAuth2AuthenticationException` (wraps OAuth provider errors)
+- Stripe integration uses `StripeException` (wraps Stripe SDK errors)
+- Domain layer uses `RoomNotFoundException`, `UserNotFoundException` (business logic errors)
+
+All exception classes extend `RuntimeException` (unchecked) to avoid breaking reactive call chains (Mutiny `Uni<>` types).
+
+### Configuration Property Naming Convention
+
+The project uses kebab-case for configuration keys with dot-separated namespaces:
+- `stripe.api-key` (not `stripe.apiKey` or `STRIPE_API_KEY`)
+- `stripe.price.pro` (not `stripe.priceIdPro`)
+
+Environment variable overrides use UPPER_SNAKE_CASE:
+- `STRIPE_API_KEY` → `stripe.api-key`
+- `STRIPE_PRICE_PRO` → `stripe.price.pro`
+
+This follows MicroProfile Config specification conventions used by Quarkus.

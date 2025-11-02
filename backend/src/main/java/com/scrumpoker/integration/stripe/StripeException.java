@@ -12,7 +12,7 @@ public class StripeException extends RuntimeException {
      *
      * @param message The error message
      */
-    public StripeException(String message) {
+    public StripeException(final String message) {
         super(message);
     }
 
@@ -20,9 +20,10 @@ public class StripeException extends RuntimeException {
      * Creates a new StripeException with the specified message and cause.
      *
      * @param message The error message
-     * @param cause The underlying cause (typically com.stripe.exception.StripeException)
+     * @param cause The underlying cause (typically
+     *              com.stripe.exception.StripeException)
      */
-    public StripeException(String message, Throwable cause) {
+    public StripeException(final String message, final Throwable cause) {
         super(message, cause);
     }
 
@@ -31,7 +32,7 @@ public class StripeException extends RuntimeException {
      *
      * @param cause The Stripe SDK exception
      */
-    public StripeException(Throwable cause) {
+    public StripeException(final Throwable cause) {
         super("Stripe API error: " + cause.getMessage(), cause);
     }
 }

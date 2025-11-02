@@ -12,7 +12,7 @@
     "acceptance_criteria": "Checkout session created successfully (returns session ID and URL), Stripe customer created and ID stored, Subscription retrieved by Stripe ID, Subscription cancellation marks subscription as canceled in Stripe, Stripe exceptions mapped to domain exceptions, Test mode API key used in dev/staging environments",
     "dependencies": [],
     "parallelizable": true,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I5.T2",
