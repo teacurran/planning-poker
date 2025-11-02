@@ -5,7 +5,7 @@ import com.scrumpoker.domain.user.User;
 import io.quarkus.redis.datasource.RedisDataSource;
 import io.quarkus.redis.datasource.value.ValueCommands;
 import io.smallrye.jwt.build.Jwt;
-import io.smallrye.jwt.auth.principal.DefaultJWTParser;
+import io.smallrye.jwt.auth.principal.JWTParser;
 import io.smallrye.mutiny.Uni;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -72,6 +72,9 @@ public class JwtTokenService {
 
     @Inject
     RedisDataSource redisDataSource;
+
+    @Inject
+    JWTParser jwtParser;
 
     @ConfigProperty(name = "mp.jwt.verify.issuer")
     String issuer;
@@ -185,10 +188,9 @@ public class JwtTokenService {
 
         return Uni.createFrom().item(() -> {
             try {
-                // Use SmallRye JWT parser which automatically validates signature using public key
-                // from mp.jwt.verify.publickey.location config property
-                DefaultJWTParser parser = new DefaultJWTParser();
-                JsonWebToken jwt = parser.parse(token);
+                // Use injected JWTParser which has JWTAuthContextInfo properly configured via CDI
+                // This automatically validates signature using public key from mp.jwt.verify.publickey.location
+                JsonWebToken jwt = jwtParser.parse(token);
 
                 // Verify issuer matches expected value
                 if (!issuer.equals(jwt.getIssuer())) {

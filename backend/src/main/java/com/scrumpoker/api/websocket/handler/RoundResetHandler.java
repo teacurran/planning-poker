@@ -43,10 +43,11 @@ public class RoundResetHandler implements MessageHandler {
     }
 
     @Override
+    @io.quarkus.hibernate.reactive.panache.common.WithTransaction
     public Uni<Void> handle(Session session, WebSocketMessage message, String userId, String roomId) {
         String requestId = message.getRequestId();
 
-        // Verify host authorization
+        // Verify host role and reset round (transaction provided by @WithTransaction)
         return verifyHostRole(userId, roomId)
                 .onItem().transformToUni(isHost -> {
                     if (!isHost) {

@@ -45,6 +45,7 @@ public class VoteCastHandler implements MessageHandler {
     }
 
     @Override
+    @io.quarkus.hibernate.reactive.panache.common.WithTransaction
     public Uni<Void> handle(Session session, WebSocketMessage message, String userId, String roomId) {
         String requestId = message.getRequestId();
         Map<String, Object> payload = message.getPayload();
@@ -58,7 +59,7 @@ public class VoteCastHandler implements MessageHandler {
             return Uni.createFrom().voidItem();
         }
 
-        // Find current active round for the room
+        // Fetch latest round and validate (transaction provided by @WithTransaction)
         return roundRepository.findLatestByRoomId(roomId)
                 .onItem().transformToUni(round -> {
                     if (round == null) {

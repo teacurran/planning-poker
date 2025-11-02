@@ -91,6 +91,9 @@ public class RoomWebSocketHandler {
     @Inject
     MessageRouter messageRouter;
 
+    @Inject
+    io.vertx.core.Vertx vertx;
+
     /**
      * Called when a WebSocket connection is established.
      * <p>
@@ -263,6 +266,7 @@ public class RoomWebSocketHandler {
             }
 
             // Route to message handlers via MessageRouter
+            // Fire and forget - the router handles its own context management
             messageRouter.route(session, message, userId, roomId)
                     .subscribe().with(
                             success -> Log.debugf("Message handled: type=%s, requestId=%s",
