@@ -43,12 +43,12 @@ public class RoundRevealHandler implements MessageHandler {
     }
 
     @Override
-    @io.quarkus.hibernate.reactive.panache.common.WithTransaction
     public Uni<Void> handle(Session session, WebSocketMessage message, String userId, String roomId) {
         String requestId = message.getRequestId();
 
-        // Verify host role and reveal round (transaction provided by @WithTransaction)
-        return verifyHostRole(userId, roomId)
+        // Wrap everything in a transaction with proper context management
+        return io.quarkus.hibernate.reactive.panache.Panache.withTransaction(() ->
+            verifyHostRole(userId, roomId)
                 .onItem().transformToUni(isHost -> {
                     if (!isHost) {
                         sendError(session, requestId, 4003, "FORBIDDEN",
@@ -91,12 +91,12 @@ public class RoundRevealHandler implements MessageHandler {
                                         });
                             });
                 })
-                .onFailure().recoverWithUni(e -> {
-                    Log.errorf(e, "Failed to handle round.reveal.v1: %s", e.getMessage());
-                    sendError(session, requestId, 4999, "INTERNAL_SERVER_ERROR",
-                            "Failed to process round reveal");
-                    return Uni.createFrom().voidItem();
-                });
+        ).onFailure().recoverWithUni(e -> {
+            Log.errorf(e, "Failed to handle round.reveal.v1: %s", e.getMessage());
+            sendError(session, requestId, 4999, "INTERNAL_SERVER_ERROR",
+                    "Failed to process round reveal");
+            return Uni.createFrom().voidItem();
+        });
     }
 
     /**

@@ -43,12 +43,12 @@ public class RoundResetHandler implements MessageHandler {
     }
 
     @Override
-    @io.quarkus.hibernate.reactive.panache.common.WithTransaction
     public Uni<Void> handle(Session session, WebSocketMessage message, String userId, String roomId) {
         String requestId = message.getRequestId();
 
-        // Verify host role and reset round (transaction provided by @WithTransaction)
-        return verifyHostRole(userId, roomId)
+        // Wrap everything in a transaction with proper context management
+        return io.quarkus.hibernate.reactive.panache.Panache.withTransaction(() ->
+            verifyHostRole(userId, roomId)
                 .onItem().transformToUni(isHost -> {
                     if (!isHost) {
                         sendError(session, requestId, 4003, "FORBIDDEN",
@@ -85,12 +85,12 @@ public class RoundResetHandler implements MessageHandler {
                                         });
                             });
                 })
-                .onFailure().recoverWithUni(e -> {
-                    Log.errorf(e, "Failed to handle round.reset.v1: %s", e.getMessage());
-                    sendError(session, requestId, 4999, "INTERNAL_SERVER_ERROR",
-                            "Failed to process round reset");
-                    return Uni.createFrom().voidItem();
-                });
+        ).onFailure().recoverWithUni(e -> {
+            Log.errorf(e, "Failed to handle round.reset.v1: %s", e.getMessage());
+            sendError(session, requestId, 4999, "INTERNAL_SERVER_ERROR",
+                    "Failed to process round reset");
+            return Uni.createFrom().voidItem();
+        });
     }
 
     /**

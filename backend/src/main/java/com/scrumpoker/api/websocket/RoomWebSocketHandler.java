@@ -266,14 +266,25 @@ public class RoomWebSocketHandler {
             }
 
             // Route to message handlers via MessageRouter
-            // Fire and forget - the router handles its own context management
-            messageRouter.route(session, message, userId, roomId)
-                    .subscribe().with(
-                            success -> Log.debugf("Message handled: type=%s, requestId=%s",
-                                    message.getType(), message.getRequestId()),
-                            failure -> Log.errorf(failure, "Failed to handle message: type=%s, requestId=%s",
-                                    message.getType(), message.getRequestId())
-                    );
+            // CRITICAL: Create a duplicated context for Hibernate Reactive transaction safety
+            // The @OnMessage handler runs on Undertow's thread pool, not a Vert.x context
+            // We need to dispatch to a duplicated Vert.x context for Panache.withTransaction()
+            io.vertx.core.Context context = vertx.getOrCreateContext();
+            io.vertx.core.Context duplicatedContext = io.vertx.core.impl.VertxInternal.class.cast(vertx)
+                    .getOrCreateContext().duplicate();
+
+            // Mark context as safe for Quarkus context safety checks
+            io.quarkus.vertx.core.runtime.context.VertxContextSafetyToggle.setContextSafe(duplicatedContext, true);
+
+            duplicatedContext.runOnContext(v -> {
+                messageRouter.route(session, message, userId, roomId)
+                        .subscribe().with(
+                                success -> Log.debugf("Message handled: type=%s, requestId=%s",
+                                        message.getType(), message.getRequestId()),
+                                failure -> Log.errorf(failure, "Failed to handle message: type=%s, requestId=%s",
+                                        message.getType(), message.getRequestId())
+                        );
+            });
 
         } catch (Exception e) {
             Log.errorf(e, "Failed to process message from session %s: %s", sessionId, messageText);

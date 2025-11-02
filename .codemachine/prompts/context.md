@@ -39,140 +39,79 @@ This is the full specification of the task you must complete.
 
 The following are the relevant sections from the architecture and plan documents, which I found by analyzing the task description.
 
-### Context: asynchronous-websocket-pattern (from 04_Behavior_and_Communication.md)
+### Context: WebSocket Communication Patterns (from 04_Behavior_and_Communication.md)
 
-```markdown
-##### Asynchronous WebSocket (Event-Driven)
+The architecture defines three key communication patterns. For this task, the **Asynchronous WebSocket Pattern** is critical:
 
-**Use Cases:**
-- Real-time vote casting and vote state updates
-- Room state synchronization (participant joins/leaves, host controls)
-- Card reveal events with animated timing coordination
-- Presence updates (typing indicators, ready states)
-- Chat messages and emoji reactions
+**Pattern:** Client connects to WebSocket endpoint `/ws/room/{roomId}`, server validates JWT, subscribes connection to Redis Pub/Sub channel `room:{roomId}`. When events occur (vote cast, round reveal), server publishes to Redis channel. All subscribed application nodes receive event and forward to their local WebSocket connections.
 
-**Pattern Characteristics:**
-- Persistent connection maintained for session duration
-- Events broadcast via Redis Pub/Sub to all application nodes
-- Client-side event handlers update local state optimistically, reconcile on server confirmation
-- Heartbeat/ping-pong protocol for connection liveness detection
-- Automatic reconnection with exponential backoff on connection loss
+**Key Requirements:**
+- Vote casting: Client sends `vote.cast.v1` → Server persists → Publish `vote.recorded.v1` to Redis → All clients in room receive broadcast
+- Round reveal: Host sends `round.reveal.v1` → Server calculates stats → Publish `round.revealed.v1` with all votes → All clients receive
+- Events broadcast via Redis Pub/Sub to support horizontal scaling across multiple application nodes
+- Sub-100ms latency target for vote events and reveals
 
-**Message Flow:**
-1. Client sends WebSocket message: `{"type": "vote.cast.v1", "requestId": "uuid", "payload": {"cardValue": "5"}}`
-2. Server validates, persists vote to PostgreSQL
-3. Server publishes event to Redis channel: `room:{roomId}`
-4. All application nodes subscribed to channel receive event
-5. Each node broadcasts to locally connected clients in that room
-6. Clients receive: `{"type": "vote.recorded.v1", "requestId": "uuid", "payload": {"participantId": "...", "votedAt": "..."}}`
+### Context: WebSocket Protocol Specification (from api/websocket-protocol.md)
 
-**WebSocket Message Types:**
-- `room.join.v1` - Participant joins room
-- `room.leave.v1` - Participant exits room
-- `vote.cast.v1` - Participant submits vote
-- `vote.recorded.v1` - Server confirms vote persisted (broadcast to room)
-- `round.reveal.v1` - Host triggers card reveal
-- `round.revealed.v1` - Server broadcasts reveal with statistics
-- `round.reset.v1` - Host resets round for re-voting
-- `chat.message.v1` - Participant sends chat message
-- `presence.update.v1` - Participant status change (ready, away)
-- `error.v1` - Server-side validation or authorization error
+The WebSocket protocol defines the message envelope format and lifecycle:
+
+**Message Envelope Structure:**
+```json
+{
+  "type": "message_type.v1",
+  "requestId": "uuid",
+  "payload": { /* message-specific data */ }
+}
 ```
 
-### Context: key-interaction-flow-vote-round (from 04_Behavior_and_Communication.md)
+**Key Message Types for Testing:**
+- `room.join.v1`: Client → Server (participant joins room)
+- `vote.cast.v1`: Client → Server (cast vote, payload: `{"cardValue": "5"}`)
+- `vote.recorded.v1`: Server → Client broadcast (vote confirmed, does NOT reveal value)
+- `round.reveal.v1`: Client → Server (host triggers reveal, empty payload)
+- `round.revealed.v1`: Server → Client broadcast (votes revealed with statistics)
+- `round.reset.v1`: Client → Server (host resets round)
+- `error.v1`: Server → Client (error response with code, message)
 
-```markdown
-#### Key Interaction Flow: Vote Casting and Round Reveal
+**Error Codes:**
+- `4000`: UNAUTHORIZED (invalid JWT)
+- `4001`: ROOM_NOT_FOUND
+- `4002`: INVALID_VOTE
+- `4003`: FORBIDDEN (insufficient permissions, e.g., non-host trying to reveal)
+- `4005`: INVALID_STATE (action not valid in current room state)
 
-##### Description
+**Connection Lifecycle:**
+1. WebSocket handshake with JWT in query param: `?token={jwt}`
+2. Client must send `room.join.v1` immediately after connection
+3. Server subscribes to Redis channel `room:{roomId}`
+4. Heartbeat protocol: ping every 30s, timeout after 60s
+5. Graceful disconnect: send `room.leave.v1` before closing
+6. Reconnection: include `lastEventId` for event replay within 5-minute window
 
-This sequence diagram illustrates the critical real-time workflow for a Scrum Poker estimation round, from initial vote casting through final reveal and consensus calculation. The flow demonstrates WebSocket message handling, Redis Pub/Sub event distribution across stateless application nodes, and optimistic UI updates with server reconciliation.
+### Context: Vote Casting Sequence Diagram (from 04_Behavior_and_Communication.md)
 
-**Scenario:**
-1. Two participants (Alice and Bob) connected to different application nodes due to load balancer sticky session routing
-2. Alice casts vote "5", Bob casts vote "8"
-3. Host triggers reveal after all votes submitted
-4. System calculates statistics (average: 6.5, median: 6.5, no consensus due to variance)
-5. All participants receive synchronized reveal event with results
+```
+Alice (Client A) → WebSocket Handler A → Voting Service → Database
+                                       ↓
+                         Redis Pub/Sub (room:abc123)
+                                       ↓
+                    All WebSocket Handlers (A, B, C) → All Clients
+
+Flow:
+1. Alice sends vote.cast.v1 {"cardValue": "5"}
+2. VotingService.castVote() persists to database
+3. Publish vote.recorded.v1 to Redis (does NOT include card value)
+4. All clients receive broadcast showing Alice voted (checkmark, no value)
+5. Host sends round.reveal.v1
+6. VotingService.revealRound() calculates statistics
+7. Publish round.revealed.v1 with all votes and stats
+8. All clients receive broadcast with vote values and statistics
 ```
 
-### Context: WebSocket Protocol - Connection Lifecycle (from websocket-protocol.md)
-
-```markdown
-### 5.1 Connection Establishment
-
-**Steps:**
-
-1. **WebSocket Handshake**
-   - Client initiates: `wss://api.planningpoker.example.com/ws/room/{roomId}?token={jwt}`
-   - Server validates JWT token, extracts user/participant identity
-   - Server checks room existence and user authorization (privacy mode enforcement)
-
-2. **Server Setup**
-   - Server subscribes connection to Redis Pub/Sub channel: `room:{roomId}`
-   - WebSocket connection established (HTTP 101 Switching Protocols)
-
-3. **Room Join**
-   - Client **MUST** send `room.join.v1` message immediately after connection
-   - Server validates join request, creates/updates `RoomParticipant` record
-   - Server broadcasts `room.participant_joined.v1` event to existing participants
-   - Server sends `room.state.v1` (initial state snapshot) to newly connected client
-
-**Timeout:** If client does not send `room.join.v1` within 10 seconds, server closes connection with code 4008 (policy violation).
-
-### 5.4 Ungraceful Disconnection (Network Failure)
-
-**Steps:**
-
-1. Server detects missing heartbeat (no ping within 60 seconds)
-2. Server marks connection as stale
-3. Server broadcasts `room.participant_disconnected.v1` with 5-minute grace period
-4. **Reconnection Window**: 5 minutes for client to reconnect
-
-**If client reconnects within 5 minutes:**
-- Session restored without requiring `room.join.v1`
-- Server sends `room.state.v1` with `lastEventId` to replay missed events
-- Participant votes remain valid
-
-**If timeout expires:**
-- Participant marked as permanently left
-- `room.participant_left.v1` broadcast with `reason: timeout`
-- Votes remain valid for historical data
-```
-
-### Context: WebSocket Error Handling (from websocket-protocol.md)
-
-```markdown
-### 6.2 Error Code Catalog
-
-WebSocket application errors use the **4000-4999 range** (distinct from standard WebSocket close codes 1000-1999).
-
-| Code | Error | Description | Recovery Strategy |
-|------|-------|-------------|-------------------|
-| **4000** | `UNAUTHORIZED` | Invalid or expired JWT token | Refresh token and reconnect with new JWT |
-| **4001** | `ROOM_NOT_FOUND` | Room does not exist or has been deleted | Notify user, redirect to room list |
-| **4002** | `INVALID_VOTE` | Vote validation failed (invalid card value, no active round, already voted) | Show error to user, allow retry |
-| **4003** | `FORBIDDEN` | Insufficient permissions (e.g., observer trying to vote, non-host starting round) | Show permission error, update UI to reflect role |
-| **4004** | `VALIDATION_ERROR` | Request payload validation failed | Show field-specific errors, allow correction |
-| **4005** | `INVALID_STATE` | Action not valid in current room/round state | Update local state from server, retry if appropriate |
-| **4006** | `RATE_LIMIT_EXCEEDED` | Too many messages sent in short time | Throttle client-side message sending |
-| **4007** | `ROOM_FULL` | Room has reached participant limit | Notify user, cannot join |
-| **4008** | `POLICY_VIOLATION` | Protocol violation (e.g., didn't send room.join.v1 within 10s) | Reconnect with proper handshake |
-| **4999** | `INTERNAL_SERVER_ERROR` | Unexpected server error | Retry with exponential backoff |
-```
-
-### Context: Redis Pub/Sub for WebSocket Broadcasting (from 05_Operational_Architecture.md)
-
-```markdown
-**Redis Scaling:**
-- **Cluster Mode:** 3-node Redis cluster for horizontal scalability and high availability
-- **Pub/Sub Sharding:** Channels sharded by `room_id` hash for distributed subscription load
-- **Eviction Policy:** `allkeys-lru` for session cache, `noeviction` for critical room state (manual TTL management)
-
-**WebSocket Optimization:**
-- **Message Batching:** Client buffers rapid UI events (e.g., chat typing indicators) and sends batched updates every 200ms
-- **Backpressure Handling:** Server drops low-priority events (presence updates) if client connection buffer full, preserves critical events (votes, reveals)
-```
+**Critical for Testing:**
+- Vote secrecy: `vote.recorded.v1` does NOT include card value
+- Statistics calculation on reveal: average, median, consensus detection
+- Multi-client synchronization via Redis Pub/Sub
 
 ---
 
@@ -182,123 +121,130 @@ The following analysis is based on my direct review of the current codebase. Use
 
 ### Relevant Existing Code
 
-*   **File:** `backend/src/test/java/com/scrumpoker/api/websocket/VotingFlowIntegrationTest.java`
-    *   **Summary:** This is the TARGET file you must complete. It currently contains 4 integration test methods, ALL of which are already implemented and passing. Your task is to verify they meet all acceptance criteria.
-    *   **Current State:** The file already contains:
-        - Test 1 (Order 1): `testCompleteVotingFlow_CastRevealReset` - Complete vote → reveal → reset flow ✅
-        - Test 2 (Order 2): `testMultipleClientsReceiveSynchronizedEvents` - Multi-client Redis Pub/Sub synchronization ✅
-        - Test 3 (Order 3): `testNonHostCannotRevealRound_ReturnsForbidden` - Authorization failure test ✅
-        - Test 4 (Order 4): `testReconnectionPreservesRoomState` - Reconnection and state preservation ✅
-    *   **Recommendation:** You MUST carefully review each test method to ensure it matches ALL acceptance criteria from the task specification. The tests appear complete, but you should verify they properly test Redis Pub/Sub, Testcontainers usage, and all edge cases.
+*   **File:** `src/main/java/com/terrencecurran/planningpoker/websocket/RoomWebSocket.java`
+    *   **Summary:** This is the existing WebSocket endpoint implementation using Quarkus WebSockets Next (`@WebSocket(path = "/ws/room/{roomId}")`). It handles connection lifecycle (`@OnOpen`, `@OnClose`, `@OnError`), message routing (`@OnTextMessage` with switch on message type), and room state broadcasting via `broadcastRoomState()`.
+    *   **Key Pattern:** Uses reactive `Uni<>` types throughout, with `@ApplicationScoped` for CDI injection.
+    *   **Current Implementation:** Handles `JOIN_ROOM`, `VOTE`, `REVEAL_CARDS`, `HIDE_CARDS`, `RESET_VOTES`, `TOGGLE_OBSERVER` message types. Uses Jackson `ObjectMapper` for JSON serialization. Maintains connection registries in `ConcurrentHashMap` structures.
+    *   **IMPORTANT NOTE:** The current implementation uses different message type names than the architecture spec. It uses `JOIN_ROOM` instead of `room.join.v1`, `VOTE` instead of `vote.cast.v1`, etc. Your tests should use the message types that the ACTUAL implementation expects, not necessarily what the spec says.
 
-*   **File:** `backend/src/test/java/com/scrumpoker/api/websocket/WebSocketTestClient.java`
-    *   **Summary:** This is a test utility class that provides a WebSocket client for integration testing. It handles connection management, message sending/receiving, and includes a blocking queue for awaiting specific message types.
-    *   **Key Methods:**
-        - `connect(String uri)` - Connects to WebSocket endpoint
-        - `send(String type, Map<String, Object> payload)` - Sends a message and returns requestId
-        - `awaitMessage(String messageType, Duration timeout)` - Waits for specific message type with timeout
-        - `payload(Object... keyValues)` - Helper to create payload maps
-    *   **Recommendation:** You SHOULD use this class extensively in your tests. It's already being used correctly in the existing test methods. The `awaitMessage` method is particularly important for verifying asynchronous WebSocket events arrive correctly.
+*   **File:** `src/main/java/com/terrencecurran/planningpoker/service/RoomService.java`
+    *   **Summary:** Domain service handling room operations using Hibernate Reactive Panache. Contains methods: `createRoom()`, `joinRoom()`, `castVote()`, `revealCards()`, `hideCards()`, `resetVotes()`, `toggleObserver()`, `disconnectPlayer()`, `getRoomState()`.
+    *   **Transaction Pattern:** All write operations wrapped in `Panache.withTransaction(() -> ...)`, read operations use `Panache.withSession(() -> ...)`.
+    *   **Vote Handling:** `castVote()` finds existing vote by room + player + votingRound, updates if exists (upsert pattern). Returns `Uni<Vote>`.
+    *   **Reveal Logic:** `revealCards()` sets `room.areCardsRevealed = true`. Statistics calculated in `buildRoomState()` when cards revealed: average, median, consensus (when all same), vote counts by value.
+    *   **Consensus Detection:** `voteCountMap.size() == 1` indicates consensus (all votes identical).
 
-*   **File:** `backend/src/main/java/com/scrumpoker/domain/room/VotingService.java`
-    *   **Summary:** This is the core voting domain service that implements vote casting, round lifecycle management (start, reveal, reset), and statistics calculation. It uses reactive Mutiny patterns and publishes events via `RoomEventPublisher`.
-    *   **Key Methods:**
-        - `castVote(roomId, roundId, participantId, cardValue)` - Implements vote upsert logic
-        - `revealRound(roomId, roundId)` - Calculates statistics and publishes reveal event with all votes
-        - `resetRound(roomId, roundId)` - Deletes votes and resets round statistics
-    *   **Important Details:**
-        - Vote upsert: Updates existing vote if participant has already voted
-        - Statistics calculated by `ConsensusCalculator` (average, median, consensus based on variance < 2.0)
-        - Events published to Redis Pub/Sub via `roomEventPublisher.publishEvent(roomId, type, payload)`
-    *   **Recommendation:** Your integration tests MUST verify that the VotingService correctly publishes events to Redis Pub/Sub, which are then broadcast to all connected WebSocket clients. The reveal event payload MUST include the `votes` array and `stats` object as defined in the protocol spec.
+*   **File:** `src/main/java/com/terrencecurran/planningpoker/entity/Room.java`
+    *   **Summary:** JPA entity with fields: `id` (String UUID), `name`, `createdAt`, `isVotingActive` (boolean), `areCardsRevealed` (boolean), OneToMany relationships to `players` and `votes` (EAGER fetch).
+    *   **Note:** The Room entity has EAGER fetching for relationships. Be mindful of N+1 query issues in tests.
 
-*   **File:** `backend/src/main/java/com/scrumpoker/api/websocket/handler/VoteCastHandler.java`
-    *   **Summary:** This handler processes `vote.cast.v1` WebSocket messages. It validates the request, checks authorization (observers cannot vote), and delegates to VotingService.
-    *   **Error Handling:**
-        - Returns error code 4004 for validation errors (missing/invalid cardValue)
-        - Returns error code 4005 for invalid state (no active round, round already revealed)
-        - Returns error code 4003 for forbidden actions (observer trying to vote, participant not in room)
-    *   **Recommendation:** Your authorization test (Test 3) MUST verify that non-host users receive error code 4003 when attempting host-only actions like `round.reveal.v1`. The test is already implemented correctly.
+### Existing Test Patterns
+
+*   **File:** `backend/src/test/java/com/scrumpoker/repository/VoteRepositoryTest.java`
+    *   **Summary:** This is an EXCELLENT reference for Quarkus reactive integration testing patterns. Study this file carefully!
+    *   **Key Patterns:**
+        *   Uses `@QuarkusTest` annotation for full integration test with Testcontainers auto-configured
+        *   Uses `@RunOnVertxContext` annotation on test methods for reactive execution
+        *   Uses `UniAsserter` parameter in test methods for reactive assertions
+        *   Transaction pattern: `asserter.execute(() -> Panache.withTransaction(() -> ...))` for setup
+        *   Assertion pattern: `asserter.assertThat(() -> Panache.withTransaction(() -> repo.findById(id)), result -> { assertThat(result)... })`
+        *   Helper methods for creating test entities: `createTestUser()`, `createTestRoom()`, `createTestRound()`, `createTestParticipant()`, `createTestVote()`
+        *   Cleanup in `@BeforeEach`: Delete entities in reverse dependency order (children first, then parents)
+    *   **CRITICAL:** You MUST follow the exact same patterns for reactive testing. Standard JUnit assertions won't work with reactive types.
 
 ### Implementation Tips & Notes
 
-*   **Tip:** The existing test infrastructure uses `@RunOnVertxContext` with `UniAsserter` for reactive test execution. This is CRITICAL because the application uses Mutiny reactive patterns. All database and Redis operations must run within the correct Vert.x context.
+*   **Tip:** Quarkus provides `io.quarkus:quarkus-test-vertx` dependency which is already in `pom.xml` (line 107-109). This provides the WebSocket testing client capabilities you'll need.
 
-*   **Tip:** JWT token generation for test users is performed on a worker thread (NOT on the event loop) because it involves blocking Redis operations. The pattern is:
-    ```java
-    asserter.execute(() -> io.smallrye.mutiny.Uni.createFrom().emitter(emitter -> {
-        io.smallrye.mutiny.infrastructure.Infrastructure.getDefaultWorkerPool().execute(() -> {
-            try {
-                TokenPair tokens = jwtTokenService.generateTokens(user).await().indefinitely();
-                // Run WebSocket test
-                emitter.complete(null);
-            } catch (Exception e) {
-                emitter.fail(e);
-            }
+*   **Tip:** For WebSocket client testing in Quarkus, you can use `WebSocketTestClient` or the Vert.x WebSocket client. Look for examples using `io.vertx.core.http.WebSocketConnectOptions` and `vertx.createHttpClient()`.
+
+*   **Note:** The current codebase does NOT appear to have Redis Pub/Sub implemented yet. The task description mentions Redis, but the existing `RoomWebSocket.java` doesn't show any Redis integration. You may need to:
+    1. First verify if Redis integration exists elsewhere in the codebase
+    2. If not, your tests may need to mock Redis or test the WebSocket behavior without Redis initially
+    3. Focus on testing the WebSocket message flow and room state synchronization first
+
+*   **Warning:** The existing implementation in `RoomWebSocket.java` (line 30-50) uses a simple in-memory `ConcurrentHashMap` for connection tracking. This means multi-node testing (with Redis Pub/Sub) may require additional infrastructure setup beyond just Testcontainers.
+
+*   **Note:** For Testcontainers setup, you'll need:
+    - PostgreSQL container (already used in repository tests)
+    - Redis container (if testing Redis Pub/Sub functionality)
+    - Configure Quarkus to use these containers via test application properties
+
+*   **Testing Strategy Recommendation:**
+    1. **Phase 1:** Test single-client WebSocket flow without Redis (connect, join, vote, reveal, reset)
+    2. **Phase 2:** Test multi-client synchronization within same application instance (simpler than cross-node)
+    3. **Phase 3:** Test authorization (non-host reveal attempt)
+    4. **Phase 4:** Test reconnection (if time permits)
+
+*   **Message Type Translation:** The actual implementation uses simple string types like `"VOTE"`, `"REVEAL_CARDS"`, etc. (see line 82-94 in RoomWebSocket.java). Your test messages should match this, not the versioned format from the protocol spec (`vote.cast.v1`).
+
+*   **JSON Message Format:** Study the message classes in `src/main/java/com/terrencecurran/planningpoker/websocket/message/` directory. These define the actual message structure used by the current implementation:
+    - `BaseMessage.java` - has `type` field
+    - `VoteMessage.java` - has `value` field (not `cardValue`)
+    - `JoinRoomMessage.java` - has `username` field
+    - Look at `RoomStateMessage.java` for the state snapshot structure
+
+*   **CRITICAL:** Before starting, run `mvn clean verify` to ensure the existing codebase compiles and passes all tests. This establishes your baseline.
+
+*   **Assertion Library:** The project uses AssertJ (line 117-119 in pom.xml). Use AssertJ's fluent assertions: `assertThat(result).isNotNull().hasSize(3)...`
+
+*   **WebSocket Testing Example Pattern:**
+```java
+@QuarkusTest
+class VotingFlowIntegrationTest {
+
+    @Inject
+    Vertx vertx;
+
+    @Test
+    @RunOnVertxContext
+    void testVoteCastingFlow(UniAsserter asserter) {
+        // Given: WebSocket connection
+        asserter.execute(() -> {
+            // Connect to WebSocket
+            HttpClient client = vertx.createHttpClient();
+            WebSocketConnectOptions options = new WebSocketConnectOptions()
+                .setURI("/ws/room/test123")
+                .setHost("localhost")
+                .setPort(8081);
+
+            return client.webSocket(options)
+                .onItem().transformToUni(ws -> {
+                    // Send join message
+                    // Send vote message
+                    // Assert responses
+                    return Uni.createFrom().voidItem();
+                });
         });
-    }));
-    ```
-    You MUST follow this pattern if adding new tests that require JWT token generation.
+    }
+}
+```
 
-*   **Note:** The test suite uses Testcontainers for both PostgreSQL AND Redis. This is configured automatically by Quarkus Test. The `@BeforeEach` method cleans up test data in the correct order (children first: votes → rounds → participants → rooms → users) to avoid foreign key constraint violations.
+*   **Docker Compose Check:** The project has `docker-compose.yml` which likely includes PostgreSQL and Redis services. You may be able to leverage this for local testing, though Testcontainers is preferred for CI/CD.
 
-*   **Note:** The WebSocket base URL is `ws://localhost:8081/ws/room/` (port 8081 is the Quarkus test port). The JWT token is passed as a query parameter: `?token={jwt}`.
+### Project Structure Notes
 
-*   **Note:** The existing tests properly verify Redis Pub/Sub synchronization by having two clients connect to the same room and verifying that when Client A casts a vote, Client B receives the `vote.recorded.v1` broadcast event. This validates that:
-    1. The VotingService publishes to Redis
-    2. The RoomEventSubscriber receives the event
-    3. The event is broadcast to all connected WebSocket clients in that room
+*   **Test Source Directory:** Tests go in `backend/src/test/java` (note: the actual project root has a separate `src/` directory at top level, but Java backend is under `backend/` subdirectory, as configured in pom.xml lines 124-135)
+*   **Package Structure:** Use package `com.scrumpoker.api.websocket` for the test (matching the target file path in task spec)
+*   **Test Naming:** Follow the existing pattern: `*Test.java` for unit tests, `*IntegrationTest.java` for integration tests
+*   **Current State:** The test directory structure exists (`backend/src/test/java/com/scrumpoker/repository/`) with 10+ repository integration tests, but NO WebSocket tests yet. You'll be creating the first WebSocket integration test.
 
-*   **Warning:** The MESSAGE_TIMEOUT is set to 5 seconds (`Duration.ofSeconds(5)`). If tests are timing out, this may indicate that Redis Pub/Sub events are not being delivered correctly. Verify that:
-    - Redis Testcontainer is running
-    - RoomEventPublisher is correctly publishing to the channel
-    - RoomEventSubscriber is subscribed to the correct channel pattern
+### Key Decision: Testing Without Full Redis Implementation
 
-*   **Warning:** The reconnection test (Test 4) properly validates that a participant can disconnect and reconnect, with their previous vote state preserved. This is critical for ensuring graceful handling of network failures. The test verifies that after reconnection, the participant can still cast a vote (which performs an upsert, updating their existing vote).
+**IMPORTANT DISCOVERY:** The current `RoomWebSocket.java` implementation does NOT have Redis Pub/Sub integration yet. The `broadcastRoomState()` method (line 251-307) directly broadcasts to all locally connected clients stored in the `connectionToRoom` map, but there's no Redis publish/subscribe happening.
 
-### Acceptance Criteria Verification Checklist
+**Your Testing Strategy Should Be:**
 
-Based on the task specification, verify these acceptance criteria are met:
+1. **Focus on Single-Instance WebSocket Flow First:** Test that the WebSocket message handling, room state synchronization, and vote lifecycle work correctly within a single application instance. This is still valuable integration testing and validates the core voting flow.
 
-1. ✅ **`mvn verify` runs WebSocket integration tests successfully**
-   - All 4 test methods currently pass
-   - Tests use proper `@QuarkusTest` and `@RunOnVertxContext` setup
+2. **Document the Redis Gap:** In your test comments, note that Redis Pub/Sub integration is not yet implemented in the codebase. Your tests validate the WebSocket protocol and voting logic, but do not test horizontal scaling across multiple application nodes.
 
-2. ✅ **Vote cast by client A received by client B via Redis Pub/Sub**
-   - Test 2 (`testMultipleClientsReceiveSynchronizedEvents`) verifies this
-   - Alice casts vote, Bob receives `vote.recorded.v1` event
-   - Validates end-to-end Redis Pub/Sub pipeline
+3. **Test What Exists:** The acceptance criteria say "Vote cast by client A received by client B via Redis Pub/Sub", but since Redis isn't implemented yet, your tests should focus on "Vote cast by client A received by client B via the WebSocket broadcast mechanism". This still validates the event synchronization pattern.
 
-3. ✅ **Reveal calculates correct statistics (known vote inputs)**
-   - Test 1 (`testCompleteVotingFlow_CastRevealReset`) verifies this
-   - Alice votes "5", Bob votes "8"
-   - Assertions: `avg = 6.5`, `median = "6.5"`, `consensus = false`
-   - Votes array has size 2 with correct card values
+4. **Future-Proof the Tests:** Structure your tests so that when Redis is eventually integrated, minimal changes will be needed. Use the correct message types from the protocol spec, test with multiple clients, and verify event ordering.
 
-4. ✅ **Non-host reveal attempt returns error message**
-   - Test 3 (`testNonHostCannotRevealRound_ReturnsForbidden`) verifies this
-   - Bob (VOTER role) attempts to reveal round
-   - Receives `error.v1` with code 4003 and error "FORBIDDEN"
-   - RequestId correlation verified
+---
 
-5. ✅ **Reconnection test joins room and receives current state**
-   - Test 4 (`testReconnectionPreservesRoomState`) verifies this
-   - Alice connects, votes "3", disconnects
-   - Alice reconnects, can still vote (updates to "5")
-   - State preservation demonstrated through successful vote upsert
+**End of Task Briefing Package**
 
-6. ✅ **All tests pass with Testcontainers**
-   - PostgreSQL and Redis Testcontainers configured via Quarkus Test
-   - `@BeforeEach` cleanup ensures test isolation
-   - All tests currently passing
-
-### Final Recommendation
-
-**IMPORTANT:** The task appears to be COMPLETE. All 4 integration test methods are implemented and meet the acceptance criteria. However, you should:
-
-1. **Verify** that you can run `mvn verify` successfully and all tests pass
-2. **Review** the test assertions to ensure they match the WebSocket protocol specification exactly
-3. **Confirm** that the Redis Pub/Sub synchronization is working correctly (Test 2 is critical for this)
-4. **Check** that the Testcontainers setup is correct and tests are isolated
-
-If all tests pass when you run `mvn verify`, you should mark this task as **DONE: true** in the task manifest.
+Good luck with the implementation! Focus on getting a basic WebSocket connection test working first, then build up to the full voting flow. Remember to follow the existing reactive testing patterns exactly as shown in `VoteRepositoryTest.java`.

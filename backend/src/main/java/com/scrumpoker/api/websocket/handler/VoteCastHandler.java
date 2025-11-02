@@ -45,7 +45,6 @@ public class VoteCastHandler implements MessageHandler {
     }
 
     @Override
-    @io.quarkus.hibernate.reactive.panache.common.WithTransaction
     public Uni<Void> handle(Session session, WebSocketMessage message, String userId, String roomId) {
         String requestId = message.getRequestId();
         Map<String, Object> payload = message.getPayload();
@@ -59,8 +58,9 @@ public class VoteCastHandler implements MessageHandler {
             return Uni.createFrom().voidItem();
         }
 
-        // Fetch latest round and validate (transaction provided by @WithTransaction)
-        return roundRepository.findLatestByRoomId(roomId)
+        // Wrap everything in a transaction with proper context management
+        return io.quarkus.hibernate.reactive.panache.Panache.withTransaction(() ->
+            roundRepository.findLatestByRoomId(roomId)
                 .onItem().transformToUni(round -> {
                     if (round == null) {
                         sendError(session, requestId, 4005, "INVALID_STATE", "No active round in room");
@@ -93,12 +93,12 @@ public class VoteCastHandler implements MessageHandler {
                                         participant.participantId, cardValue);
                             });
                 })
-                .onFailure().recoverWithUni(e -> {
-                    Log.errorf(e, "Failed to handle vote.cast.v1: %s", e.getMessage());
-                    sendError(session, requestId, 4999, "INTERNAL_SERVER_ERROR",
-                            "Failed to process vote");
-                    return Uni.createFrom().voidItem();
-                });
+        ).onFailure().recoverWithUni(e -> {
+            Log.errorf(e, "Failed to handle vote.cast.v1: %s", e.getMessage());
+            sendError(session, requestId, 4999, "INTERNAL_SERVER_ERROR",
+                    "Failed to process vote");
+            return Uni.createFrom().voidItem();
+        });
     }
 
     /**
