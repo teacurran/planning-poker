@@ -1,21 +1,26 @@
 package com.scrumpoker.domain.room;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.scrumpoker.domain.reporting.ParticipantSummary;
+import com.scrumpoker.domain.reporting.SessionSummaryStats;
 import com.scrumpoker.event.RoomEventPublisher;
 import com.scrumpoker.repository.RoomParticipantRepository;
 import com.scrumpoker.repository.RoomRepository;
 import com.scrumpoker.repository.RoundRepository;
+import com.scrumpoker.repository.SessionHistoryRepository;
 import com.scrumpoker.repository.VoteRepository;
 import io.quarkus.hibernate.reactive.panache.common.WithTransaction;
+import io.quarkus.logging.Log;
 import io.smallrye.mutiny.Uni;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Instant;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
+import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * Domain service for voting operations in estimation rounds.
@@ -38,7 +43,13 @@ public class VotingService {
     RoomParticipantRepository roomParticipantRepository;
 
     @Inject
+    SessionHistoryRepository sessionHistoryRepository;
+
+    @Inject
     RoomEventPublisher roomEventPublisher;
+
+    @Inject
+    ObjectMapper objectMapper;
 
     /**
      * Casts a vote for a participant in an estimation round.
@@ -143,6 +154,12 @@ public class VotingService {
      * - Consensus: true if variance < 2.0 for all numeric votes
      * </p>
      * <p>
+     * After revealing the round, updates the SessionHistory record with:
+     * - Round count increment
+     * - Participant summaries (vote counts per participant)
+     * - Summary statistics (total votes, consensus rate)
+     * </p>
+     * <p>
      * Publishes a "round.revealed.v1" event with all votes and statistics.
      * </p>
      *
@@ -152,7 +169,7 @@ public class VotingService {
      */
     @WithTransaction
     public Uni<Round> revealRound(String roomId, UUID roundId) {
-        // Fetch all votes for the round
+        // Fetch all votes for the round and the round entity
         return Uni.combine().all().unis(
                 voteRepository.findByRoundId(roundId),
                 roundRepository.findById(roundId)
@@ -178,7 +195,8 @@ public class VotingService {
             round.consensusReached = consensus;
 
             return roundRepository.persist(round)
-                    .onItem().call(updatedRound -> publishRoundRevealedEvent(roomId, updatedRound, votes));
+                    .onItem().call(updatedRound -> publishRoundRevealedEvent(roomId, updatedRound, votes))
+                    .onItem().call(updatedRound -> updateSessionHistory(roomId, updatedRound, votes));
         });
     }
 
@@ -334,5 +352,251 @@ public class VotingService {
         payload.put("roundId", round.roundId.toString());
 
         return roomEventPublisher.publishEvent(roomId, "round.reset.v1", payload);
+    }
+
+    /**
+     * Updates or creates SessionHistory record after revealing a round.
+     * <p>
+     * Session tracking strategy:
+     * - Creates a new SessionHistory record if this is the first revealed round in the room
+     * - Updates existing SessionHistory record for subsequent rounds in the same session
+     * - A "session" is defined as continuous estimation activity in a room
+     * </p>
+     * <p>
+     * Updates performed:
+     * - Increment totalRounds counter
+     * - Update participants JSONB array with vote counts per participant
+     * - Recalculate summary statistics (consensus rate, total votes)
+     * - Update endedAt timestamp to current time
+     * </p>
+     *
+     * @param roomId The room ID
+     * @param revealedRound The revealed round with statistics
+     * @param votes List of votes in the revealed round
+     * @return Uni<Void> that completes when SessionHistory is updated
+     */
+    private Uni<Void> updateSessionHistory(String roomId, Round revealedRound, List<Vote> votes) {
+        // Fetch all rounds for the room to determine session boundaries and calculate aggregate stats
+        return roundRepository.findRevealedByRoomId(roomId)
+                .onItem().transformToUni(allRevealedRounds -> {
+                    if (allRevealedRounds.isEmpty()) {
+                        Log.warn("No revealed rounds found for room " + roomId + " despite revealing a round");
+                        return Uni.createFrom().voidItem();
+                    }
+
+                    // Determine session start time (first revealed round's start time)
+                    Instant sessionStartedAt = allRevealedRounds.stream()
+                            .map(r -> r.startedAt)
+                            .min(Instant::compareTo)
+                            .orElse(revealedRound.startedAt);
+
+                    // Try to find existing session history for this room starting at this time
+                    return sessionHistoryRepository.find(
+                            "room.roomId = ?1 and id.startedAt = ?2",
+                            roomId, sessionStartedAt
+                    ).firstResult()
+                    .onItem().transformToUni(existingSession -> {
+                        if (existingSession != null) {
+                            // Update existing session
+                            return updateExistingSessionHistory(
+                                    existingSession, allRevealedRounds, roomId);
+                        } else {
+                            // Create new session history record
+                            return createNewSessionHistory(
+                                    roomId, sessionStartedAt, allRevealedRounds);
+                        }
+                    });
+                })
+                .replaceWithVoid()
+                .onFailure().invoke(throwable ->
+                        Log.error("Failed to update session history for room " + roomId, throwable));
+    }
+
+    /**
+     * Creates a new SessionHistory record for the first revealed round in a room.
+     *
+     * @param roomId The room ID
+     * @param sessionStartedAt The session start timestamp
+     * @param allRevealedRounds All revealed rounds in the room
+     * @return Uni<SessionHistory> containing the created record
+     */
+    private Uni<SessionHistory> createNewSessionHistory(
+            String roomId, Instant sessionStartedAt, List<Round> allRevealedRounds) {
+
+        return roomRepository.findById(roomId)
+                .onItem().transformToUni(room -> {
+                    if (room == null) {
+                        return Uni.createFrom().failure(
+                                new IllegalArgumentException("Room not found: " + roomId));
+                    }
+
+                    // Generate new session ID
+                    UUID sessionId = UUID.randomUUID();
+
+                    // Fetch all votes for all revealed rounds to calculate participant summaries
+                    return fetchAllVotesForRounds(allRevealedRounds)
+                            .onItem().transformToUni(allVotes -> {
+                                try {
+                                    // Build participant summaries
+                                    List<ParticipantSummary> participantSummaries =
+                                            buildParticipantSummaries(allVotes);
+                                    String participantsJson = objectMapper.writeValueAsString(participantSummaries);
+
+                                    // Build summary statistics
+                                    SessionSummaryStats stats = buildSummaryStats(allRevealedRounds, allVotes);
+                                    String summaryStatsJson = objectMapper.writeValueAsString(stats);
+
+                                    // Create SessionHistory entity
+                                    SessionHistory sessionHistory = new SessionHistory();
+                                    sessionHistory.id = new SessionHistoryId(sessionId, sessionStartedAt);
+                                    sessionHistory.room = room;
+                                    sessionHistory.endedAt = Instant.now();
+                                    sessionHistory.totalRounds = allRevealedRounds.size();
+                                    sessionHistory.totalStories = allRevealedRounds.size(); // One story per round
+                                    sessionHistory.participants = participantsJson;
+                                    sessionHistory.summaryStats = summaryStatsJson;
+
+                                    return sessionHistoryRepository.persist(sessionHistory);
+
+                                } catch (JsonProcessingException e) {
+                                    Log.error("Failed to serialize session history JSON", e);
+                                    return Uni.createFrom().failure(e);
+                                }
+                            });
+                });
+    }
+
+    /**
+     * Updates an existing SessionHistory record with new round data.
+     *
+     * @param existingSession The existing SessionHistory record
+     * @param allRevealedRounds All revealed rounds in the room
+     * @param roomId The room ID
+     * @return Uni<SessionHistory> containing the updated record
+     */
+    private Uni<SessionHistory> updateExistingSessionHistory(
+            SessionHistory existingSession, List<Round> allRevealedRounds, String roomId) {
+
+        // Fetch all votes for all revealed rounds
+        return fetchAllVotesForRounds(allRevealedRounds)
+                .onItem().transformToUni(allVotes -> {
+                    try {
+                        // Rebuild participant summaries with updated vote counts
+                        List<ParticipantSummary> participantSummaries =
+                                buildParticipantSummaries(allVotes);
+                        String participantsJson = objectMapper.writeValueAsString(participantSummaries);
+
+                        // Recalculate summary statistics
+                        SessionSummaryStats stats = buildSummaryStats(allRevealedRounds, allVotes);
+                        String summaryStatsJson = objectMapper.writeValueAsString(stats);
+
+                        // Update existing session history
+                        existingSession.endedAt = Instant.now();
+                        existingSession.totalRounds = allRevealedRounds.size();
+                        existingSession.totalStories = allRevealedRounds.size();
+                        existingSession.participants = participantsJson;
+                        existingSession.summaryStats = summaryStatsJson;
+
+                        return sessionHistoryRepository.persist(existingSession);
+
+                    } catch (JsonProcessingException e) {
+                        Log.error("Failed to serialize session history JSON for room " + roomId, e);
+                        return Uni.createFrom().failure(e);
+                    }
+                });
+    }
+
+    /**
+     * Fetches all votes for a list of rounds.
+     *
+     * @param rounds List of rounds
+     * @return Uni containing a flat list of all votes
+     */
+    private Uni<List<Vote>> fetchAllVotesForRounds(List<Round> rounds) {
+        if (rounds.isEmpty()) {
+            return Uni.createFrom().item(List.of());
+        }
+
+        // Fetch votes for each round in parallel
+        List<Uni<List<Vote>>> voteUnis = rounds.stream()
+                .map(round -> voteRepository.findByRoundId(round.roundId))
+                .collect(Collectors.toList());
+
+        return Uni.combine().all().unis(voteUnis)
+                .with(voteLists -> {
+                    // Flatten list of lists into a single list
+                    return voteLists.stream()
+                            .flatMap(voteList -> ((List<Vote>) voteList).stream())
+                            .collect(Collectors.toList());
+                });
+    }
+
+    /**
+     * Builds participant summaries from all votes.
+     * Aggregates vote counts per participant.
+     *
+     * @param allVotes All votes across all rounds
+     * @return List of ParticipantSummary objects
+     */
+    private List<ParticipantSummary> buildParticipantSummaries(List<Vote> allVotes) {
+        // Group votes by participant
+        Map<UUID, List<Vote>> votesByParticipant = allVotes.stream()
+                .collect(Collectors.groupingBy(vote -> vote.participant.participantId));
+
+        return votesByParticipant.entrySet().stream()
+                .map(entry -> {
+                    RoomParticipant participant = entry.getValue().get(0).participant;
+                    int voteCount = entry.getValue().size();
+                    boolean isAuthenticated = participant.user != null;
+
+                    return new ParticipantSummary(
+                            participant.participantId,
+                            participant.displayName,
+                            participant.role.name(),
+                            voteCount,
+                            isAuthenticated
+                    );
+                })
+                .sorted(Comparator.comparing(ParticipantSummary::getVoteCount).reversed())
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * Builds summary statistics from all revealed rounds and votes.
+     *
+     * @param allRevealedRounds All revealed rounds
+     * @param allVotes All votes across all rounds
+     * @return SessionSummaryStats object
+     */
+    private SessionSummaryStats buildSummaryStats(List<Round> allRevealedRounds, List<Vote> allVotes) {
+        int totalVotes = allVotes.size();
+
+        // Count rounds with consensus
+        int roundsWithConsensus = (int) allRevealedRounds.stream()
+                .filter(round -> round.consensusReached != null && round.consensusReached)
+                .count();
+
+        // Calculate consensus rate
+        BigDecimal consensusRate = allRevealedRounds.isEmpty()
+                ? BigDecimal.ZERO
+                : BigDecimal.valueOf(roundsWithConsensus)
+                        .divide(BigDecimal.valueOf(allRevealedRounds.size()), 4, RoundingMode.HALF_UP);
+
+        // Calculate average estimation time (time from round start to reveal)
+        long totalEstimationTimeSeconds = allRevealedRounds.stream()
+                .filter(round -> round.revealedAt != null)
+                .mapToLong(round -> round.revealedAt.getEpochSecond() - round.startedAt.getEpochSecond())
+                .sum();
+
+        Long avgEstimationTimeSeconds = allRevealedRounds.isEmpty()
+                ? 0L
+                : totalEstimationTimeSeconds / allRevealedRounds.size();
+
+        return new SessionSummaryStats(
+                totalVotes,
+                consensusRate,
+                avgEstimationTimeSeconds,
+                roundsWithConsensus
+        );
     }
 }
