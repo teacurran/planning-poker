@@ -165,7 +165,7 @@ public class PdfExporter {
                 .collect(Collectors.toList());
 
         return Uni.combine().all().unis(voteFetches)
-                .combinedWith(results -> results.stream()
+                .with(results -> results.stream()
                         .map(obj -> (Map.Entry<UUID, List<Vote>>) obj)
                         .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue)));
     }

@@ -168,6 +168,13 @@
             <version>2.14.0</version>
         </dependency>
 
+        <!-- AWS SDK URL Connection HTTP Client (required by quarkus-amazon-s3) -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>url-connection-client</artifactId>
+            <version>2.25.37</version>
+        </dependency>
+
         <!-- Testing -->
         <dependency>
             <groupId>io.quarkus</groupId>

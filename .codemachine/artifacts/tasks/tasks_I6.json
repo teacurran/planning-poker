@@ -42,7 +42,7 @@
     "acceptance_criteria": "Export job message triggers processor, CSV export generates valid file (test with sample session), PDF export generates readable report, File uploaded to S3 successfully, Signed URL allows download without authentication, Job status updated to COMPLETED with download URL, Failed jobs marked with error message, Retry logic handles transient S3 failures",
     "dependencies": ["I6.T2"],
     "parallelizable": true,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I6.T4",
