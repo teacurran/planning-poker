@@ -10,25 +10,27 @@ This is the full specification of the task you must complete.
 
 ```json
 {
-  "task_id": "I6.T5",
+  "task_id": "I6.T6",
   "iteration_id": "I6",
   "iteration_goal": "Implement session history tracking, tier-based reporting (basic summaries for Free, detailed analytics for Pro/Enterprise), export functionality (CSV/PDF), and frontend reporting UI.",
-  "description": "Implement `SessionHistoryPage` component displaying user's past sessions. List sessions with: date, room title, round count, participants count, consensus rate. Pagination controls (previous/next, page numbers). Click session to navigate to detail page. Filter by date range (date picker). Sort by date (newest/oldest). Use `useSessions` React Query hook for data fetching. Display loading skeleton, empty state (no sessions), error state.",
+  "description": "Implement `SessionDetailPage` component showing session report details. Free tier view: summary card (story count, consensus rate, average vote, participants list). Pro tier view: round-by-round table (story title, individual votes, average, median, consensus indicator), user consistency chart (bar chart showing each user's vote variance), export buttons (CSV, PDF). Use `useSessionDetail` hook fetching tier-appropriate data. Display UpgradeModal if Free tier user tries to view detailed data (403 response). Show download link when export job completes.",
   "agent_type_hint": "FrontendAgent",
-  "inputs": "Reporting API endpoints from I6.T4, Session list requirements",
+  "inputs": "Reporting tier features from product spec, ReportingService detail levels",
   "input_files": [
-    "api/openapi.yaml"
+    "api/openapi.yaml",
+    "frontend/src/components/subscription/UpgradeModal.tsx"
   ],
   "target_files": [
-    "frontend/src/pages/SessionHistoryPage.tsx",
-    "frontend/src/components/reporting/SessionListTable.tsx",
-    "frontend/src/components/reporting/PaginationControls.tsx",
-    "frontend/src/services/reportingApi.ts"
+    "frontend/src/pages/SessionDetailPage.tsx",
+    "frontend/src/components/reporting/SessionSummaryCard.tsx",
+    "frontend/src/components/reporting/RoundBreakdownTable.tsx",
+    "frontend/src/components/reporting/UserConsistencyChart.tsx",
+    "frontend/src/components/reporting/ExportControls.tsx"
   ],
-  "deliverables": "SessionHistoryPage with session list table, Pagination controls (previous, next, page numbers), Date range filter (date picker inputs), Sort controls (newest/oldest), Session row click navigates to detail page, Loading, empty, and error states",
-  "acceptance_criteria": "Page loads user's sessions from API, Table displays session metadata (date, room, rounds, participants), Pagination works (clicking next loads next page), Date filter applies (API called with from/to params), Sort changes order (newest first vs. oldest first), Clicking session navigates to /reports/sessions/{sessionId}, Empty state shows \"No sessions found\" message",
+  "deliverables": "SessionDetailPage with tier-based content, Summary card for Free tier (basic stats), Round breakdown table for Pro tier (detailed data), User consistency chart (Recharts bar chart), Export buttons (CSV, PDF) triggering export API, Export job polling (check status every 2 seconds), Download link appears when job completes, UpgradeModal on 403 error (Free tier trying to access Pro data)",
+  "acceptance_criteria": "Free tier user sees summary card only, Pro tier user sees round breakdown table and chart, Export CSV button creates job, polls status, shows download link, Download link opens exported CSV file, PDF export works similarly, 403 error triggers UpgradeModal, Chart displays user consistency correctly (variance bars)",
   "dependencies": [
-    "I6.T4"
+    "I6.T5"
   ],
   "parallelizable": false,
   "done": false
@@ -41,29 +43,16 @@ This is the full specification of the task you must complete.
 
 The following are the relevant sections from the architecture and plan documents, which I found by analyzing the task description.
 
-### Context: REST API Endpoints Overview (from 04_Behavior_and_Communication.md)
+### Context: reporting-requirements (from 01_Context_and_Drivers.md)
 
 ```markdown
-**Reporting & Analytics:**
-- `GET /api/v1/reports/sessions` - List session history (tier-gated pagination, filters)
-- `GET /api/v1/reports/sessions/{sessionId}` - Detailed session report (tier-gated round detail)
-- `POST /api/v1/reports/export` - Generate export job (CSV/PDF), returns job ID
-- `GET /api/v1/jobs/{jobId}` - Poll export job status, retrieve download URL
+#### Reporting Requirements
+- **Free Tier:** Basic session summaries (story count, consensus rate, average vote)
+- **Pro Tier:** Round-level detail, user consistency metrics, CSV/JSON/PDF export
+- **Enterprise Tier:** Organizational dashboards, team trends, SSO-filtered reports, audit logs
 ```
 
-### Context: API Style (from 04_Behavior_and_Communication.md)
-
-```markdown
-**Primary API Style:** **RESTful JSON API (OpenAPI 3.1 Specification)**
-
-**Rationale:**
-- **Simplicity & Familiarity:** REST over HTTPS provides a well-understood contract for CRUD operations on resources (users, rooms, subscriptions)
-- **Tooling Ecosystem:** OpenAPI specification enables automatic client SDK generation (TypeScript for React frontend), API documentation (Swagger UI), and contract testing
-- **Caching Support:** HTTP semantics (ETags, Cache-Control headers) enable browser and CDN caching for read-heavy endpoints (room configurations, user profiles)
-- **Versioning Strategy:** URL-based versioning (`/api/v1/`) for backward compatibility during iterative releases
-```
-
-### Context: Usability NFRs (from 01_Context_and_Drivers.md)
+### Context: usability-nfrs (from 01_Context_and_Drivers.md)
 
 ```markdown
 #### Usability
@@ -73,147 +62,46 @@ The following are the relevant sections from the architecture and plan documents
 - **Internationalization:** English language in initial release, i18n framework for future localization
 ```
 
-### Context: Frontend Technology Stack (from 02_Architecture_Overview.md)
+### Context: data-model-overview-erd (from 03_System_Structure_and_Data.md)
 
 ```markdown
-| **Frontend Framework** | **React 18+ with TypeScript** | Strong ecosystem, concurrent rendering for real-time updates, TypeScript for type safety in WebSocket message contracts |
-| **UI Component Library** | **Tailwind CSS + Headless UI** | Utility-first CSS for rapid development, Headless UI for accessible components (modals, dropdowns), minimal bundle size |
-| **State Management** | **Zustand + React Query** | Lightweight state management (Zustand), server state caching and synchronization (React Query), WebSocket integration support |
+#### Key Entities
 
-**Frontend (React):**
-- `@tanstack/react-query` - Server state management and caching
-- `zustand` - Client-side state management (UI, WebSocket connection state)
-- `react-hook-form` - Form validation and submission
-- `zod` - Schema validation for API responses and WebSocket messages
-- `date-fns` - Date/time formatting for session history
-- `recharts` - Charting library for analytics dashboards
-- `@headlessui/react` - Accessible UI components
-- `heroicons` - Icon library
+| Entity | Purpose | Key Attributes |
+|--------|---------|----------------|
+| **SessionHistory** | Completed session record | `session_id` (PK), `room_id` (FK), `started_at`, `ended_at`, `total_rounds`, `total_stories`, `participants` (JSONB array), `summary_stats` (JSONB) |
+| **Round** | Estimation round within session | `round_id` (PK), `room_id` (FK), `round_number`, `story_title`, `started_at`, `revealed_at`, `average`, `median`, `consensus_reached` |
+| **Vote** | Individual estimation vote | `vote_id` (PK), `room_id` (FK), `round_number`, `participant_id`, `card_value`, `voted_at` |
 ```
 
-### Context: GET /api/v1/reports/sessions Endpoint (from api/openapi.yaml)
+### Context: end-to-end-testing (from 03_Verification_and_Glossary.md)
 
-```yaml
-/api/v1/reports/sessions:
-  get:
-    tags:
-      - Reports
-    summary: List session history
-    description: |
-      Returns paginated session history with filters.
-      **Tier Requirements:**
-      - Free tier: Last 30 days, max 10 results
-      - Pro tier: Last 90 days, max 100 results
-      - Pro Plus/Enterprise: Unlimited history
-    operationId: listSessions
-    parameters:
-      - name: from
-        in: query
-        schema:
-          type: string
-          format: date
-        description: Start date (ISO 8601 format)
-        example: "2025-01-01"
-      - name: to
-        in: query
-        schema:
-          type: string
-          format: date
-        description: End date (ISO 8601 format)
-        example: "2025-01-31"
-      - name: roomId
-        in: query
-        schema:
-          type: string
-          pattern: '^[a-z0-9]{6}$'
-        description: Filter by room ID
-        example: "abc123"
-      - $ref: '#/components/parameters/PageParam'
-      - $ref: '#/components/parameters/SizeParam'
-    responses:
-      '200':
-        description: Session list retrieved
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/SessionListResponse'
-```
+```markdown
+#### End-to-End (E2E) Testing
 
-### Context: SessionListResponse Schema (from api/openapi.yaml)
+**Scope:** Complete user journeys from browser through entire backend stack
 
-```yaml
-SessionListResponse:
-  type: object
-  required:
-    - sessions
-    - page
-    - size
-    - totalElements
-    - totalPages
-  properties:
-    sessions:
-      type: array
-      items:
-        $ref: '#/components/schemas/SessionSummaryDTO'
-    page:
-      type: integer
-      example: 0
-    size:
-      type: integer
-      example: 20
-    totalElements:
-      type: integer
-      example: 42
-    totalPages:
-      type: integer
-      example: 3
-```
+**Framework:** Playwright (browser automation)
 
-### Context: SessionSummaryDTO Schema (from api/openapi.yaml)
+**Coverage Target:** Top 10 critical user flows
 
-```yaml
-SessionSummaryDTO:
-  type: object
-  required:
-    - sessionId
-    - roomId
-    - startedAt
-    - endedAt
-    - totalRounds
-    - totalStories
-  properties:
-    sessionId:
-      type: string
-      format: uuid
-      description: Session unique identifier
-      example: "123e4567-e89b-12d3-a456-426614174000"
-    roomId:
-      type: string
-      pattern: '^[a-z0-9]{6}$'
-      description: Room identifier
-      example: "abc123"
-    roomTitle:
-      type: string
-      description: Room title at time of session
-      example: "Sprint 42 Planning"
-    startedAt:
-      type: string
-      format: date-time
-      description: Session start timestamp
-      example: "2025-01-15T10:00:00Z"
-    endedAt:
-      type: string
-      format: date-time
-      description: Session end timestamp
-      example: "2025-01-15T12:00:00Z"
-    totalRounds:
-      type: integer
-      description: Number of estimation rounds
-      example: 8
-    totalStories:
-      type: integer
-      description: Number of stories estimated
-      example: 8
+**Approach:**
+- Simulate real user interactions (clicks, form submissions, navigation)
+- Test against running application (frontend + backend + database)
+- Mock external services where necessary (OAuth providers, Stripe)
+- Visual regression testing for UI components (optional, future enhancement)
+- Run in CI pipeline on staging environment before production deployment
+
+**Examples:**
+- `auth.spec.ts`: OAuth login flow → callback → token storage → dashboard redirect
+- `voting.spec.ts`: Create room → join → cast vote → reveal → see results
+- `subscription.spec.ts`: Upgrade to Pro → Stripe checkout → webhook → tier updated
+
+**Acceptance Criteria:**
+- All E2E tests pass (`npm run test:e2e`)
+- Tests run headless in CI (no UI required)
+- Screenshots captured on failure for debugging
+- Test execution time <10 minutes for full suite
 ```
 
 ---
@@ -224,64 +112,53 @@ The following analysis is based on my direct review of the current codebase. Use
 
 ### Relevant Existing Code
 
-*   **File:** `frontend/src/services/apiHooks.ts`
-    *   **Summary:** This file provides a well-established pattern for creating React Query hooks for API data fetching. It includes a centralized `queryKeys` factory for cache management, `useQuery` hooks for data fetching (e.g., `useUser`, `useRooms`), and `useMutation` hooks for data modifications (e.g., `useCreateRoom`, `useDeleteRoom`).
-    *   **Recommendation:** You MUST follow this exact pattern when creating the `useSessions` hook in the new `reportingApi.ts` file. Use the same structure: define query keys in the `queryKeys` factory, implement reactive `useQuery` hooks, configure stale time appropriately (2-5 minutes for reporting data), and add comprehensive JSDoc comments.
-    *   **Key Pattern:** All hooks use `apiClient` from `./api.ts` for API calls, extract data with `response.data`, include `enabled` flags where appropriate (e.g., `enabled: !!userId`), and provide custom `UseQueryOptions` for flexibility.
+*   **File:** `frontend/src/pages/SessionHistoryPage.tsx`
+    *   **Summary:** This file implements the session list page with filtering, pagination, and loading/error states. It demonstrates the pattern for React Query integration, state management, and Tailwind CSS styling already established in the project.
+    *   **Recommendation:** You MUST follow the exact same patterns used in this file for: (1) Loading skeleton UI structure, (2) Error handling with retry button, (3) Date filter implementation, (4) Pagination controls integration, (5) Tailwind dark mode classes (`dark:*`), (6) Responsive grid layouts (`grid-cols-1 md:grid-cols-4`). The SessionHistoryPage is located at `/Users/tea/dev/github/planning-poker/frontend/src/pages/SessionHistoryPage.tsx` and spans 300 lines with comprehensive examples.
 
-*   **File:** `frontend/src/pages/DashboardPage.tsx`
-    *   **Summary:** This page demonstrates the complete pattern for implementing a page with data fetching, loading states, error states, and responsive UI. It uses `useUser` and `useRooms` hooks, displays a loading skeleton during data fetch, shows an error state with retry button, and renders a responsive grid for data cards.
-    *   **Recommendation:** You SHOULD use this as a template for your `SessionHistoryPage.tsx`. Copy the loading skeleton pattern (lines 45-88), the error state pattern (lines 92-134), and the responsive grid layout (lines 173-181). The page demonstrates how to handle combined loading states, refetch logic, and empty states.
-    *   **Key Patterns:**
-        - Loading skeleton uses `animate-pulse` with gray backgrounds matching light/dark mode
-        - Error state includes an SVG icon, error message, and retry button
-        - Empty state has centered layout with icon, message, and CTA button
-        - Responsive grid: `grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6`
+*   **File:** `frontend/src/services/reportingApi.ts`
+    *   **Summary:** This file provides the `useSessions` React Query hook for fetching session list data. It includes query key factories, authentication handling via `useAuthStore`, and proper TypeScript types.
+    *   **Recommendation:** You MUST create a new hook `useSessionDetail(sessionId: string)` following the EXACT pattern used in `useSessions`. Key requirements: (1) Use `reportingQueryKeys.sessions.detail(sessionId)` for cache key, (2) Call `apiClient.get<DetailedSessionReportDTO>('/reports/sessions/{sessionId}')`, (3) Enable query only when `sessionId` is truthy, (4) Set `staleTime: 3 * 60 * 1000` (3 minutes), (5) Handle authentication via `useAuthStore` user check. The file is at `/Users/tea/dev/github/planning-poker/frontend/src/services/reportingApi.ts` with 115 lines showing the exact pattern to follow.
 
-*   **File:** `frontend/src/components/dashboard/RoomListCard.tsx`
-    *   **Summary:** This component shows the pattern for creating clickable cards with data display, badges, timestamps, and actions. It uses `date-fns` for timestamp formatting (`formatDistanceToNow`), implements keyboard accessibility (onKeyDown for Enter/Space), and includes hover states.
-    *   **Recommendation:** You SHOULD create a similar `SessionListTable.tsx` component (or individual session row components). Use the same accessibility patterns (role="button", tabIndex, aria-label), timestamp formatting with `date-fns`, and badge styling with Tailwind utility classes for different states.
-    *   **Key Pattern:** The card is clickable via both onClick and keyboard events, uses `truncate` for long text, implements responsive padding and shadows, and includes `flex-shrink-0` for badges to prevent wrapping.
+*   **File:** `frontend/src/components/subscription/UpgradeModal.tsx`
+    *   **Summary:** This modal displays when users hit tier limits (403 errors). It shows required tier, features, pricing, and upgrade/contact buttons with Headless UI Dialog component. Located at `/Users/tea/dev/github/planning-poker/frontend/src/components/subscription/UpgradeModal.tsx` spanning 196 lines.
+    *   **Recommendation:** You MUST reuse this exact component when handling 403 errors in SessionDetailPage. Import it and trigger with state like `const [showUpgrade, setShowUpgrade] = useState(false)`. Pass props: `isOpen={showUpgrade}`, `onClose={() => setShowUpgrade(false)}`, `requiredTier="PRO"`, `currentTier={user.subscriptionTier}`, `feature="detailed session reports"`. The component uses Headless UI's Dialog and Transition components with smooth animations.
 
-*   **File:** `frontend/src/services/api.ts`
-    *   **Summary:** This file configures the Axios API client with authentication, token refresh, and 403 error handling (FeatureNotAvailable). The apiClient has base URL configuration, request interceptors for Authorization headers, and response interceptors for error handling.
-    *   **Recommendation:** You MUST use this `apiClient` instance for all API calls in your `reportingApi.ts` file. Do NOT create a new Axios instance. The existing client already handles authentication, token refresh, and tier-based access errors (403 FeatureNotAvailable will trigger the UpgradeModal).
+*   **File:** `backend/src/main/java/com/scrumpoker/api/rest/ReportingController.java`
+    *   **Summary:** This REST controller provides three key endpoints at `/Users/tea/dev/github/planning-poker/backend/src/main/java/com/scrumpoker/api/rest/ReportingController.java` (493 lines): (1) `GET /api/v1/reports/sessions/{sessionId}` (lines 242-313) returns `DetailedSessionReportDTO`, throws 403 for Free tier via FeatureGate, (2) `POST /api/v1/reports/export` (lines 315-409) creates export job and returns 202 Accepted with job ID, (3) `GET /api/v1/jobs/{jobId}` (lines 411-491) polls job status and returns download URL when complete.
+    *   **Recommendation:** You MUST understand the API contract: (1) Session detail endpoint returns 403 for Free tier users accessing detailed data (caught by FeatureNotAvailableExceptionMapper), (2) Export endpoint returns 202 Accepted with `ExportJobResponse { jobId }`, (3) Job status endpoint returns `JobStatusResponse { jobId, status, downloadUrl, errorMessage, createdAt, completedAt }`. The frontend must poll `/jobs/{jobId}` every 2 seconds until status is COMPLETED or FAILED.
 
-*   **File:** `frontend/src/App.tsx`
-    *   **Summary:** This is the main application router. It shows where to add new routes using React Router v6 patterns. All authenticated routes are wrapped in `<PrivateRoute>`.
-    *   **Recommendation:** You MUST add a new route for the SessionHistoryPage at `/reports/sessions` (or `/sessions` or `/dashboard/sessions` - verify with team preference). Wrap it in `<PrivateRoute>` since only authenticated users can view their session history. Add the route between lines 46-53 in the existing `<Routes>` block.
-
-*   **File:** `backend/src/main/java/com/scrumpoker/api/rest/dto/SessionListResponse.java`
-    *   **Summary:** This DTO defines the actual backend response structure. IMPORTANT: The backend uses `has_next` (boolean) instead of `totalPages` from the OpenAPI spec. The response also has `total` (int) for total count instead of `totalElements`.
-    *   **Recommendation:** You MUST match the TypeScript interface to the actual backend implementation, NOT the OpenAPI spec. Use `has_next: boolean` and `total: number` in your TypeScript types. This discrepancy exists between spec and implementation.
-
-*   **File:** `backend/src/main/java/com/scrumpoker/domain/reporting/SessionSummaryDTO.java`
-    *   **Summary:** This shows the actual field names used in the backend response. All fields use snake_case JSON property names (e.g., `session_id`, `room_title`, `started_at`). The backend returns numeric types as strings for precision (BigDecimal → string in JSON).
-    *   **Recommendation:** You MUST use snake_case field names in your TypeScript interfaces to match the backend serialization. For numeric fields like `consensus_rate` and `average_vote`, use `number` type in TypeScript (they'll be parsed from JSON strings automatically). Use ISO 8601 string format for timestamps (startedAt, endedAt).
+*   **File:** `frontend/src/types/reporting.ts`
+    *   **Summary:** This file at `/Users/tea/dev/github/planning-poker/frontend/src/types/reporting.ts` (47 lines) currently defines TypeScript types for reporting API responses. It has `SessionSummaryDTO` (lines 11-22) and `SessionListResponse` (lines 29-35).
+    *   **Recommendation:** You MUST extend this file to add missing types for detailed session report. Add: (1) `DetailedSessionReportDTO` with fields matching backend DTO (session metadata, rounds array with RoundDetailDTO, user_consistency_map: Record<string, number>), (2) `RoundDetailDTO` with round_number, story_title, votes array (VoteDetailDTO[]), average, median, consensus_reached, (3) `VoteDetailDTO` with participant_name, card_value, voted_at, (4) `ExportJobResponse { jobId: string }`, (5) `JobStatusResponse { jobId, status, downloadUrl?, errorMessage?, createdAt, completedAt? }`, (6) `ExportFormat` type as 'CSV' | 'PDF'.
 
 ### Implementation Tips & Notes
 
-*   **Tip:** The project uses `date-fns` for date formatting. You SHOULD use `format(date, 'MMM dd, yyyy')` for displaying session dates in the table, and `formatDistanceToNow(date, { addSuffix: true })` for relative timestamps like "2 days ago".
+*   **Tip:** The SessionHistoryPage already implements the loading skeleton pattern you need. Copy its structure (lines 75-105) for your loading state, replacing the table skeleton with card/chart skeletons appropriate for the detail view. The skeleton uses `animate-pulse` with `bg-gray-300 dark:bg-gray-700` for shimmer effect.
 
-*   **Tip:** For the date range filter, you can use native HTML5 `<input type="date">` elements styled with Tailwind, or integrate a library like `react-datepicker` if more advanced features are needed. The HTML5 approach is simpler and requires no additional dependencies.
+*   **Tip:** For export job polling, use React Query's `refetchInterval` option in a separate `useExportJobStatus(jobId)` hook: `useQuery({ queryKey: ['exportJob', jobId], queryFn: () => apiClient.get('/jobs/' + jobId), enabled: !!jobId, refetchInterval: (data) => data?.status === 'PENDING' || data?.status === 'PROCESSING' ? 2000 : false })`. This automatically stops polling when job completes or fails.
 
-*   **Tip:** Pagination controls should use the `has_next` boolean from the response to determine if the "Next" button should be enabled. Since the backend doesn't return `totalPages`, calculate it client-side if needed: `Math.ceil(total / size)` or just use `has_next` for simpler next/previous controls.
+*   **Tip:** The project uses Recharts library (installed, visible in package.json). For the user consistency chart, use `<BarChart>` with `<Bar dataKey="variance" fill="#3b82f6" />`. Data format: `[{ name: "Alice", variance: 2.3 }, { name: "Bob", variance: 1.5 }]`. Import from `recharts` and use ResponsiveContainer for responsive sizing: `<ResponsiveContainer width="100%" height={300}><BarChart data={chartData}>...</BarChart></ResponsiveContainer>`.
 
-*   **Note:** The project follows a consistent directory structure: pages go in `frontend/src/pages/`, reusable components go in `frontend/src/components/[feature]/`, services go in `frontend/src/services/`, and types go in `frontend/src/types/`. You MUST create `frontend/src/components/reporting/` directory for reporting-specific components.
+*   **Note:** The backend returns session detail as `DetailedSessionReportDTO` which includes BOTH summary data (for Free tier fallback) AND detailed round data (for Pro tier). The FeatureGate in ReportingService (lines 294-296 in ReportingController.java) throws FeatureNotAvailableException for Free tier users. The frontend should detect 403 errors in the React Query `onError` callback and display UpgradeModal.
 
-*   **Note:** The project uses Tailwind CSS with dark mode support (`dark:` variant). All components MUST include dark mode styles. The pattern is: `bg-white dark:bg-gray-800`, `text-gray-900 dark:text-white`, etc. Check existing components for the correct dark mode color palette.
+*   **Note:** All components in this project follow mobile-first responsive design with Tailwind breakpoints: `sm:` (640px), `md:` (768px), `lg:` (1024px), `xl:` (1280px). Your tables and charts MUST be scrollable on mobile (`overflow-x-auto` wrapper) and properly sized on desktop. The SessionHistoryPage shows this pattern with `container mx-auto px-4 py-8 max-w-7xl`.
 
-*   **Note:** The backend returns JSON with snake_case field names, but frontend TypeScript typically uses camelCase. The existing code handles this inconsistency by defining types with snake_case to match the API exactly. You SHOULD follow this pattern for reporting types.
+*   **Warning:** The backend's error responses use snake_case JSON (e.g., `error_code`, `error_message`). However, the current ErrorResponse DTO at lines 3-4 in various mapper files uses camelCase. Check the actual backend implementation in `ErrorResponse.java` to confirm field names. For FeatureNotAvailableException, the mapper returns JSON with `error` and `message` fields.
 
-*   **Warning:** The task specifies creating a `useSessions` hook, but this should be added to a NEW file `frontend/src/services/reportingApi.ts` (not `apiHooks.ts`). The existing `apiHooks.ts` is for core user/room functionality. Create a new file following the same pattern for reporting-specific hooks and import `apiClient` from `./api.ts`.
+*   **Warning:** Export download URLs from S3 expire after 24 hours (per backend S3Adapter implementation). Display a warning message near the download link: "Download link expires in 24 hours". Use an info icon from Heroicons and subtle text color: `text-sm text-gray-600 dark:text-gray-400`.
 
-*   **Warning:** When implementing pagination, be aware that the backend uses 0-indexed page numbers (page 0, 1, 2...). The UI can display 1-indexed page numbers to users (page 1, 2, 3...) but must send 0-indexed values to the API.
+*   **Best Practice:** Create separate sub-components for each section (SessionSummaryCard.tsx, RoundBreakdownTable.tsx, UserConsistencyChart.tsx, ExportControls.tsx) rather than building everything in SessionDetailPage.tsx. This improves testability and follows the existing component organization pattern seen in `frontend/src/components/reporting/` directory (currently has SessionListTable.tsx and PaginationControls.tsx).
 
-*   **Tip:** For sort controls (newest/oldest), the backend endpoint likely accepts a `sort` query parameter (verify in ReportingController.java). If not implemented yet, you can implement client-side sorting by reversing the sessions array, or add the sort parameter to the API call for server-side sorting.
+*   **Best Practice:** Use semantic HTML for accessibility: `<table>` with `<thead>`, `<tbody>`, `<th>`, `<td>` for the round breakdown table (not div-based layout), `<section>` for content sections with `<h2>` headings, `<button>` for interactive elements (not `<div onClick>`). The SessionHistoryPage demonstrates proper semantic structure with header, filters section, table section, and pagination footer.
 
-*   **Note:** The existing routing pattern in `App.tsx` uses React Router v6. To add the SessionHistoryPage route, use: `<Route path="/reports/sessions" element={<PrivateRoute><SessionHistoryPage /></PrivateRoute>} />`. Make sure to import the new page component at the top of the file.
+*   **Critical Implementation Detail:** The session detail route should be `/reports/sessions/:sessionId` to match RESTful conventions. Extract sessionId from URL params using `const { sessionId } = useParams<{ sessionId: string }>()` from react-router-dom. Add this route to App.tsx inside the PrivateRoute wrapper.
 
-*   **Accessibility Note:** All interactive elements must be keyboard accessible. Use semantic HTML where possible (`<button>`, `<a>`, `<table>`), add `aria-label` attributes for screen readers, and ensure tab order is logical. The existing components demonstrate this pattern - follow their lead.
+*   **Critical Implementation Detail:** The backend uses snake_case for JSON field names. Your TypeScript interfaces MUST use snake_case to match: `session_id`, `room_title`, `started_at`, `total_stories`, `consensus_rate`, `average_vote`, `user_consistency_map`, etc. Do NOT convert to camelCase - this is intentional to match the backend serialization exactly.
+
+*   **Export Job Flow:** When user clicks "Export CSV" button: (1) Call `POST /api/v1/reports/export` with `{ sessionId, format: 'CSV' }`, (2) Backend returns 202 with `{ jobId }`, (3) Store jobId in component state, (4) Start polling `GET /api/v1/jobs/{jobId}` every 2 seconds, (5) When status becomes 'COMPLETED', display download link with `downloadUrl` from response, (6) If status becomes 'FAILED', display error message. Use React Query for all API calls.
+
+*   **Tier Detection Logic:** Check user's subscription tier from `useAuthStore` before rendering Pro features. Pattern: `const { user } = useAuthStore(); const isPro = user?.subscriptionTier === 'PRO' || user?.subscriptionTier === 'PRO_PLUS' || user?.subscriptionTier === 'ENTERPRISE';`. If `!isPro`, render SessionSummaryCard only. If `isPro`, render full detail view with RoundBreakdownTable and UserConsistencyChart. ALSO handle 403 errors from API as backup.
 
 ---
 

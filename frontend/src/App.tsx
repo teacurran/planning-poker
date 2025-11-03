@@ -10,6 +10,7 @@ import { PricingPage } from '@/pages/PricingPage';
 import { SubscriptionSettingsPage } from '@/pages/SubscriptionSettingsPage';
 import { BillingSuccessPage } from '@/pages/BillingSuccessPage';
 import SessionHistoryPage from '@/pages/SessionHistoryPage';
+import SessionDetailPage from '@/pages/SessionDetailPage';
 import PrivateRoute from '@/components/auth/PrivateRoute';
 import { UpgradeModalProvider } from '@/contexts/UpgradeModalContext';
 
@@ -57,6 +58,14 @@ const App: React.FC = () => {
               element={
                 <PrivateRoute>
                   <SessionHistoryPage />
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/reports/sessions/:sessionId"
+              element={
+                <PrivateRoute>
+                  <SessionDetailPage />
                 </PrivateRoute>
               }
             />
