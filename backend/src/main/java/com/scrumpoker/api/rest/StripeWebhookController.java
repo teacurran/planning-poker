@@ -13,7 +13,6 @@ import com.stripe.exception.SignatureVerificationException;
 import com.stripe.model.Event;
 import com.stripe.model.Invoice;
 import com.stripe.net.Webhook;
-import io.smallrye.common.annotation.Blocking;
 import io.smallrye.mutiny.Uni;
 import jakarta.annotation.security.PermitAll;
 import jakarta.inject.Inject;
@@ -102,7 +101,6 @@ public class StripeWebhookController {
     @POST
     @Consumes(MediaType.APPLICATION_JSON)
     @PermitAll
-    @Blocking
     @Operation(
         summary = "Receive Stripe webhook events",
         description = "Webhook endpoint for Stripe subscription "
@@ -180,51 +178,55 @@ public class StripeWebhookController {
      * @param event Verified Stripe event
      * @return Uni<Void> signaling completion
      */
-    @Transactional
     protected Uni<Void> processEventIdempotently(final Event event) {
         final String eventId = event.getId();
         final String eventType = event.getType();
 
-        // Step 1: Check idempotency - already processed?
-        return webhookEventLogRepository.findByEventId(eventId)
-            .onItem().transformToUni(existingLog -> {
-                if (existingLog != null) {
-                    LOG.infof(
-                        "Event %s already processed (status: %s), skipping",
-                        eventId, existingLog.status);
-                    return Uni.createFrom().voidItem();
-                }
+        // Wrap all database operations in a reactive transaction
+        return io.quarkus.hibernate.reactive.panache.Panache.withTransaction(() -> {
+            // Step 1: Check idempotency - already processed?
+            return webhookEventLogRepository.findByEventId(eventId)
+                .onItem().transformToUni(existingLog -> {
+                    if (existingLog != null) {
+                        LOG.infof(
+                            "Event %s already processed (status: %s), skipping",
+                            eventId, existingLog.status);
+                        return Uni.createFrom().voidItem();
+                    }
 
-                // Step 2: Route to appropriate event handler
-                return processEventByType(event)
-                    .onItem().transformToUni(ignored -> {
-                        // Step 3: Record successful processing
-                        WebhookEventLog log = new WebhookEventLog();
-                        log.eventId = eventId;
-                        log.eventType = eventType;
-                        log.status = WebhookEventStatus.PROCESSED;
-                        return webhookEventLogRepository.persist(log);
-                    })
-                    .onFailure().recoverWithUni(throwable -> {
-                        // Record failed processing
-                        LOG.errorf(
-                            throwable,
-                            "Event processing failed for %s (type: %s), "
-                            + "recording FAILED status",
-                            eventId, eventType);
+                    // Step 2: Route to appropriate event handler
+                    return processEventByType(event)
+                        .onItem().transformToUni(ignored -> {
+                            // Step 3: Record successful processing
+                            WebhookEventLog log = new WebhookEventLog();
+                            log.eventId = eventId;
+                            log.eventType = eventType;
+                            log.status = WebhookEventStatus.PROCESSED;
+                            log.processedAt = Instant.now();
+                            return webhookEventLogRepository.persist(log);
+                        })
+                        .onFailure().recoverWithUni(throwable -> {
+                            // Record failed processing
+                            LOG.errorf(
+                                throwable,
+                                "Event processing failed for %s (type: %s), "
+                                + "recording FAILED status",
+                                eventId, eventType);
 
-                        WebhookEventLog log = new WebhookEventLog();
-                        log.eventId = eventId;
-                        log.eventType = eventType;
-                        log.status = WebhookEventStatus.FAILED;
+                            WebhookEventLog log = new WebhookEventLog();
+                            log.eventId = eventId;
+                            log.eventType = eventType;
+                            log.status = WebhookEventStatus.FAILED;
+                            log.processedAt = Instant.now();
 
-                        return webhookEventLogRepository.persist(log)
-                            .onItem().transformToUni(ignored ->
-                                Uni.createFrom().failure(throwable)
-                            );
-                    })
-                    .replaceWithVoid();
-            });
+                            return webhookEventLogRepository.persist(log)
+                                .onItem().transformToUni(ignored ->
+                                    Uni.createFrom().failure(throwable)
+                                );
+                        })
+                        .replaceWithVoid();
+                });
+        });
     }
 
     /**
@@ -425,6 +427,7 @@ public class StripeWebhookController {
                                 invoice.getStatusTransitions()
                                     .getPaidAt())
                             : Instant.now();
+                        payment.createdAt = Instant.now();
 
                         return paymentHistoryRepository.persist(payment)
                             .onItem().invoke(() ->

@@ -83,28 +83,40 @@ public class StripeWebhookControllerTest {
     @Test
     @RunOnVertxContext
     public void testSubscriptionCreated_ValidEvent_UpdatesDatabase(UniAsserter asserter) throws Exception {
-        // Create existing subscription in database (created during checkout)
-        // Webhook will sync its status to ACTIVE
-        asserter.execute(() -> Panache.withTransaction(() ->
-            createAndPersistTestSubscription(
-            "sub_test_created_123",
-            SubscriptionStatus.TRIALING
-        )
-        ));
-
         // Load webhook payload
         String payload = loadWebhookPayload("webhook_subscription_created.json");
         String signature = generateStripeSignature(payload, TEST_WEBHOOK_SECRET);
 
-        // Send webhook event
-        given()
-            .contentType(ContentType.JSON)
-            .header("Stripe-Signature", signature)
-            .body(payload)
-        .when()
-            .post("/api/v1/subscriptions/webhook")
-        .then()
-            .statusCode(200);
+        // Create existing subscription in database (created during checkout)
+        // Webhook will sync its status to ACTIVE
+        asserter.execute(() -> Panache.withTransaction(() ->
+            createAndPersistTestSubscription(
+                "sub_test_created_123",
+                SubscriptionStatus.TRIALING
+            )
+        ));
+
+        // Verify subscription was created BEFORE sending webhook
+        asserter.assertThat(() -> Panache.withTransaction(() ->
+            subscriptionRepository.findByStripeSubscriptionId("sub_test_created_123")),
+            subscription -> {
+                assertThat(subscription).isNotNull();
+                assertThat(subscription.status).isEqualTo(SubscriptionStatus.TRIALING);
+            }
+        );
+
+        // Send webhook event (NOW the subscription exists in DB)
+        asserter.execute(() -> Uni.createFrom().item(() -> {
+            given()
+                .contentType(ContentType.JSON)
+                .header("Stripe-Signature", signature)
+                .body(payload)
+            .when()
+                .post("/api/v1/subscriptions/webhook")
+            .then()
+                .statusCode(200);
+            return null;
+        }));
 
         // Verify subscription status updated to ACTIVE
         asserter.assertThat(() -> Panache.withTransaction(() ->
@@ -130,27 +142,36 @@ public class StripeWebhookControllerTest {
     @Test
     @RunOnVertxContext
     public void testSubscriptionUpdated_ValidEvent_UpdatesDatabase(UniAsserter asserter) throws Exception {
-        // Create existing subscription in database
-        asserter.execute(() -> Panache.withTransaction(() ->
-            createAndPersistTestSubscription(
-            "sub_test_updated_456",
-            SubscriptionStatus.ACTIVE
-        )
-        ));
-
         // Load webhook payload
         String payload = loadWebhookPayload("webhook_subscription_updated.json");
         String signature = generateStripeSignature(payload, TEST_WEBHOOK_SECRET);
 
+        // Create existing subscription in database
+        asserter.execute(() -> Panache.withTransaction(() ->
+            createAndPersistTestSubscription(
+                "sub_test_updated_456",
+                SubscriptionStatus.ACTIVE
+            )
+        ));
+
+        // Verify subscription was created
+        asserter.assertThat(() -> Panache.withTransaction(() ->
+            subscriptionRepository.findByStripeSubscriptionId("sub_test_updated_456")),
+            subscription -> assertThat(subscription).isNotNull()
+        );
+
         // Send webhook event
-        given()
-            .contentType(ContentType.JSON)
-            .header("Stripe-Signature", signature)
-            .body(payload)
-        .when()
-            .post("/api/v1/subscriptions/webhook")
-        .then()
-            .statusCode(200);
+        asserter.execute(() -> Uni.createFrom().item(() -> {
+            given()
+                .contentType(ContentType.JSON)
+                .header("Stripe-Signature", signature)
+                .body(payload)
+            .when()
+                .post("/api/v1/subscriptions/webhook")
+            .then()
+                .statusCode(200);
+            return null;
+        }));
 
         // Verify subscription status updated to PAST_DUE
         asserter.assertThat(() -> Panache.withTransaction(() ->
@@ -175,27 +196,36 @@ public class StripeWebhookControllerTest {
     @Test
     @RunOnVertxContext
     public void testSubscriptionDeleted_ValidEvent_UpdatesDatabase(UniAsserter asserter) throws Exception {
-        // Create existing subscription in database
-        asserter.execute(() -> Panache.withTransaction(() ->
-            createAndPersistTestSubscription(
-            "sub_test_deleted_789",
-            SubscriptionStatus.ACTIVE
-        )
-        ));
-
         // Load webhook payload
         String payload = loadWebhookPayload("webhook_subscription_deleted.json");
         String signature = generateStripeSignature(payload, TEST_WEBHOOK_SECRET);
 
+        // Create existing subscription in database
+        asserter.execute(() -> Panache.withTransaction(() ->
+            createAndPersistTestSubscription(
+                "sub_test_deleted_789",
+                SubscriptionStatus.ACTIVE
+            )
+        ));
+
+        // Verify subscription was created
+        asserter.assertThat(() -> Panache.withTransaction(() ->
+            subscriptionRepository.findByStripeSubscriptionId("sub_test_deleted_789")),
+            subscription -> assertThat(subscription).isNotNull()
+        );
+
         // Send webhook event
-        given()
-            .contentType(ContentType.JSON)
-            .header("Stripe-Signature", signature)
-            .body(payload)
-        .when()
-            .post("/api/v1/subscriptions/webhook")
-        .then()
-            .statusCode(200);
+        asserter.execute(() -> Uni.createFrom().item(() -> {
+            given()
+                .contentType(ContentType.JSON)
+                .header("Stripe-Signature", signature)
+                .body(payload)
+            .when()
+                .post("/api/v1/subscriptions/webhook")
+            .then()
+                .statusCode(200);
+            return null;
+        }));
 
         // Verify subscription status updated to CANCELED
         asserter.assertThat(() -> Panache.withTransaction(() ->
@@ -225,27 +255,36 @@ public class StripeWebhookControllerTest {
     @Test
     @RunOnVertxContext
     public void testInvoicePaymentSucceeded_ValidEvent_CreatesPaymentHistory(UniAsserter asserter) throws Exception {
-        // Create existing subscription in database (required for payment association)
-        asserter.execute(() -> Panache.withTransaction(() ->
-            createAndPersistTestSubscription(
-            "sub_test_payment_001",
-            SubscriptionStatus.ACTIVE
-        )
-        ));
-
         // Load webhook payload
         String payload = loadWebhookPayload("webhook_invoice_payment_succeeded.json");
         String signature = generateStripeSignature(payload, TEST_WEBHOOK_SECRET);
 
+        // Create existing subscription in database (required for payment association)
+        asserter.execute(() -> Panache.withTransaction(() ->
+            createAndPersistTestSubscription(
+                "sub_test_payment_001",
+                SubscriptionStatus.ACTIVE
+            )
+        ));
+
+        // Verify subscription was created
+        asserter.assertThat(() -> Panache.withTransaction(() ->
+            subscriptionRepository.findByStripeSubscriptionId("sub_test_payment_001")),
+            subscription -> assertThat(subscription).isNotNull()
+        );
+
         // Send webhook event
-        given()
-            .contentType(ContentType.JSON)
-            .header("Stripe-Signature", signature)
-            .body(payload)
-        .when()
-            .post("/api/v1/subscriptions/webhook")
-        .then()
-            .statusCode(200);
+        asserter.execute(() -> Uni.createFrom().item(() -> {
+            given()
+                .contentType(ContentType.JSON)
+                .header("Stripe-Signature", signature)
+                .body(payload)
+            .when()
+                .post("/api/v1/subscriptions/webhook")
+            .then()
+                .statusCode(200);
+            return null;
+        }));
 
         // Verify PaymentHistory record created
         asserter.assertThat(() -> Panache.withTransaction(() ->
@@ -274,27 +313,36 @@ public class StripeWebhookControllerTest {
     @Test
     @RunOnVertxContext
     public void testInvoicePaymentFailed_ValidEvent_UpdatesSubscriptionStatus(UniAsserter asserter) throws Exception {
-        // Create existing subscription in database
-        asserter.execute(() -> Panache.withTransaction(() ->
-            createAndPersistTestSubscription(
-            "sub_test_payment_failed_002",
-            SubscriptionStatus.ACTIVE
-        )
-        ));
-
         // Load webhook payload
         String payload = loadWebhookPayload("webhook_invoice_payment_failed.json");
         String signature = generateStripeSignature(payload, TEST_WEBHOOK_SECRET);
 
+        // Create existing subscription in database
+        asserter.execute(() -> Panache.withTransaction(() ->
+            createAndPersistTestSubscription(
+                "sub_test_payment_failed_002",
+                SubscriptionStatus.ACTIVE
+            )
+        ));
+
+        // Verify subscription was created
+        asserter.assertThat(() -> Panache.withTransaction(() ->
+            subscriptionRepository.findByStripeSubscriptionId("sub_test_payment_failed_002")),
+            subscription -> assertThat(subscription).isNotNull()
+        );
+
         // Send webhook event
-        given()
-            .contentType(ContentType.JSON)
-            .header("Stripe-Signature", signature)
-            .body(payload)
-        .when()
-            .post("/api/v1/subscriptions/webhook")
-        .then()
-            .statusCode(200);
+        asserter.execute(() -> Uni.createFrom().item(() -> {
+            given()
+                .contentType(ContentType.JSON)
+                .header("Stripe-Signature", signature)
+                .body(payload)
+            .when()
+                .post("/api/v1/subscriptions/webhook")
+            .then()
+                .statusCode(200);
+            return null;
+        }));
 
         // Verify subscription status updated to PAST_DUE
         asserter.assertThat(() -> Panache.withTransaction(() ->
@@ -358,48 +406,55 @@ public class StripeWebhookControllerTest {
     @Test
     @RunOnVertxContext
     public void testIdempotency_DuplicateEvent_SkipsProcessing(UniAsserter asserter) throws Exception {
-        // Create existing subscription in database
-        asserter.execute(() -> Panache.withTransaction(() ->
-            createAndPersistTestSubscription(
-            "sub_test_created_123",
-            SubscriptionStatus.TRIALING
-        )
-        ));
-
         // Load webhook payload
         String payload = loadWebhookPayload("webhook_subscription_created.json");
         String signature = generateStripeSignature(payload, TEST_WEBHOOK_SECRET);
 
-        // Send webhook event first time
-        given()
-            .contentType(ContentType.JSON)
-            .header("Stripe-Signature", signature)
-            .body(payload)
-        .when()
-            .post("/api/v1/subscriptions/webhook")
-        .then()
-            .statusCode(200);
+        // Create existing subscription in database
+        asserter.execute(() -> Panache.withTransaction(() ->
+            createAndPersistTestSubscription(
+                "sub_test_created_123",
+                SubscriptionStatus.TRIALING
+            )
+        ));
 
-        // Verify first processing created records
+        // Verify subscription was created
         asserter.assertThat(() -> Panache.withTransaction(() ->
             subscriptionRepository.findByStripeSubscriptionId("sub_test_created_123")),
             subscription -> assertThat(subscription).isNotNull()
         );
 
+        // Send webhook event first time
+        asserter.execute(() -> Uni.createFrom().item(() -> {
+            given()
+                .contentType(ContentType.JSON)
+                .header("Stripe-Signature", signature)
+                .body(payload)
+            .when()
+                .post("/api/v1/subscriptions/webhook")
+            .then()
+                .statusCode(200);
+            return null;
+        }));
+
+        // Verify first processing created records
         asserter.assertThat(() -> Panache.withTransaction(() ->
             webhookEventLogRepository.findByEventId("evt_test_subscription_created")),
             eventLog -> assertThat(eventLog).isNotNull()
         );
 
         // Send same webhook event second time (duplicate)
-        given()
-            .contentType(ContentType.JSON)
-            .header("Stripe-Signature", signature)
-            .body(payload)
-        .when()
-            .post("/api/v1/subscriptions/webhook")
-        .then()
-            .statusCode(200);
+        asserter.execute(() -> Uni.createFrom().item(() -> {
+            given()
+                .contentType(ContentType.JSON)
+                .header("Stripe-Signature", signature)
+                .body(payload)
+            .when()
+                .post("/api/v1/subscriptions/webhook")
+            .then()
+                .statusCode(200);
+            return null;
+        }));
 
         // Verify only ONE WebhookEventLog entry exists (idempotency working)
         asserter.assertThat(() -> Panache.withTransaction(() ->
@@ -417,37 +472,49 @@ public class StripeWebhookControllerTest {
     @Test
     @RunOnVertxContext
     public void testIdempotency_DuplicatePaymentEvent_SkipsPaymentCreation(UniAsserter asserter) throws Exception {
-        // Create existing subscription
-        asserter.execute(() -> Panache.withTransaction(() ->
-            createAndPersistTestSubscription(
-            "sub_test_payment_001",
-            SubscriptionStatus.ACTIVE
-        )
-        ));
-
         // Load webhook payload
         String payload = loadWebhookPayload("webhook_invoice_payment_succeeded.json");
         String signature = generateStripeSignature(payload, TEST_WEBHOOK_SECRET);
 
+        // Create existing subscription
+        asserter.execute(() -> Panache.withTransaction(() ->
+            createAndPersistTestSubscription(
+                "sub_test_payment_001",
+                SubscriptionStatus.ACTIVE
+            )
+        ));
+
+        // Verify subscription was created
+        asserter.assertThat(() -> Panache.withTransaction(() ->
+            subscriptionRepository.findByStripeSubscriptionId("sub_test_payment_001")),
+            subscription -> assertThat(subscription).isNotNull()
+        );
+
         // Send payment webhook first time
-        given()
-            .contentType(ContentType.JSON)
-            .header("Stripe-Signature", signature)
-            .body(payload)
-        .when()
-            .post("/api/v1/subscriptions/webhook")
-        .then()
-            .statusCode(200);
+        asserter.execute(() -> Uni.createFrom().item(() -> {
+            given()
+                .contentType(ContentType.JSON)
+                .header("Stripe-Signature", signature)
+                .body(payload)
+            .when()
+                .post("/api/v1/subscriptions/webhook")
+            .then()
+                .statusCode(200);
+            return null;
+        }));
 
         // Send same payment webhook second time
-        given()
-            .contentType(ContentType.JSON)
-            .header("Stripe-Signature", signature)
-            .body(payload)
-        .when()
-            .post("/api/v1/subscriptions/webhook")
-        .then()
-            .statusCode(200);
+        asserter.execute(() -> Uni.createFrom().item(() -> {
+            given()
+                .contentType(ContentType.JSON)
+                .header("Stripe-Signature", signature)
+                .body(payload)
+            .when()
+                .post("/api/v1/subscriptions/webhook")
+            .then()
+                .statusCode(200);
+            return null;
+        }));
 
         // Verify only ONE PaymentHistory record exists
         asserter.assertThat(() -> Panache.withTransaction(() ->

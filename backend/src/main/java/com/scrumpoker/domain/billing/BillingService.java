@@ -355,12 +355,16 @@ public class BillingService {
      * - CANCELED (period ended) → downgrade User.subscriptionTier to FREE
      * - PAST_DUE → keep current tier (grace period)
      * </p>
+     * <p>
+     * NOTE: This method does NOT start its own transaction. It must be called
+     * from within an existing transaction context (either @Transactional or
+     * Panache.withTransaction()).
+     * </p>
      *
      * @param stripeSubscriptionId The Stripe subscription ID from webhook
      * @param status The new subscription status
      * @return Uni<Void> signaling completion
      */
-    @Transactional
     public Uni<Void> syncSubscriptionStatus(final String
                                                  stripeSubscriptionId,
                                              final SubscriptionStatus status) {
