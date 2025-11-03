@@ -9,6 +9,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { ArrowLeftIcon } from '@heroicons/react/24/outline';
+import axios from 'axios';
 import { useSessionDetail } from '@/services/reportingApi';
 import { useAuthStore } from '@/stores/authStore';
 import { UpgradeModal } from '@/components/subscription/UpgradeModal';
@@ -32,7 +33,7 @@ export default function SessionDetailPage() {
 
   // Handle 403 errors (Free tier accessing Pro features)
   useEffect(() => {
-    if (error && (error as any)?.response?.status === 403) {
+    if (error && axios.isAxiosError(error) && error.response?.status === 403) {
       setShowUpgradeModal(true);
     }
   }, [error]);

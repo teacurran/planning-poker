@@ -16,6 +16,7 @@ import {
   Tooltip,
   ResponsiveContainer,
   Legend,
+  TooltipProps,
 } from 'recharts';
 
 interface UserConsistencyChartProps {
@@ -42,7 +43,7 @@ function transformData(userConsistencyMap: Record<string, number>): ChartDataPoi
 /**
  * Custom tooltip to show detailed variance information.
  */
-function CustomTooltip({ active, payload }: any) {
+function CustomTooltip({ active, payload }: TooltipProps<number, string>) {
   if (active && payload && payload.length) {
     const data = payload[0].payload as ChartDataPoint;
     return (

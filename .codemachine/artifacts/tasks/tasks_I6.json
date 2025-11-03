@@ -87,7 +87,7 @@
     "acceptance_criteria": "Free tier user sees summary card only, Pro tier user sees round breakdown table and chart, Export CSV button creates job, polls status, shows download link, Download link opens exported CSV file, PDF export works similarly, 403 error triggers UpgradeModal, Chart displays user consistency correctly (variance bars)",
     "dependencies": ["I6.T5"],
     "parallelizable": false,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I6.T7",

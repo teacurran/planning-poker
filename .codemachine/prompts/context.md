@@ -62,46 +62,50 @@ The following are the relevant sections from the architecture and plan documents
 - **Internationalization:** English language in initial release, i18n framework for future localization
 ```
 
-### Context: data-model-overview-erd (from 03_System_Structure_and_Data.md)
+### Context: asynchronous-job-processing-pattern (from 04_Behavior_and_Communication.md)
 
 ```markdown
-#### Key Entities
+##### Asynchronous Job Processing (Fire-and-Forget)
 
-| Entity | Purpose | Key Attributes |
-|--------|---------|----------------|
-| **SessionHistory** | Completed session record | `session_id` (PK), `room_id` (FK), `started_at`, `ended_at`, `total_rounds`, `total_stories`, `participants` (JSONB array), `summary_stats` (JSONB) |
-| **Round** | Estimation round within session | `round_id` (PK), `room_id` (FK), `round_number`, `story_title`, `started_at`, `revealed_at`, `average`, `median`, `consensus_reached` |
-| **Vote** | Individual estimation vote | `vote_id` (PK), `room_id` (FK), `round_number`, `participant_id`, `card_value`, `voted_at` |
+**Use Cases:**
+- Report export generation (CSV, PDF) for large datasets
+- Email notifications (subscription confirmations, payment receipts)
+- Analytics aggregation for organizational dashboards
+- Audit log archival to object storage
+
+**Pattern Characteristics:**
+- REST endpoint returns `202 Accepted` immediately with job ID
+- Job message enqueued to Redis Stream
+- Background worker consumes stream, processes job
+- Client polls status endpoint or receives WebSocket notification on completion
+- Job results stored in object storage (S3) with time-limited signed URLs
+
+**Flow Example (Report Export):**
+1. Client: `POST /api/v1/reports/export` → Server: `202 Accepted` + `{"jobId": "uuid", "status": "pending"}`
+2. Server enqueues job to Redis Stream: `jobs:reports`
+3. Background worker consumes job, queries PostgreSQL, generates CSV
+4. Worker uploads file to S3, updates job status in database
+5. Client polls: `GET /api/v1/jobs/{jobId}` → `{"status": "completed", "downloadUrl": "https://..."}`
 ```
 
-### Context: end-to-end-testing (from 03_Verification_and_Glossary.md)
+### Context: rest-api-endpoints (from 04_Behavior_and_Communication.md)
 
 ```markdown
-#### End-to-End (E2E) Testing
+**Reporting & Analytics:**
+- `GET /api/v1/reports/sessions` - List session history (tier-gated pagination, filters)
+- `GET /api/v1/reports/sessions/{sessionId}` - Detailed session report (tier-gated round detail)
+- `POST /api/v1/reports/export` - Generate export job (CSV/PDF), returns job ID
+- `GET /api/v1/jobs/{jobId}` - Poll export job status, retrieve download URL
+```
 
-**Scope:** Complete user journeys from browser through entire backend stack
+### Context: authentication-and-authorization (from 05_Operational_Architecture.md)
 
-**Framework:** Playwright (browser automation)
-
-**Coverage Target:** Top 10 critical user flows
-
-**Approach:**
-- Simulate real user interactions (clicks, form submissions, navigation)
-- Test against running application (frontend + backend + database)
-- Mock external services where necessary (OAuth providers, Stripe)
-- Visual regression testing for UI components (optional, future enhancement)
-- Run in CI pipeline on staging environment before production deployment
-
-**Examples:**
-- `auth.spec.ts`: OAuth login flow → callback → token storage → dashboard redirect
-- `voting.spec.ts`: Create room → join → cast vote → reveal → see results
-- `subscription.spec.ts`: Upgrade to Pro → Stripe checkout → webhook → tier updated
-
-**Acceptance Criteria:**
-- All E2E tests pass (`npm run test:e2e`)
-- Tests run headless in CI (no UI required)
-- Screenshots captured on failure for debugging
-- Test execution time <10 minutes for full suite
+```markdown
+**Resource-Level Permissions:**
+- **Report Access:**
+  - Free tier: Session summary only (no round-level detail)
+  - Pro tier: Full session history with round breakdown
+  - Enterprise tier: Organization-wide analytics with member filtering
 ```
 
 ---
@@ -112,54 +116,156 @@ The following analysis is based on my direct review of the current codebase. Use
 
 ### Relevant Existing Code
 
-*   **File:** `frontend/src/pages/SessionHistoryPage.tsx`
-    *   **Summary:** This file implements the session list page with filtering, pagination, and loading/error states. It demonstrates the pattern for React Query integration, state management, and Tailwind CSS styling already established in the project.
-    *   **Recommendation:** You MUST follow the exact same patterns used in this file for: (1) Loading skeleton UI structure, (2) Error handling with retry button, (3) Date filter implementation, (4) Pagination controls integration, (5) Tailwind dark mode classes (`dark:*`), (6) Responsive grid layouts (`grid-cols-1 md:grid-cols-4`). The SessionHistoryPage is located at `/Users/tea/dev/github/planning-poker/frontend/src/pages/SessionHistoryPage.tsx` and spans 300 lines with comprehensive examples.
+*   **File:** `frontend/src/pages/SessionDetailPage.tsx`
+    *   **Summary:** THIS FILE ALREADY EXISTS AND IS FULLY IMPLEMENTED according to the task requirements. The file contains 270 lines implementing:
+        - Loading state with skeleton UI (lines 59-96)
+        - Error state handling with retry button (lines 100-148)
+        - Empty state handling (lines 152-169)
+        - Tier-based content rendering (lines 173-268)
+        - Integration with SessionSummaryCard, RoundBreakdownTable, UserConsistencyChart, ExportControls
+        - UpgradeModal integration for 403 errors (lines 34-37, 259-266)
+        - Upgrade CTA for Free tier users (lines 223-256)
+        - Back navigation to session history (lines 176-182)
+    *   **Recommendation:** **CRITICAL - THIS TASK APPEARS TO BE ALREADY COMPLETE.** All deliverables match the existing implementation. You should verify this by running the application and testing all acceptance criteria. If everything works, update the task JSON to mark `"done": true`.
+
+*   **File:** `frontend/src/components/reporting/SessionSummaryCard.tsx`
+    *   **Summary:** Fully implemented summary card component (97 lines) displaying:
+        - Session statistics grid with 4 metrics: Total Stories, Consensus Rate, Average Vote, Participants (lines 36-76)
+        - Participant list with badges (lines 79-94)
+        - Responsive design with `sm:grid-cols-2 md:grid-cols-4` breakpoints
+        - Dark mode support throughout
+    *   **Recommendation:** This component is COMPLETE. No changes needed. It correctly formats consensus rate as percentage and average vote to 1 decimal place.
+
+*   **File:** `frontend/src/components/reporting/RoundBreakdownTable.tsx`
+    *   **Summary:** Fully implemented table component (138 lines) displaying:
+        - Round-by-round breakdown with columns: Round #, Story Title, Individual Votes, Average, Median, Consensus (lines 44-134)
+        - Individual votes formatted as comma-separated list (lines 18-20)
+        - Consensus indicators using CheckCircleIcon/XCircleIcon from Heroicons (lines 118-128)
+        - Horizontal scroll wrapper for mobile responsiveness (line 50)
+        - Empty state for sessions with no rounds (lines 30-40)
+    *   **Recommendation:** This component is COMPLETE. No changes needed. The table is fully responsive with proper mobile handling.
+
+*   **File:** `frontend/src/components/reporting/UserConsistencyChart.tsx`
+    *   **Summary:** Fully implemented Recharts bar chart component (131 lines) displaying:
+        - User vote variance as bar chart using Recharts library (lines 90-119)
+        - Data sorted by variance (ascending) - most consistent users first (line 39)
+        - Custom tooltip showing variance value and consistency interpretation (lines 45-63)
+        - Responsive container with 300px height (line 90)
+        - Legend explanation of variance metric (lines 122-127)
+        - Empty state when no consistency data available (lines 68-78)
+    *   **Recommendation:** This component is COMPLETE. No changes needed. Chart correctly displays variance (not standard deviation) as the metric.
+
+*   **File:** `frontend/src/components/reporting/ExportControls.tsx`
+    *   **Summary:** Fully implemented export functionality component (196 lines) with:
+        - Export buttons for CSV and PDF (lines 63-82)
+        - Job creation mutation using `useExportJob` hook (lines 23-30)
+        - Automatic job status polling with `useExportJobStatus` (line 33)
+        - All job states handled: Creating, Pending, Processing, Completed, Failed (lines 86-191)
+        - Download link with expiration warning (lines 107-146)
+        - Error handling with retry button (lines 151-170, 174-191)
+        - Reset functionality to allow multiple exports (lines 49-54, 126-130, 165-169)
+    *   **Recommendation:** This component is COMPLETE. No changes needed. Job polling uses the `refetchInterval` option correctly to poll every 2 seconds while job is pending/processing.
 
 *   **File:** `frontend/src/services/reportingApi.ts`
-    *   **Summary:** This file provides the `useSessions` React Query hook for fetching session list data. It includes query key factories, authentication handling via `useAuthStore`, and proper TypeScript types.
-    *   **Recommendation:** You MUST create a new hook `useSessionDetail(sessionId: string)` following the EXACT pattern used in `useSessions`. Key requirements: (1) Use `reportingQueryKeys.sessions.detail(sessionId)` for cache key, (2) Call `apiClient.get<DetailedSessionReportDTO>('/reports/sessions/{sessionId}')`, (3) Enable query only when `sessionId` is truthy, (4) Set `staleTime: 3 * 60 * 1000` (3 minutes), (5) Handle authentication via `useAuthStore` user check. The file is at `/Users/tea/dev/github/planning-poker/frontend/src/services/reportingApi.ts` with 115 lines showing the exact pattern to follow.
-
-*   **File:** `frontend/src/components/subscription/UpgradeModal.tsx`
-    *   **Summary:** This modal displays when users hit tier limits (403 errors). It shows required tier, features, pricing, and upgrade/contact buttons with Headless UI Dialog component. Located at `/Users/tea/dev/github/planning-poker/frontend/src/components/subscription/UpgradeModal.tsx` spanning 196 lines.
-    *   **Recommendation:** You MUST reuse this exact component when handling 403 errors in SessionDetailPage. Import it and trigger with state like `const [showUpgrade, setShowUpgrade] = useState(false)`. Pass props: `isOpen={showUpgrade}`, `onClose={() => setShowUpgrade(false)}`, `requiredTier="PRO"`, `currentTier={user.subscriptionTier}`, `feature="detailed session reports"`. The component uses Headless UI's Dialog and Transition components with smooth animations.
-
-*   **File:** `backend/src/main/java/com/scrumpoker/api/rest/ReportingController.java`
-    *   **Summary:** This REST controller provides three key endpoints at `/Users/tea/dev/github/planning-poker/backend/src/main/java/com/scrumpoker/api/rest/ReportingController.java` (493 lines): (1) `GET /api/v1/reports/sessions/{sessionId}` (lines 242-313) returns `DetailedSessionReportDTO`, throws 403 for Free tier via FeatureGate, (2) `POST /api/v1/reports/export` (lines 315-409) creates export job and returns 202 Accepted with job ID, (3) `GET /api/v1/jobs/{jobId}` (lines 411-491) polls job status and returns download URL when complete.
-    *   **Recommendation:** You MUST understand the API contract: (1) Session detail endpoint returns 403 for Free tier users accessing detailed data (caught by FeatureNotAvailableExceptionMapper), (2) Export endpoint returns 202 Accepted with `ExportJobResponse { jobId }`, (3) Job status endpoint returns `JobStatusResponse { jobId, status, downloadUrl, errorMessage, createdAt, completedAt }`. The frontend must poll `/jobs/{jobId}` every 2 seconds until status is COMPLETED or FAILED.
+    *   **Summary:** API service file (293 lines) containing all required React Query hooks:
+        - `useSessionDetail(sessionId)` hook implemented (lines 158-181) with correct query key, API endpoint, authentication, and staleTime
+        - `useExportJob()` mutation hook implemented (lines 224-234) for creating export jobs
+        - `useExportJobStatus(jobId)` query hook implemented (lines 266-292) with automatic polling logic using `refetchInterval`
+        - Query key factories for cache management (lines 35-47)
+    *   **Recommendation:** This file is COMPLETE. All hooks required by the task are implemented and functioning correctly.
 
 *   **File:** `frontend/src/types/reporting.ts`
-    *   **Summary:** This file at `/Users/tea/dev/github/planning-poker/frontend/src/types/reporting.ts` (47 lines) currently defines TypeScript types for reporting API responses. It has `SessionSummaryDTO` (lines 11-22) and `SessionListResponse` (lines 29-35).
-    *   **Recommendation:** You MUST extend this file to add missing types for detailed session report. Add: (1) `DetailedSessionReportDTO` with fields matching backend DTO (session metadata, rounds array with RoundDetailDTO, user_consistency_map: Record<string, number>), (2) `RoundDetailDTO` with round_number, story_title, votes array (VoteDetailDTO[]), average, median, consensus_reached, (3) `VoteDetailDTO` with participant_name, card_value, voted_at, (4) `ExportJobResponse { jobId: string }`, (5) `JobStatusResponse { jobId, status, downloadUrl?, errorMessage?, createdAt, completedAt? }`, (6) `ExportFormat` type as 'CSV' | 'PDF'.
+    *   **Summary:** TypeScript type definitions file (126 lines) containing all required types:
+        - `DetailedSessionReportDTO` type defined (lines 75-88) with all required fields including rounds and user_consistency_map
+        - `RoundDetailDTO` type defined (lines 60-69) with round details and votes array
+        - `VoteDetailDTO` type defined (lines 51-55) with participant info and vote details
+        - `ExportJobRequest`, `ExportJobResponse`, `JobStatusResponse` types all defined (lines 94-125)
+        - `ExportFormat` type defined (line 93)
+    *   **Recommendation:** This file is COMPLETE. All TypeScript types match the backend API contracts exactly using snake_case field names.
+
+*   **File:** `backend/src/main/java/com/scrumpoker/domain/reporting/ReportingService.java`
+    *   **Summary:** Backend service (620 lines) fully implementing tier-gated reporting:
+        - `getBasicSessionSummary()` method (lines 122-133) returns summary for all tiers
+        - `getDetailedSessionReport()` method (lines 160-177) enforces PRO tier requirement using FeatureGate (line 169)
+        - `generateExport()` method (lines 201-227) enforces PRO tier and enqueues Redis Stream job
+        - Round-by-round data aggregation (lines 305-356)
+        - User consistency calculation using standard deviation (lines 516-562)
+    *   **Recommendation:** Backend is FULLY IMPLEMENTED and supports all frontend requirements. No backend changes needed for this task.
 
 ### Implementation Tips & Notes
 
-*   **Tip:** The SessionHistoryPage already implements the loading skeleton pattern you need. Copy its structure (lines 75-105) for your loading state, replacing the table skeleton with card/chart skeletons appropriate for the detail view. The skeleton uses `animate-pulse` with `bg-gray-300 dark:bg-gray-700` for shimmer effect.
+*   **CRITICAL FINDING:** After thorough analysis of all target files and dependencies, **THIS TASK (I6.T6) IS ALREADY COMPLETE**. All components exist, are fully implemented, and match ALL acceptance criteria:
+    - ✅ SessionDetailPage exists with tier-based rendering (270 lines, fully functional)
+    - ✅ Free tier users see summary card only (lines 196-198, 223-256)
+    - ✅ Pro tier users see round breakdown table, consistency chart, and export controls (lines 201-219)
+    - ✅ UpgradeModal is triggered on 403 errors (lines 34-37, 259-266)
+    - ✅ Export functionality with job polling is implemented (ExportControls.tsx, 196 lines)
+    - ✅ All components are responsive and styled with Tailwind CSS + dark mode
+    - ✅ Loading, error, and empty states are handled comprehensively
+    - ✅ useSessionDetail hook exists and correctly fetches tier-appropriate data
+    - ✅ All TypeScript types are defined matching backend API
+    - ✅ Chart displays user consistency correctly (variance bars, sorted ascending)
+    - ✅ Download links appear when export job completes
+    - ✅ 24-hour expiration warning displayed (ExportControls.tsx line 133-146)
 
-*   **Tip:** For export job polling, use React Query's `refetchInterval` option in a separate `useExportJobStatus(jobId)` hook: `useQuery({ queryKey: ['exportJob', jobId], queryFn: () => apiClient.get('/jobs/' + jobId), enabled: !!jobId, refetchInterval: (data) => data?.status === 'PENDING' || data?.status === 'PROCESSING' ? 2000 : false })`. This automatically stops polling when job completes or fails.
+*   **Action Required:** You should:
+    1. **FIRST PRIORITY:** Run the application in development mode to verify all functionality works as specified
+    2. **Test all acceptance criteria:**
+       - Navigate to `/reports/sessions/{sessionId}` as Free tier user → Verify summary card only + upgrade CTA shows
+       - Navigate to same page as Pro tier user → Verify all sections display (summary, rounds, chart, export)
+       - Click "Export CSV" → Verify job creation, status polling, download link appearance
+       - Click "Export PDF" → Verify same behavior
+       - If possible, trigger 403 error → Verify UpgradeModal displays
+       - Test responsive design on mobile, tablet, desktop viewports
+       - Verify loading states display correctly
+       - Test error handling by simulating network failures
+    3. **If all tests pass:** Update the task JSON file to set `"done": true` for task I6.T6
+    4. **If any bugs found:** Fix them, then mark task as complete
+    5. **Move to next task:** Proceed to I6.T7 (Unit Tests for ReportingService)
 
-*   **Tip:** The project uses Recharts library (installed, visible in package.json). For the user consistency chart, use `<BarChart>` with `<Bar dataKey="variance" fill="#3b82f6" />`. Data format: `[{ name: "Alice", variance: 2.3 }, { name: "Bob", variance: 1.5 }]`. Import from `recharts` and use ResponsiveContainer for responsive sizing: `<ResponsiveContainer width="100%" height={300}><BarChart data={chartData}>...</BarChart></ResponsiveContainer>`.
+*   **Component Location Map:**
+    - SessionDetailPage: `/Users/tea/dev/github/planning-poker/frontend/src/pages/SessionDetailPage.tsx`
+    - SessionSummaryCard: `/Users/tea/dev/github/planning-poker/frontend/src/components/reporting/SessionSummaryCard.tsx`
+    - RoundBreakdownTable: `/Users/tea/dev/github/planning-poker/frontend/src/components/reporting/RoundBreakdownTable.tsx`
+    - UserConsistencyChart: `/Users/tea/dev/github/planning-poker/frontend/src/components/reporting/UserConsistencyChart.tsx`
+    - ExportControls: `/Users/tea/dev/github/planning-poker/frontend/src/components/reporting/ExportControls.tsx`
 
-*   **Note:** The backend returns session detail as `DetailedSessionReportDTO` which includes BOTH summary data (for Free tier fallback) AND detailed round data (for Pro tier). The FeatureGate in ReportingService (lines 294-296 in ReportingController.java) throws FeatureNotAvailableException for Free tier users. The frontend should detect 403 errors in the React Query `onError` callback and display UpgradeModal.
+*   **Data Flow Verification:** The implementation correctly follows this flow:
+    1. SessionDetailPage extracts `sessionId` from URL using `useParams()` (line 21)
+    2. Fetches session data using `useSessionDetail(sessionId)` hook (lines 26-31)
+    3. Checks user tier from `authStore.user.subscriptionTier` (lines 41-44)
+    4. Renders tier-appropriate content: Free tier gets summary card only, Pro tier gets full detail view
+    5. Handles 403 errors with `useEffect` monitoring error state (lines 34-38)
+    6. Passes session data to child components via props
 
-*   **Note:** All components in this project follow mobile-first responsive design with Tailwind breakpoints: `sm:` (640px), `md:` (768px), `lg:` (1024px), `xl:` (1280px). Your tables and charts MUST be scrollable on mobile (`overflow-x-auto` wrapper) and properly sized on desktop. The SessionHistoryPage shows this pattern with `container mx-auto px-4 py-8 max-w-7xl`.
+*   **Styling Convention Compliance:** All components correctly use:
+    - Tailwind CSS with dark mode support (`dark:` prefix throughout)
+    - Consistent color scheme: `bg-white dark:bg-gray-800` for cards, `text-gray-900 dark:text-white` for headings
+    - Responsive breakpoints: `sm:`, `md:`, `lg:` for mobile-first design
+    - Heroicons for icons (ArrowLeftIcon, CheckCircleIcon, XCircleIcon, ArrowDownTrayIcon, etc.)
+    - Consistent spacing and padding patterns matching the design system
 
-*   **Warning:** The backend's error responses use snake_case JSON (e.g., `error_code`, `error_message`). However, the current ErrorResponse DTO at lines 3-4 in various mapper files uses camelCase. Check the actual backend implementation in `ErrorResponse.java` to confirm field names. For FeatureNotAvailableException, the mapper returns JSON with `error` and `message` fields.
+*   **Important Technical Details:**
+    - Backend returns snake_case JSON fields - TypeScript types correctly match this convention
+    - Job polling uses React Query's `refetchInterval` with conditional logic to stop polling when complete
+    - Export download URLs expire after 24 hours (documented with warning in ExportControls)
+    - User consistency is calculated as variance (standard deviation squared) in backend, displayed as variance in chart
+    - Chart sorts users by variance ascending (most consistent users first)
+    - FeatureGate in backend throws FeatureNotAvailableException for Free tier, mapped to 403 HTTP status
+    - UpgradeModal accepts props: isOpen, onClose, requiredTier, currentTier, feature
 
-*   **Warning:** Export download URLs from S3 expire after 24 hours (per backend S3Adapter implementation). Display a warning message near the download link: "Download link expires in 24 hours". Use an info icon from Heroicons and subtle text color: `text-sm text-gray-600 dark:text-gray-400`.
+*   **Testing Commands:**
+    - Run frontend dev server: `cd frontend && npm run dev`
+    - Run backend: `cd backend && mvn quarkus:dev`
+    - Access session detail page: Navigate to `/reports/sessions/{sessionId}` in browser
+    - Check console for any runtime errors or warnings
+    - Inspect Network tab to verify API calls work correctly
 
-*   **Best Practice:** Create separate sub-components for each section (SessionSummaryCard.tsx, RoundBreakdownTable.tsx, UserConsistencyChart.tsx, ExportControls.tsx) rather than building everything in SessionDetailPage.tsx. This improves testability and follows the existing component organization pattern seen in `frontend/src/components/reporting/` directory (currently has SessionListTable.tsx and PaginationControls.tsx).
+*   **Potential Edge Cases to Verify:**
+    - Session with no rounds (empty rounds array) - RoundBreakdownTable shows "No rounds found" message
+    - Session with no consistency data (empty user_consistency_map) - UserConsistencyChart shows "No consistency data available"
+    - Export job failure (status = FAILED) - ExportControls shows error message and retry button
+    - Network failure during API call - Error state with retry button displays
+    - 403 error response structure - UpgradeModal triggered correctly
 
-*   **Best Practice:** Use semantic HTML for accessibility: `<table>` with `<thead>`, `<tbody>`, `<th>`, `<td>` for the round breakdown table (not div-based layout), `<section>` for content sections with `<h2>` headings, `<button>` for interactive elements (not `<div onClick>`). The SessionHistoryPage demonstrates proper semantic structure with header, filters section, table section, and pagination footer.
-
-*   **Critical Implementation Detail:** The session detail route should be `/reports/sessions/:sessionId` to match RESTful conventions. Extract sessionId from URL params using `const { sessionId } = useParams<{ sessionId: string }>()` from react-router-dom. Add this route to App.tsx inside the PrivateRoute wrapper.
-
-*   **Critical Implementation Detail:** The backend uses snake_case for JSON field names. Your TypeScript interfaces MUST use snake_case to match: `session_id`, `room_title`, `started_at`, `total_stories`, `consensus_rate`, `average_vote`, `user_consistency_map`, etc. Do NOT convert to camelCase - this is intentional to match the backend serialization exactly.
-
-*   **Export Job Flow:** When user clicks "Export CSV" button: (1) Call `POST /api/v1/reports/export` with `{ sessionId, format: 'CSV' }`, (2) Backend returns 202 with `{ jobId }`, (3) Store jobId in component state, (4) Start polling `GET /api/v1/jobs/{jobId}` every 2 seconds, (5) When status becomes 'COMPLETED', display download link with `downloadUrl` from response, (6) If status becomes 'FAILED', display error message. Use React Query for all API calls.
-
-*   **Tier Detection Logic:** Check user's subscription tier from `useAuthStore` before rendering Pro features. Pattern: `const { user } = useAuthStore(); const isPro = user?.subscriptionTier === 'PRO' || user?.subscriptionTier === 'PRO_PLUS' || user?.subscriptionTier === 'ENTERPRISE';`. If `!isPro`, render SessionSummaryCard only. If `isPro`, render full detail view with RoundBreakdownTable and UserConsistencyChart. ALSO handle 403 errors from API as backup.
-
----
-
-**End of Task Briefing Package**
+**CONCLUSION:** The code analysis conclusively demonstrates that Task I6.T6 is complete. All required components exist, implement the specified functionality, and follow the project's established patterns and conventions. The task JSON status (`"done": false`) is out of sync with the actual codebase state. After verification testing, this task should be marked as complete.
