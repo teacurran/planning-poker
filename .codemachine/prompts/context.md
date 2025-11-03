@@ -10,25 +10,26 @@ This is the full specification of the task you must complete.
 
 ```json
 {
-  "task_id": "I6.T2",
+  "task_id": "I6.T3",
   "iteration_id": "I6",
   "iteration_goal": "Implement session history tracking, tier-based reporting (basic summaries for Free, detailed analytics for Pro/Enterprise), export functionality (CSV/PDF), and frontend reporting UI.",
-  "description": "Create `ReportingService` implementing tier-gated analytics. Methods: `getBasicSessionSummary(sessionId)` (Free tier: story count, consensus rate, average vote), `getDetailedSessionReport(sessionId)` (Pro tier: round-by-round breakdown, individual votes, user consistency metrics), `generateExport(sessionId, format)` (Pro tier: enqueue export job for CSV/PDF generation). Inject `FeatureGate` to enforce tier requirements. Query SessionHistory and Round/Vote entities. Calculate user consistency (standard deviation of user's votes across rounds). Return tier-appropriate DTOs.",
+  "description": "Create background worker consuming export jobs from Redis Stream. `ExportJobProcessor` listens to `jobs:reports` stream, processes job (query session data, generate CSV or PDF), upload to S3 bucket, update job status in database (JobStatus: PENDING → PROCESSING → COMPLETED/FAILED), generate time-limited signed URL for download. Use Apache Commons CSV for CSV generation, iText or Apache PDFBox for PDF. Handle errors (mark job FAILED, store error message). Implement exponential backoff retry for transient failures.",
   "agent_type_hint": "BackendAgent",
-  "inputs": "Reporting tier matrix from product spec (Free vs. Pro features), SessionHistoryService from I6.T1, FeatureGate from I5.T4",
+  "inputs": "Export requirements (CSV/PDF formats), Redis Streams consumer patterns, S3 upload and signed URL generation",
   "input_files": [
-    "backend/src/main/java/com/scrumpoker/domain/reporting/SessionHistoryService.java",
-    "backend/src/main/java/com/scrumpoker/security/FeatureGate.java"
+    "backend/src/main/java/com/scrumpoker/domain/reporting/ReportingService.java"
   ],
   "target_files": [
-    "backend/src/main/java/com/scrumpoker/domain/reporting/ReportingService.java",
-    "backend/src/main/java/com/scrumpoker/domain/reporting/SessionSummaryDTO.java",
-    "backend/src/main/java/com/scrumpoker/domain/reporting/DetailedSessionReportDTO.java"
+    "backend/src/main/java/com/scrumpoker/worker/ExportJobProcessor.java",
+    "backend/src/main/java/com/scrumpoker/worker/CsvExporter.java",
+    "backend/src/main/java/com/scrumpoker/worker/PdfExporter.java",
+    "backend/src/main/java/com/scrumpoker/integration/s3/S3Adapter.java",
+    "backend/src/main/java/com/scrumpoker/domain/reporting/ExportJob.java"
   ],
-  "deliverables": "ReportingService with tier-gated methods, Basic summary for Free tier (limited fields), Detailed report for Pro tier (round breakdown, individual votes), User consistency metrics (vote variance calculation), Export job enqueuing (Redis Stream message), FeatureGate enforcement (403 if Free tier requests detailed report)",
-  "acceptance_criteria": "getBasicSessionSummary returns story count, consensus rate, Free tier user cannot access detailed report (403 error), Pro tier user gets detailed report with round-by-round data, User consistency calculated correctly (standard deviation of votes), Export job enqueued to Redis Stream, Tier enforcement integrated via FeatureGate",
-  "dependencies": ["I6.T1", "I5.T4"],
-  "parallelizable": false,
+  "deliverables": "ExportJobProcessor consuming Redis Stream, CsvExporter generating CSV files (session data, rounds, votes), PdfExporter generating PDF reports with summary and charts, S3Adapter uploading files to configured bucket, Signed URL generation (7-day expiration), Job status tracking (PENDING → PROCESSING → COMPLETED), Error handling and retry logic",
+  "acceptance_criteria": "Export job message triggers processor, CSV export generates valid file (test with sample session), PDF export generates readable report, File uploaded to S3 successfully, Signed URL allows download without authentication, Job status updated to COMPLETED with download URL, Failed jobs marked with error message, Retry logic handles transient S3 failures",
+  "dependencies": ["I6.T2"],
+  "parallelizable": true,
   "done": false
 }
 ```
@@ -39,63 +40,43 @@ This is the full specification of the task you must complete.
 
 The following are the relevant sections from the architecture and plan documents, which I found by analyzing the task description.
 
-### Context: reporting-requirements (from 01_Context_and_Drivers.md)
+### Context: asynchronous-job-processing-pattern (from 04_Behavior_and_Communication.md)
 
 ```markdown
-<!-- anchor: reporting-requirements -->
-#### Reporting Requirements
-- **Free Tier:** Basic session summaries (story count, consensus rate, average vote)
-- **Pro Tier:** Round-level detail, user consistency metrics, CSV/JSON/PDF export
-- **Enterprise Tier:** Organizational dashboards, team trends, SSO-filtered reports, audit logs
+<!-- anchor: asynchronous-job-processing-pattern -->
+##### Asynchronous Job Processing (Fire-and-Forget)
+
+**Use Cases:**
+- Report export generation (CSV, PDF) for large datasets
+- Email notifications (subscription confirmations, payment receipts)
+- Analytics aggregation for organizational dashboards
+- Audit log archival to object storage
+
+**Pattern Characteristics:**
+- REST endpoint returns `202 Accepted` immediately with job ID
+- Job message enqueued to Redis Stream
+- Background worker consumes stream, processes job
+- Client polls status endpoint or receives WebSocket notification on completion
+- Job results stored in object storage (S3) with time-limited signed URLs
+
+**Flow Example (Report Export):**
+1. Client: `POST /api/v1/reports/export` → Server: `202 Accepted` + `{"jobId": "uuid", "status": "pending"}`
+2. Server enqueues job to Redis Stream: `jobs:reports`
+3. Background worker consumes job, queries PostgreSQL, generates CSV
+4. Worker uploads file to S3, updates job status in database
+5. Client polls: `GET /api/v1/jobs/{jobId}` → `{"status": "completed", "downloadUrl": "https://..."}`
 ```
 
-### Context: performance-nfrs (from 01_Context_and_Drivers.md)
+### Context: Technology Stack Summary (from 02_Architecture_Overview.md)
 
 ```markdown
-<!-- anchor: performance-nfrs -->
-#### Performance
-- **Latency:** <200ms round-trip time for WebSocket messages within region
-- **Throughput:** Support 500 concurrent sessions with 6,000 active WebSocket connections
-- **Response Time:** REST API endpoints respond within <500ms for p95
-- **Real-time Updates:** State synchronization across clients within 100ms
+| **Message Queue** | **Redis Streams** | Leverages existing Redis infrastructure, sufficient for asynchronous job processing (report generation, email notifications), simpler than dedicated message brokers |
 ```
 
-### Context: task-i6-t2 (from 02_Iteration_I6.md)
+### Context: Reliability and Availability (from 05_Operational_Architecture.md)
 
 ```markdown
-<!-- anchor: task-i6-t2 -->
-*   **Task 6.2: Implement Reporting Service (Tier-Based Access)**
-    *   **Task ID:** `I6.T2`
-    *   **Description:** Create `ReportingService` implementing tier-gated analytics. Methods: `getBasicSessionSummary(sessionId)` (Free tier: story count, consensus rate, average vote), `getDetailedSessionReport(sessionId)` (Pro tier: round-by-round breakdown, individual votes, user consistency metrics), `generateExport(sessionId, format)` (Pro tier: enqueue export job for CSV/PDF generation). Inject `FeatureGate` to enforce tier requirements. Query SessionHistory and Round/Vote entities. Calculate user consistency (standard deviation of user's votes across rounds). Return tier-appropriate DTOs.
-    *   **Agent Type Hint:** `BackendAgent`
-    *   **Inputs:**
-        *   Reporting tier matrix from product spec (Free vs. Pro features)
-        *   SessionHistoryService from I6.T1
-        *   FeatureGate from I5.T4
-    *   **Input Files:**
-        *   Product specification (reporting feature comparison)
-        *   `backend/src/main/java/com/scrumpoker/domain/reporting/SessionHistoryService.java`
-        *   `backend/src/main/java/com/scrumpoker/security/FeatureGate.java`
-    *   **Target Files:**
-        *   `backend/src/main/java/com/scrumpoker/domain/reporting/ReportingService.java`
-        *   `backend/src/main/java/com/scrumpoker/domain/reporting/SessionSummaryDTO.java`
-        *   `backend/src/main/java/com/scrumpoker/domain/reporting/DetailedSessionReportDTO.java`
-    *   **Deliverables:**
-        *   ReportingService with tier-gated methods
-        *   Basic summary for Free tier (limited fields)
-        *   Detailed report for Pro tier (round breakdown, individual votes)
-        *   User consistency metrics (vote variance calculation)
-        *   Export job enqueuing (Redis Stream message)
-        *   FeatureGate enforcement (403 if Free tier requests detailed report)
-    *   **Acceptance Criteria:**
-        *   getBasicSessionSummary returns story count, consensus rate
-        *   Free tier user cannot access detailed report (403 error)
-        *   Pro tier user gets detailed report with round-by-round data
-        *   User consistency calculated correctly (standard deviation of votes)
-        *   Export job enqueued to Redis Stream
-        *   Tier enforcement integrated via FeatureGate
-    *   **Dependencies:** [I6.T1, I5.T4]
-    *   **Parallelizable:** No (depends on SessionHistoryService, FeatureGate)
+- **Email Service Down:** Notification emails queued in Redis Stream, retried with exponential backoff (max 24 hours), admin alerted if queue depth exceeds threshold
 ```
 
 ---
@@ -106,217 +87,138 @@ The following analysis is based on my direct review of the current codebase. Use
 
 ### Relevant Existing Code
 
-*   **File:** `backend/src/main/java/com/scrumpoker/domain/reporting/SessionHistoryService.java`
-    *   **Summary:** This service provides reactive methods for querying SessionHistory records. It already implements `getSessionById(UUID)`, `getSessionByIdAndDate(UUID, Instant)`, and `getUserSessions()`. It uses `ObjectMapper` to deserialize JSONB fields (participants, summaryStats) from SessionHistory entities.
-    *   **Recommendation:** You MUST import and inject this service into your ReportingService. Use `getSessionById(sessionId)` to retrieve the SessionHistory record needed for both basic and detailed reports. The service already handles partition-optimized queries and JSONB deserialization.
+*   **File:** `backend/src/main/java/com/scrumpoker/domain/reporting/ReportingService.java`
+    *   **Summary:** This file implements the ReportingService which has already implemented the export job enqueuing mechanism. It uses `ReactiveRedisDataSource` to publish jobs to the Redis Stream `jobs:reports` with job data including jobId, sessionId, format, userId, and requestedAt timestamp.
+    *   **Recommendation:** You MUST study the `enqueueExportJob()` method (lines 592-618) to understand the exact message format being published to Redis. The job data structure is:
+        ```java
+        Map.of(
+            "jobId", jobId,
+            "sessionId", sessionId.toString(),
+            "format", format,
+            "userId", user.userId.toString(),
+            "requestedAt", Instant.now().toString()
+        )
+        ```
+    *   **Recommendation:** You SHOULD use the same `ReactiveStreamCommands` API from Quarkus Redis for consuming the stream. The stream key is `"jobs:reports"` (constant defined as `EXPORT_JOBS_STREAM`).
 
-*   **File:** `backend/src/main/java/com/scrumpoker/security/FeatureGate.java`
-    *   **Summary:** This service implements tier-based feature access control using a hierarchical tier system (FREE < PRO < PRO_PLUS < ENTERPRISE). It provides both boolean checks (`canAccessAdvancedReports(User)`) and imperative enforcement methods (`requireCanAccessAdvancedReports(User)`).
-    *   **Recommendation:** You MUST inject this service and use `featureGate.requireCanAccessAdvancedReports(user)` in your `getDetailedSessionReport()` method. This will throw a `FeatureNotAvailableException` automatically if a Free tier user attempts to access detailed reports, ensuring 403 enforcement. Also use `featureGate.canAccessAdvancedReports(user)` for the export job generation method.
-
-*   **File:** `backend/src/main/java/com/scrumpoker/domain/room/Round.java`
-    *   **Summary:** This entity represents individual estimation rounds with fields: `roundId`, `room`, `roundNumber`, `storyTitle`, `startedAt`, `revealedAt`, `average`, `median`, `consensusReached`. The average is stored as `BigDecimal` with precision 5, scale 2. The median is stored as `String` (VARCHAR) to support non-numeric cards like "?", "∞", "☕".
-    *   **Recommendation:** You MUST query Round entities for the detailed report. Use `RoundRepository.findByRoomId(roomId)` to get all rounds for a session. Include these fields in your `DetailedSessionReportDTO`: roundNumber, storyTitle, average, median, consensusReached.
-
-*   **File:** `backend/src/main/java/com/scrumpoker/domain/room/Vote.java`
-    *   **Summary:** This entity stores individual votes with fields: `voteId`, `round`, `participant`, `cardValue`, `votedAt`. The `cardValue` is stored as a String to support non-numeric values. Votes are immutable after creation.
-    *   **Recommendation:** You MUST query Vote entities for detailed reports and user consistency calculations. Use `VoteRepository.findByRoundId(roundId)` to get all votes for each round. For user consistency metrics, you need to calculate the standard deviation of a participant's votes across all rounds in the session.
-
-*   **File:** `backend/src/main/java/com/scrumpoker/repository/RoundRepository.java`
-    *   **Summary:** Provides reactive Panache repository methods including `findByRoomId(roomId)`, `findRevealedByRoomId(roomId)`, `findConsensusRoundsByRoomId(roomId)`, `countByRoomId(roomId)`.
-    *   **Recommendation:** You SHOULD inject this repository and use `findByRoomId(roomId)` to retrieve all rounds for a given room (identified by the SessionHistory.room.roomId). This will give you the round-by-round data needed for detailed reports.
-
-*   **File:** `backend/src/main/java/com/scrumpoker/repository/VoteRepository.java`
-    *   **Summary:** Provides reactive methods including `findByRoundId(roundId)`, `findByParticipantId(participantId)`, `countByRoundId(roundId)`.
-    *   **Recommendation:** You MUST inject this repository and use `findByRoundId(roundId)` for each round to retrieve individual votes. This is essential for the detailed report's round-by-round breakdown and for calculating user consistency metrics.
 
 *   **File:** `backend/src/main/java/com/scrumpoker/event/RoomEventPublisher.java`
-    *   **Summary:** This service publishes events to Redis Pub/Sub channels using the pattern `room:{roomId}`. It uses `ReactiveRedisDataSource` and `ReactivePubSubCommands<String>` for publishing JSON-serialized events.
-    *   **Recommendation:** For export job enqueuing, you will need to use Redis Streams (NOT Pub/Sub). You should inject `ReactiveRedisDataSource` and use the `.stream()` method to get `ReactiveStreamCommands`, then use `.xadd()` to add messages to the `jobs:reports` stream. Pattern: `redisDataSource.stream(String.class).xadd(streamKey, Map.of(...))`
+    *   **Summary:** This file demonstrates the project's pattern for using Redis Pub/Sub. While your task uses Redis Streams (not Pub/Sub), this shows how the project initializes Redis connections using `ReactiveRedisDataSource` with `@PostConstruct` initialization.
+    *   **Recommendation:** You SHOULD follow the same initialization pattern: inject `ReactiveRedisDataSource`, create a `@PostConstruct` method to initialize stream commands, and use reactive `Uni` types for all operations.
+    *   **Note:** This file shows proper error handling with `onFailure().invoke()` for logging and structured error messages using `Log.errorf()`.
 
-*   **File:** `backend/src/main/java/com/scrumpoker/domain/reporting/SessionSummaryStats.java`
-    *   **Summary:** This POJO is used for deserializing the JSONB `summary_stats` field from SessionHistory. It contains: `totalVotes`, `consensusRate`, `avgEstimationTimeSeconds`, `roundsWithConsensus`. Uses Jackson annotations like `@JsonProperty`.
-    *   **Recommendation:** You SHOULD reuse this class when deserializing SessionHistory.summaryStats in your basic summary report. The SessionHistoryService already shows how to deserialize this using `objectMapper.readValue(session.summaryStats, SessionSummaryStats.class)`.
+*   **File:** `backend/src/main/java/com/scrumpoker/domain/billing/PaymentHistory.java`
+    *   **Summary:** This entity demonstrates the project's JPA entity conventions using Quarkus Panache: extends `PanacheEntityBase`, uses `@GeneratedValue(strategy = GenerationType.AUTO)` for UUIDs, `@CreationTimestamp` for timestamps, and enum types with `@Enumerated(EnumType.STRING)`.
+    *   **Recommendation:** You MUST follow this exact pattern when creating the `ExportJob` entity. Your entity should have:
+        - `@Id UUID jobId` with `@GeneratedValue(strategy = GenerationType.AUTO)`
+        - A status enum field with `@Enumerated(EnumType.STRING)` (you need to create `JobStatus` enum: PENDING, PROCESSING, COMPLETED, FAILED)
+        - Timestamp fields with `@CreationTimestamp` for `createdAt`
+        - Reference to the session (consider `sessionId` as UUID, not a full relationship since SessionHistory uses composite key)
 
-*   **File:** `backend/src/main/java/com/scrumpoker/domain/reporting/ParticipantSummary.java`
-    *   **Summary:** This POJO is used for deserializing the JSONB `participants` array field from SessionHistory. It likely contains participant metadata including vote counts.
-    *   **Recommendation:** You will need this class when deserializing SessionHistory.participants for both basic and detailed reports. Use it to extract participant information for the detailed report's round-by-round breakdown.
+*   **File:** `backend/pom.xml`
+    *   **Summary:** Project uses Quarkus 3.15.1 with reactive extensions (hibernate-reactive-panache, reactive-pg-client, redis-client).
+    *   **Warning:** The pom.xml does NOT currently include Apache Commons CSV, Apache PDFBox, iText, or AWS S3 SDK dependencies. You MUST add these dependencies to the pom.xml file before implementing the exporters and S3 adapter.
+    *   **Recommendation:** Add these dependencies in the `<dependencies>` section:
+        - `commons-csv` (Apache Commons CSV) - use version 1.10.0
+        - `pdfbox` (Apache PDFBox) - use version 2.0.30 or 3.x (check Quarkus compatibility)
+        - `quarkus-amazon-s3` (Quarkus S3 extension) OR `software.amazon.awssdk:s3` (AWS SDK for S3)
+
+*   **File:** `backend/src/main/resources/application.properties`
+    *   **Summary:** Configuration file shows Redis is configured at `quarkus.redis.hosts=${REDIS_URL:redis://localhost:6379}` with timeout, pool size, and health check settings already in place.
+    *   **Recommendation:** You SHOULD add S3 configuration properties:
+        - `s3.bucket-name=${S3_BUCKET_NAME:scrum-poker-exports}`
+        - `s3.region=${S3_REGION:us-east-1}`
+        - `s3.access-key-id=${AWS_ACCESS_KEY_ID:your-access-key}` (for dev, use env vars in prod)
+        - `s3.secret-access-key=${AWS_SECRET_ACCESS_KEY:your-secret-key}`
+        - `export.signed-url-expiration=${EXPORT_URL_EXPIRATION:604800}` (7 days in seconds)
 
 ### Implementation Tips & Notes
 
-*   **Tip: User Consistency Calculation** - The task requires calculating "user consistency (standard deviation of user's votes across rounds)". To implement this:
-    1. For each participant in the session, collect all their numeric votes across all rounds.
-    2. Filter out non-numeric votes (?, ∞, ☕) as they cannot be used in standard deviation calculation.
-    3. Parse the numeric card values to Double (e.g., "1" → 1.0, "13" → 13.0).
-    4. Calculate the standard deviation using the formula: σ = sqrt(Σ(xi - μ)² / n) where μ is the mean.
-    5. Return a Map or DTO with participantId/displayName → standard deviation.
-    6. Consider edge cases: participants who voted only once (σ = 0), participants who only voted non-numeric values (exclude or return null).
+*   **Tip:** For consuming Redis Streams, you need to use `ReactiveStreamCommands<String, String, String>` from `redisDataSource.stream(String.class, String.class, String.class)`. Use the `xreadgroup()` method to consume messages with consumer groups for reliability and load balancing. Stream key: `"jobs:reports"`, consumer group: `"export-workers"`, consumer name: use pod hostname or UUID.
 
-*   **Tip: Redis Streams for Export Jobs** - The task specifies enqueuing export jobs to a Redis Stream named `jobs:reports`. The project currently uses Redis Pub/Sub (see RoomEventPublisher), but Streams are different. You need to:
-    1. Inject `@Inject ReactiveRedisDataSource redisDataSource;`
-    2. Get stream commands: `ReactiveStreamCommands<String> streamCommands = redisDataSource.stream(String.class);`
-    3. Create a message payload Map with fields like: `sessionId`, `format` (CSV or PDF), `userId`, `requestedAt`.
-    4. Use `streamCommands.xadd("jobs:reports", Map.of("sessionId", sessionId.toString(), "format", format, ...))` to enqueue.
-    5. Return the generated job ID (Redis Streams returns a message ID like "1234567890-0").
+*   **Tip:** Redis Streams `xreadgroup` is a blocking operation. You should run the consumer in a separate thread or use Quarkus `@Scheduled` with `@ApplicationScoped` lifecycle. Consider using `io.quarkus.runtime.StartupEvent` to start the consumer when the application boots.
 
-*   **Note: DTO Design Patterns** - Looking at existing DTOs in the project (e.g., `RoomDTO`, `SubscriptionDTO`), the codebase uses simple POJOs with public fields, Jackson annotations, and no-arg constructors. Your DTOs should follow this pattern:
-    - Use `@JsonProperty` annotations for field name mapping.
-    - Provide both a no-arg constructor (for Jackson) and an all-args constructor.
-    - Use immutable fields where possible (final if not requiring setter).
-    - For the detailed report, create nested DTOs or inner classes for round details (e.g., `RoundDetailDTO` containing roundNumber, storyTitle, votes list).
+*   **Tip:** The `ReportingService.getDetailedSessionReport()` method (lines 160-177) shows how to query session data. You SHOULD reuse similar patterns: call `sessionHistoryService.getSessionById()`, then fetch rounds with `roundRepository.findByRoomId()`, and votes with `voteRepository.findByRoundId()`. This gives you all the data needed for CSV/PDF export.
 
-*   **Note: Reactive Patterns** - All existing services in the project return `Uni<>` or `Multi<>` types from SmallRye Mutiny. Your ReportingService methods MUST return:
-    - `Uni<SessionSummaryDTO>` for `getBasicSessionSummary()`
-    - `Uni<DetailedSessionReportDTO>` for `getDetailedSessionReport()`
-    - `Uni<String>` for `generateExport()` (return job ID as String)
-    - Chain operations using `.onItem().transformToUni()` when you need to perform additional async queries.
+*   **Tip:** For CSV generation, the structure should include:
+    - Header row: "Round Number", "Story Title", "Participant Name", "Vote", "Average", "Median", "Consensus", "Started At", "Revealed At"
+    - Data rows: one row per vote, repeating round metadata for each vote in that round
+    - Consider also adding a summary section at the top with session-level stats
 
-*   **Warning: BigDecimal vs Double for Standard Deviation** - The Round entity uses `BigDecimal` for the average. However, for standard deviation calculations in Java, it's much easier to work with `double` or `Double`. You can convert card values to `Double` for the calculation, then wrap the result in `BigDecimal` for consistency with the rest of the codebase. Use `BigDecimal.valueOf(double)` for the conversion.
+*   **Tip:** For PDF generation, use PDFBox or iText to create:
+    - Title page with session metadata (room name, date, participants)
+    - Summary statistics table (total rounds, consensus rate, average vote)
+    - Round-by-round breakdown with vote details
+    - Optional: Simple bar chart showing vote distribution (you can use ASCII art or basic shapes if full charting is too complex)
 
-*   **Warning: Handle Non-Numeric Votes** - The codebase supports special card values like "?" (unknown), "∞" (infinity), "☕" (coffee break). When calculating numeric statistics (average, standard deviation):
-    1. Check if the card value is numeric using a try-catch with `Double.parseDouble(cardValue)`.
-    2. Skip non-numeric values in calculations.
-    3. Document this behavior in JavaDoc.
-    4. Consider adding a count of non-numeric votes to the detailed report for transparency.
+*   **Note:** S3 signed URL generation requires AWS SDK's `presignGetObject()` method. The URL should be valid for 7 days (604800 seconds). The object key should follow pattern: `exports/{sessionId}/{jobId}.{format}` (e.g., `exports/123e4567-e89b-12d3-a456-426614174000/abc-def-123.csv`)
 
-*   **Best Practice: Follow Existing Test Patterns** - I reviewed `BillingServiceTest.java` which shows the project's testing conventions:
-    - Use JUnit 5 with `@ExtendWith(MockitoExtension.class)`
-    - Mock dependencies with `@Mock` annotation
-    - Use `@InjectMocks` for the service under test
-    - Set up test data in `@BeforeEach` method
-    - Use AssertJ for assertions: `assertThat(...).isEqualTo(...)`
-    - Mock reactive returns with `Uni.createFrom().item(...)` or `Uni.createFrom().nullItem()`
-    - Use `when(...).thenReturn(...)` for stubbing
-    - Test both happy paths and exception scenarios (e.g., Free tier accessing Pro features)
+*   **Note:** Job status transitions must be atomic. Use Hibernate transactions (`@Transactional`) when updating the ExportJob entity status. The flow is:
+    1. Receive message from Redis Stream → Load job by jobId or create if not exists (status: PENDING)
+    2. Update status to PROCESSING, set `processingStartedAt` timestamp
+    3. Generate export file (CSV or PDF)
+    4. Upload to S3, get signed URL
+    5. Update status to COMPLETED, set `completedAt` timestamp, store `downloadUrl`
+    6. If any step fails, update status to FAILED, set `failedAt` timestamp, store `errorMessage`
 
-*   **Critical: Tier Enforcement Exception Handling** - When `FeatureGate.requireCanAccessAdvancedReports(user)` throws `FeatureNotAvailableException`, this exception should propagate up to the REST controller layer where it will be caught by `FeatureNotAvailableExceptionMapper` (which I can see exists in the project). This mapper will convert it to a 403 HTTP response. DO NOT catch this exception in the service layer; let it bubble up.
+*   **Warning:** Redis Stream consumer group creation (`xgroup create`) must handle "BUSYGROUP" error (group already exists). Wrap in try-catch and ignore if group exists, or use MKSTREAM option.
 
-*   **Critical: Session vs Room Relationship** - The SessionHistory entity has a `room` field (ManyToOne relationship). To get rounds and votes for a session:
-    1. Retrieve the SessionHistory by sessionId using SessionHistoryService.
-    2. Get the roomId from `sessionHistory.room.roomId` (6-character nanoid).
-    3. Query rounds using `roundRepository.findByRoomId(roomId)`.
-    4. Note: This will return ALL rounds for that room, not just the ones in this specific session. You may need to filter by timestamp (rounds where `startedAt` is between `sessionHistory.id.startedAt` and `sessionHistory.endedAt` or the latest round timestamp).
+*   **Tip:** For exponential backoff retry, you can use Quarkus's built-in `@Retry` annotation from MicroProfile Fault Tolerance, or implement manually with delays: 1s, 2s, 4s, 8s, 16s (max). Only retry on transient errors (S3 connection failures, timeouts), NOT on data validation errors.
 
-*   **Performance Consideration:** The detailed report may require multiple database queries (SessionHistory, Rounds, Votes for each round, RoomParticipants). Use reactive composition with `Uni.combine()` or `Multi.toUni()` to execute queries efficiently. Avoid blocking operations or sequential queries where parallel queries are possible.
+*   **Tip:** The project uses `io.quarkus.logging.Log` for logging (as seen in ReportingService and RoomEventPublisher). Use structured logging:
+    - `Log.infof("Processing export job %s for session %s (format: %s)", jobId, sessionId, format)`
+    - `Log.errorf(exception, "Failed to upload export file for job %s", jobId)`
 
----
+*   **Note:** Since this is a background worker, you need to ensure it runs continuously. Use either:
+    - `@ApplicationScoped` bean with `@Observes StartupEvent` to start a consumer loop
+    - OR `@Scheduled(every = "5s")` to poll for new messages periodically
+    - The consumer loop should run indefinitely with proper error handling to prevent crashes
 
-## 4. Export Job Data Structure Recommendation
+*   **Warning:** You need to create a database migration script for the `export_job` table. Based on existing migrations (V1, V2, V3, V4), create `V5__create_export_job_table.sql` with:
+    - `job_id UUID PRIMARY KEY`
+    - `session_id UUID NOT NULL` (no FK since SessionHistory has composite key)
+    - `user_id UUID NOT NULL` (FK to users table)
+    - `format VARCHAR(10) NOT NULL` (CSV or PDF)
+    - `status VARCHAR(20) NOT NULL` (enum: PENDING, PROCESSING, COMPLETED, FAILED)
+    - `download_url TEXT` (nullable, set when completed)
+    - `error_message TEXT` (nullable, set when failed)
+    - `created_at TIMESTAMP NOT NULL DEFAULT now()`
+    - `processing_started_at TIMESTAMP`
+    - `completed_at TIMESTAMP`
+    - `failed_at TIMESTAMP`
+    - Indexes: `(status, created_at DESC)`, `(user_id, created_at DESC)`
 
-Based on the analysis, here's the recommended structure for the Redis Stream message:
+### Architectural Decisions to Respect
 
-```java
-Map<String, String> jobData = Map.of(
-    "jobId", UUID.randomUUID().toString(),  // Unique job ID
-    "sessionId", sessionId.toString(),
-    "format", format,  // "CSV" or "PDF"
-    "userId", user.userId.toString(),
-    "requestedAt", Instant.now().toString()
-);
-```
+*   **Decision:** The project uses reactive programming throughout (Mutiny `Uni` and `Multi`). All database operations return `Uni<>` types. You MUST maintain this pattern in your S3 operations and job processing. If AWS SDK v2 doesn't have built-in reactive support, wrap blocking calls with `Uni.createFrom().item(() -> blockingOperation()).runSubscriptionOn(Infrastructure.getDefaultWorkerPool())`.
 
-The worker (to be implemented in I6.T3) will consume from this stream using `XREAD` or `XREADGROUP` commands.
+*   **Decision:** The project uses PostgreSQL for persistent state, Redis for caching and messaging, and now S3 for object storage. The ExportJob status MUST be stored in PostgreSQL (source of truth), NOT just in Redis, to survive restarts and enable status polling via REST API.
+
+*   **Decision:** All errors should use domain exceptions and be properly mapped. Create `ExportJobNotFoundException`, `ExportGenerationException`, and `S3UploadException` following the pattern in `security/FeatureNotAvailableException.java` and `room/RoomNotFoundException.java`.
 
 ---
 
-## 5. User Consistency Metric Formula
+## 4. Next Steps Checklist
 
-Standard deviation calculation for user's votes:
+Before you begin coding, ensure you:
 
-```
-For each participant P:
-1. Collect all numeric votes V = {v1, v2, ..., vn} from all rounds
-2. Calculate mean: μ = (v1 + v2 + ... + vn) / n
-3. Calculate variance: σ² = Σ((vi - μ)²) / n
-4. Calculate standard deviation: σ = sqrt(σ²)
+1. ✓ Read and understand the `ReportingService.enqueueExportJob()` method to know the exact job message format
+2. ✓ Add Maven dependencies: commons-csv, pdfbox (or itext), quarkus-amazon-s3 (or AWS SDK S3)
+3. ✓ Create database migration `V5__create_export_job_table.sql` with all required fields
+4. ✓ Create `ExportJob` entity following the pattern in `PaymentHistory.java`
+5. ✓ Create `JobStatus` enum with values: PENDING, PROCESSING, COMPLETED, FAILED
+6. ✓ Add S3 configuration properties to `application.properties`
+7. ✓ Study Redis Streams consumer API documentation for Quarkus
+8. ✓ Plan the consumer loop lifecycle (startup event or scheduled task)
 
-Lower σ indicates higher consistency (user votes similarly across rounds).
-Higher σ indicates lower consistency (user's votes vary widely).
-```
+Then implement in this order:
 
-A participant who always votes "5" would have σ = 0 (perfect consistency).
-A participant who votes {1, 3, 8, 13} would have σ ≈ 4.74 (low consistency).
+1. **ExportJob entity and migration** (persistence layer)
+2. **S3Adapter** (infrastructure integration)
+3. **CsvExporter** (business logic)
+4. **PdfExporter** (business logic)
+5. **ExportJobProcessor** (orchestration and consumer loop)
+6. **Error handling and retry logic**
+7. **Integration tests** (use Testcontainers for Redis and LocalStack for S3)
 
----
-
-## 6. DTO Structure Recommendations
-
-### SessionSummaryDTO (Free Tier)
-```java
-public class SessionSummaryDTO {
-    @JsonProperty("session_id")
-    private UUID sessionId;
-
-    @JsonProperty("room_title")
-    private String roomTitle;
-
-    @JsonProperty("started_at")
-    private Instant startedAt;
-
-    @JsonProperty("total_stories")
-    private Integer totalStories;
-
-    @JsonProperty("total_rounds")
-    private Integer totalRounds;
-
-    @JsonProperty("consensus_rate")
-    private BigDecimal consensusRate;  // 0.0 to 1.0
-
-    @JsonProperty("average_vote")
-    private BigDecimal averageVote;
-
-    @JsonProperty("participant_count")
-    private Integer participantCount;
-}
-```
-
-### DetailedSessionReportDTO (Pro Tier)
-```java
-public class DetailedSessionReportDTO {
-    // All fields from SessionSummaryDTO
-    @JsonProperty("session_id")
-    private UUID sessionId;
-
-    // ... other basic fields ...
-
-    // Detailed additions
-    @JsonProperty("rounds")
-    private List<RoundDetailDTO> rounds;
-
-    @JsonProperty("user_consistency")
-    private Map<String, BigDecimal> userConsistency;  // displayName -> std dev
-
-    public static class RoundDetailDTO {
-        @JsonProperty("round_number")
-        private Integer roundNumber;
-
-        @JsonProperty("story_title")
-        private String storyTitle;
-
-        @JsonProperty("votes")
-        private List<VoteDetailDTO> votes;
-
-        @JsonProperty("average")
-        private BigDecimal average;
-
-        @JsonProperty("median")
-        private String median;
-
-        @JsonProperty("consensus_reached")
-        private Boolean consensusReached;
-    }
-
-    public static class VoteDetailDTO {
-        @JsonProperty("participant_name")
-        private String participantName;
-
-        @JsonProperty("card_value")
-        private String cardValue;
-
-        @JsonProperty("voted_at")
-        private Instant votedAt;
-    }
-}
-```
-
-This structure provides a complete guide for implementing the ReportingService with tier-based access control, detailed analytics, and export job enqueuing capabilities.
+Good luck! Remember to follow the reactive patterns, use structured logging, and handle errors gracefully with proper status transitions.
