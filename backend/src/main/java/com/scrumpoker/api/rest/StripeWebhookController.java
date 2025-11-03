@@ -1,6 +1,11 @@
 package com.scrumpoker.api.rest;
 
-import com.scrumpoker.domain.billing.*;
+import com.scrumpoker.domain.billing.BillingService;
+import com.scrumpoker.domain.billing.PaymentHistory;
+import com.scrumpoker.domain.billing.PaymentStatus;
+import com.scrumpoker.domain.billing.SubscriptionStatus;
+import com.scrumpoker.domain.billing.WebhookEventLog;
+import com.scrumpoker.domain.billing.WebhookEventStatus;
 import com.scrumpoker.repository.PaymentHistoryRepository;
 import com.scrumpoker.repository.SubscriptionRepository;
 import com.scrumpoker.repository.WebhookEventLogRepository;
@@ -21,8 +26,6 @@ import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.eclipse.microprofile.openapi.annotations.Operation;
-import org.eclipse.microprofile.openapi.annotations.media.Content;
-import org.eclipse.microprofile.openapi.annotations.media.Schema;
 import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
 import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 import org.jboss.logging.Logger;
@@ -46,32 +49,41 @@ import java.time.Instant;
  */
 @Path("/api/v1/subscriptions/webhook")
 @Produces(MediaType.APPLICATION_JSON)
-@Tag(name = "Billing", description = "Stripe webhook endpoints for subscription events")
+@Tag(name = "Billing",
+     description = "Stripe webhook endpoints for subscription events")
 public class StripeWebhookController {
 
-    private static final Logger LOG = Logger.getLogger(StripeWebhookController.class);
+    /** Logger instance for webhook processing. */
+    private static final Logger LOG =
+        Logger.getLogger(StripeWebhookController.class);
 
+    /** Domain service for billing operations. */
     @Inject
-    BillingService billingService;
+    private BillingService billingService;
 
+    /** Repository for subscription entities. */
     @Inject
-    SubscriptionRepository subscriptionRepository;
+    private SubscriptionRepository subscriptionRepository;
 
+    /** Repository for payment history entities. */
     @Inject
-    PaymentHistoryRepository paymentHistoryRepository;
+    private PaymentHistoryRepository paymentHistoryRepository;
 
+    /** Repository for webhook event log entities. */
     @Inject
-    WebhookEventLogRepository webhookEventLogRepository;
+    private WebhookEventLogRepository webhookEventLogRepository;
 
+    /** Stripe webhook signing secret for signature verification. */
     @ConfigProperty(name = "stripe.webhook-secret")
-    String webhookSecret;
+    private String webhookSecret;
 
     /**
-     * POST /api/v1/subscriptions/webhook - Receive Stripe webhook events.
+     * POST /api/v1/subscriptions/webhook - Receive Stripe webhooks.
      * <p>
-     * Stripe sends webhook events for subscription lifecycle changes and payments.
-     * This endpoint verifies the signature, checks idempotency, processes the event,
-     * and always returns 200 OK to prevent Stripe retries.
+     * Stripe sends webhook events for subscription lifecycle changes
+     * and payments. This endpoint verifies the signature, checks
+     * idempotency, processes the event, and always returns 200 OK
+     * to prevent Stripe retries.
      * </p>
      * <p>
      * Event types handled:
@@ -91,9 +103,10 @@ public class StripeWebhookController {
     @PermitAll
     @Operation(
         summary = "Receive Stripe webhook events",
-        description = "Webhook endpoint for Stripe subscription lifecycle events. "
-            + "Verifies webhook signature, processes events idempotently, "
-            + "and always returns 200 OK to acknowledge receipt."
+        description = "Webhook endpoint for Stripe subscription "
+            + "lifecycle events. Verifies webhook signature, processes "
+            + "events idempotently, and always returns 200 OK to "
+            + "acknowledge receipt."
     )
     @APIResponse(
         responseCode = "200",
@@ -105,17 +118,21 @@ public class StripeWebhookController {
     )
     public Uni<Response> handleWebhook(
             final String payload,
-            @HeaderParam("Stripe-Signature") final String signatureHeader) {
+            @HeaderParam("Stripe-Signature") final String signatureHeader
+    ) {
 
-        LOG.debugf("Received Stripe webhook (signature header present: %s)",
-                   signatureHeader != null);
+        LOG.debugf(
+            "Received Stripe webhook (signature header present: %s)",
+            signatureHeader != null);
 
         // Step 1: Verify webhook signature
         Event event;
         try {
-            event = Webhook.constructEvent(payload, signatureHeader, webhookSecret);
-            LOG.infof("Webhook signature verified for event %s (type: %s)",
-                      event.getId(), event.getType());
+            event = Webhook.constructEvent(
+                payload, signatureHeader, webhookSecret);
+            LOG.infof(
+                "Webhook signature verified for event %s (type: %s)",
+                event.getId(), event.getType());
         } catch (SignatureVerificationException e) {
             LOG.errorf(e, "Webhook signature verification failed");
             return Uni.createFrom().item(
@@ -129,14 +146,17 @@ public class StripeWebhookController {
         return processEventIdempotently(event)
             .onItemOrFailure().transform((ignored, throwable) -> {
                 if (throwable != null) {
-                    // Log error but still return 200 OK to prevent Stripe retries
-                    LOG.errorf(throwable,
-                               "Failed to process webhook event %s (type: %s), "
-                               + "returning 200 OK to prevent retries",
-                               event.getId(), event.getType());
+                    // Log error but return 200 OK to prevent retries
+                    LOG.errorf(
+                        throwable,
+                        "Failed to process webhook event %s (type: %s), "
+                        + "returning 200 OK to prevent retries",
+                        event.getId(), event.getType());
                 } else {
-                    LOG.infof("Successfully processed webhook event %s (type: %s)",
-                              event.getId(), event.getType());
+                    LOG.infof(
+                        "Successfully processed webhook event %s "
+                        + "(type: %s)",
+                        event.getId(), event.getType());
                 }
                 return Response.ok().build();
             });
@@ -155,12 +175,13 @@ public class StripeWebhookController {
         final String eventId = event.getId();
         final String eventType = event.getType();
 
-        // Step 1: Check idempotency - has this event been processed before?
+        // Step 1: Check idempotency - already processed?
         return webhookEventLogRepository.findByEventId(eventId)
             .onItem().transformToUni(existingLog -> {
                 if (existingLog != null) {
-                    LOG.infof("Event %s already processed (status: %s), skipping",
-                              eventId, existingLog.status);
+                    LOG.infof(
+                        "Event %s already processed (status: %s), skipping",
+                        eventId, existingLog.status);
                     return Uni.createFrom().voidItem();
                 }
 
@@ -175,11 +196,12 @@ public class StripeWebhookController {
                         return webhookEventLogRepository.persist(log);
                     })
                     .onFailure().recoverWithUni(throwable -> {
-                        // Record failed processing (still return voidItem to signal completion)
-                        LOG.errorf(throwable,
-                                   "Event processing failed for %s (type: %s), "
-                                   + "recording FAILED status",
-                                   eventId, eventType);
+                        // Record failed processing
+                        LOG.errorf(
+                            throwable,
+                            "Event processing failed for %s (type: %s), "
+                            + "recording FAILED status",
+                            eventId, eventType);
 
                         WebhookEventLog log = new WebhookEventLog();
                         log.eventId = eventId;
@@ -277,13 +299,16 @@ public class StripeWebhookController {
 
         final String stripeSubId = subscription.getId();
         final String stripeStatus = subscription.getStatus();
-        final SubscriptionStatus domainStatus = mapStripeToDomainStatus(stripeStatus);
+        final SubscriptionStatus domainStatus =
+            mapStripeToDomainStatus(stripeStatus);
 
-        LOG.infof("Processing subscription updated: %s (Stripe status: %s → "
-                  + "Domain status: %s)",
-                  stripeSubId, stripeStatus, domainStatus);
+        LOG.infof(
+            "Processing subscription updated: %s "
+            + "(Stripe status: %s → Domain status: %s)",
+            stripeSubId, stripeStatus, domainStatus);
 
-        return billingService.syncSubscriptionStatus(stripeSubId, domainStatus);
+        return billingService.syncSubscriptionStatus(
+            stripeSubId, domainStatus);
     }
 
     /**
@@ -328,40 +353,49 @@ public class StripeWebhookController {
             .orElse(null);
 
         if (invoice == null) {
-            LOG.errorf("Failed to deserialize invoice from event %s", event.getId());
+            LOG.errorf(
+                "Failed to deserialize invoice from event %s",
+                event.getId());
             return Uni.createFrom().voidItem();
         }
 
         final String invoiceId = invoice.getId();
         final String stripeSubId = invoice.getSubscription();
 
-        // Skip if invoice is not for a subscription (e.g., one-time payment)
+        // Skip if invoice is not subscription-related
         if (stripeSubId == null) {
-            LOG.infof("Skipping invoice %s (not subscription-related)", invoiceId);
+            LOG.infof(
+                "Skipping invoice %s (not subscription-related)",
+                invoiceId);
             return Uni.createFrom().voidItem();
         }
 
-        LOG.infof("Processing payment succeeded: invoice %s, subscription %s, "
-                  + "amount %d %s",
-                  invoiceId, stripeSubId,
-                  invoice.getAmountPaid(), invoice.getCurrency());
+        LOG.infof(
+            "Processing payment succeeded: invoice %s, "
+            + "subscription %s, amount %d %s",
+            invoiceId, stripeSubId,
+            invoice.getAmountPaid(), invoice.getCurrency());
 
         // Step 1: Check for duplicate invoice (idempotency)
         return paymentHistoryRepository.findByStripeInvoiceId(invoiceId)
             .onItem().transformToUni(existingPayment -> {
                 if (existingPayment != null) {
-                    LOG.infof("Payment for invoice %s already recorded, skipping",
-                              invoiceId);
+                    LOG.infof(
+                        "Payment for invoice %s already recorded, "
+                        + "skipping",
+                        invoiceId);
                     return Uni.createFrom().voidItem();
                 }
 
                 // Step 2: Find subscription to link payment
-                return subscriptionRepository.findByStripeSubscriptionId(stripeSubId)
+                return subscriptionRepository
+                    .findByStripeSubscriptionId(stripeSubId)
                     .onItem().transformToUni(subscription -> {
                         if (subscription == null) {
-                            LOG.warnf("Subscription %s not found for invoice %s, "
-                                      + "skipping payment record",
-                                      stripeSubId, invoiceId);
+                            LOG.warnf(
+                                "Subscription %s not found for "
+                                + "invoice %s, skipping payment record",
+                                stripeSubId, invoiceId);
                             return Uni.createFrom().voidItem();
                         }
 
@@ -369,19 +403,26 @@ public class StripeWebhookController {
                         PaymentHistory payment = new PaymentHistory();
                         payment.subscription = subscription;
                         payment.stripeInvoiceId = invoiceId;
-                        payment.amount = invoice.getAmountPaid().intValue();
-                        payment.currency = invoice.getCurrency().toUpperCase();
+                        payment.amount =
+                            invoice.getAmountPaid().intValue();
+                        payment.currency =
+                            invoice.getCurrency().toUpperCase();
                         payment.status = PaymentStatus.SUCCEEDED;
-                        payment.paidAt = invoice.getStatusTransitions().getPaidAt() != null
+                        payment.paidAt =
+                            invoice.getStatusTransitions()
+                                .getPaidAt() != null
                             ? Instant.ofEpochSecond(
-                                invoice.getStatusTransitions().getPaidAt())
+                                invoice.getStatusTransitions()
+                                    .getPaidAt())
                             : Instant.now();
 
                         return paymentHistoryRepository.persist(payment)
                             .onItem().invoke(() ->
-                                LOG.infof("Created payment history record for "
-                                          + "invoice %s (amount: %d %s)",
-                                          invoiceId, payment.amount, payment.currency)
+                                LOG.infof(
+                                    "Created payment history record "
+                                    + "for invoice %s (amount: %d %s)",
+                                    invoiceId, payment.amount,
+                                    payment.currency)
                             )
                             .replaceWithVoid();
                     });
@@ -401,7 +442,9 @@ public class StripeWebhookController {
             .orElse(null);
 
         if (invoice == null) {
-            LOG.errorf("Failed to deserialize invoice from event %s", event.getId());
+            LOG.errorf(
+                "Failed to deserialize invoice from event %s",
+                event.getId());
             return Uni.createFrom().voidItem();
         }
 
@@ -409,12 +452,15 @@ public class StripeWebhookController {
         final String stripeSubId = invoice.getSubscription();
 
         if (stripeSubId == null) {
-            LOG.infof("Skipping invoice %s (not subscription-related)", invoiceId);
+            LOG.infof(
+                "Skipping invoice %s (not subscription-related)",
+                invoiceId);
             return Uni.createFrom().voidItem();
         }
 
-        LOG.infof("Processing payment failed: invoice %s, subscription %s",
-                  invoiceId, stripeSubId);
+        LOG.infof(
+            "Processing payment failed: invoice %s, subscription %s",
+            invoiceId, stripeSubId);
 
         return billingService.syncSubscriptionStatus(
             stripeSubId,
@@ -423,12 +469,13 @@ public class StripeWebhookController {
     }
 
     /**
-     * Maps Stripe subscription status string to domain SubscriptionStatus enum.
+     * Maps Stripe subscription status string to domain status enum.
      *
      * @param stripeStatus Stripe subscription status
      * @return Domain SubscriptionStatus enum value
      */
-    private SubscriptionStatus mapStripeToDomainStatus(final String stripeStatus) {
+    private SubscriptionStatus mapStripeToDomainStatus(
+            final String stripeStatus) {
         return switch (stripeStatus) {
             case "active" -> SubscriptionStatus.ACTIVE;
             case "past_due" -> SubscriptionStatus.PAST_DUE;
@@ -437,8 +484,10 @@ public class StripeWebhookController {
             case "incomplete", "incomplete_expired", "unpaid" ->
                 SubscriptionStatus.PAST_DUE;
             default -> {
-                LOG.warnf("Unknown Stripe status '%s', defaulting to PAST_DUE",
-                          stripeStatus);
+                LOG.warnf(
+                    "Unknown Stripe status '%s', "
+                    + "defaulting to PAST_DUE",
+                    stripeStatus);
                 yield SubscriptionStatus.PAST_DUE;
             }
         };

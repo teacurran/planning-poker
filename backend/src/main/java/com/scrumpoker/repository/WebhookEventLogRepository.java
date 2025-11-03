@@ -11,10 +11,11 @@ import java.util.List;
 
 /**
  * Reactive Panache repository for WebhookEventLog entity.
- * Provides idempotency checks and event processing audit trail.
+ * Provides idempotency checks and event processing audit.
  */
 @ApplicationScoped
-public class WebhookEventLogRepository implements PanacheRepositoryBase<WebhookEventLog, String> {
+public class WebhookEventLogRepository
+        implements PanacheRepositoryBase<WebhookEventLog, String> {
 
     /**
      * Find event log by Stripe event ID.
@@ -35,10 +36,13 @@ public class WebhookEventLogRepository implements PanacheRepositoryBase<WebhookE
      * @param endDate The end of the date range
      * @return Uni of list of webhook event logs
      */
-    public Uni<List<WebhookEventLog>> findByDateRange(final Instant startDate,
-                                                       final Instant endDate) {
-        return find("processedAt >= ?1 and processedAt <= ?2 order by processedAt desc",
-                    startDate, endDate).list();
+    public Uni<List<WebhookEventLog>> findByDateRange(
+            final Instant startDate,
+            final Instant endDate) {
+        return find(
+            "processedAt >= ?1 and processedAt <= ?2 "
+            + "order by processedAt desc",
+            startDate, endDate).list();
     }
 
     /**
@@ -47,19 +51,25 @@ public class WebhookEventLogRepository implements PanacheRepositoryBase<WebhookE
      * @param status The webhook event status
      * @return Uni of list of webhook event logs
      */
-    public Uni<List<WebhookEventLog>> findByStatus(final WebhookEventStatus status) {
-        return find("status = ?1 order by processedAt desc", status).list();
+    public Uni<List<WebhookEventLog>> findByStatus(
+            final WebhookEventStatus status) {
+        return find(
+            "status = ?1 order by processedAt desc",
+            status).list();
     }
 
     /**
      * Find events by event type.
      * Useful for analyzing specific webhook event processing.
      *
-     * @param eventType The Stripe event type (e.g., "customer.subscription.created")
+     * @param eventType Stripe event type
      * @return Uni of list of webhook event logs
      */
-    public Uni<List<WebhookEventLog>> findByEventType(final String eventType) {
-        return find("eventType = ?1 order by processedAt desc", eventType).list();
+    public Uni<List<WebhookEventLog>> findByEventType(
+            final String eventType) {
+        return find(
+            "eventType = ?1 order by processedAt desc",
+            eventType).list();
     }
 
     /**

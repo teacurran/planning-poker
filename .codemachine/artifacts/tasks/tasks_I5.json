@@ -42,7 +42,7 @@
     "acceptance_criteria": "Webhook endpoint receives Stripe events, Signature verification rejects invalid signatures (401 Unauthorized), Subscription created event updates database subscription status, Payment succeeded event creates PaymentHistory record, Subscription deleted event marks subscription as canceled, Duplicate event IDs skipped (idempotency), Webhook processing errors logged but return 200 to Stripe",
     "dependencies": ["I5.T2"],
     "parallelizable": false,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I5.T4",

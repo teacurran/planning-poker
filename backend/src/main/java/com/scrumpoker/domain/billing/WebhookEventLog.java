@@ -1,7 +1,13 @@
 package com.scrumpoker.domain.billing;
 
 import io.quarkus.hibernate.reactive.panache.PanacheEntityBase;
-import jakarta.persistence.*;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.Id;
+import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import org.hibernate.annotations.CreationTimestamp;
@@ -10,34 +16,48 @@ import java.time.Instant;
 
 /**
  * Idempotency log for Stripe webhook events.
- * Stores processed event IDs to prevent duplicate processing on webhook retries.
+ * Stores processed event IDs to prevent duplicate processing on retries.
  * <p>
- * Stripe retries failed webhooks for up to 3 days, so idempotency is critical
- * to prevent duplicate subscription/payment updates.
+ * Stripe retries failed webhooks for up to 3 days, so idempotency
+ * is critical to prevent duplicate subscription/payment updates.
  * </p>
  */
 @Entity
 @Table(name = "webhook_event_log", uniqueConstraints = {
-    @UniqueConstraint(name = "uq_webhook_event_id", columnNames = "event_id")
+    @UniqueConstraint(
+        name = "uq_webhook_event_id",
+        columnNames = "event_id"
+    )
 })
+@SuppressWarnings("checkstyle:VisibilityModifier")
 public class WebhookEventLog extends PanacheEntityBase {
 
+    /**
+     * Maximum length for Stripe event IDs and types.
+     */
+    private static final int MAX_EVENT_STRING_LENGTH = 100;
+
+    // CHECKSTYLE:OFF VisibilityModifier - Panache active record pattern
     /**
      * Stripe event ID (e.g., "evt_1234567890abcdefghijklmnop").
      * Primary key for natural idempotency.
      */
     @Id
     @NotNull
-    @Size(max = 100)
-    @Column(name = "event_id", nullable = false, length = 100)
+    @Size(max = MAX_EVENT_STRING_LENGTH)
+    @Column(name = "event_id",
+            nullable = false,
+            length = MAX_EVENT_STRING_LENGTH)
     public String eventId;
 
     /**
      * Stripe event type (e.g., "customer.subscription.created").
      */
     @NotNull
-    @Size(max = 100)
-    @Column(name = "event_type", nullable = false, length = 100)
+    @Size(max = MAX_EVENT_STRING_LENGTH)
+    @Column(name = "event_type",
+            nullable = false,
+            length = MAX_EVENT_STRING_LENGTH)
     public String eventType;
 
     /**
@@ -46,7 +66,9 @@ public class WebhookEventLog extends PanacheEntityBase {
      */
     @NotNull
     @CreationTimestamp
-    @Column(name = "processed_at", nullable = false, updatable = false)
+    @Column(name = "processed_at",
+            nullable = false,
+            updatable = false)
     public Instant processedAt;
 
     /**
@@ -56,6 +78,9 @@ public class WebhookEventLog extends PanacheEntityBase {
      */
     @NotNull
     @Enumerated(EnumType.STRING)
-    @Column(name = "status", nullable = false, columnDefinition = "webhook_event_status_enum")
+    @Column(name = "status",
+            nullable = false,
+            columnDefinition = "webhook_event_status_enum")
     public WebhookEventStatus status;
+    // CHECKSTYLE:ON VisibilityModifier
 }
