@@ -42,7 +42,7 @@
     "acceptance_criteria": "SSO login creates audit log entry, Organization config change logged with before/after values, Member add event includes user ID and assigned role, Audit log query by orgId returns events sorted by timestamp, Async processing doesn't block main request thread, IP address and user agent correctly captured",
     "dependencies": [],
     "parallelizable": true,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I7.T4",
