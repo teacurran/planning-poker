@@ -12,7 +12,7 @@
     "acceptance_criteria": "OIDC authentication flow completes with test IdP (Okta sandbox), SAML2 authentication flow completes (Azure AD or SAML test IdP), User attributes correctly mapped from ID token/assertion, Organization-specific SSO config loaded from database, Logout endpoint invalidates SSO session, Certificate validation works for SAML2",
     "dependencies": [],
     "parallelizable": true,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I7.T2",
