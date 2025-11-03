@@ -42,24 +42,21 @@ This is the full specification of the task you must complete.
 
 The following are the relevant sections from the architecture and plan documents, which I found by analyzing the task description.
 
-### Context: API Design & REST Communication Patterns (from 04_Behavior_and_Communication.md)
+### Context: rest-api-endpoints (from 04_Behavior_and_Communication.md)
 
 ```markdown
-<!-- anchor: api-design-and-communication -->
-### 3.7. API Design & Communication
+#### REST API Endpoints Overview
 
-<!-- anchor: api-style -->
-#### API Style
+**Reporting & Analytics:**
+- `GET /api/v1/reports/sessions` - List session history (tier-gated pagination, filters)
+- `GET /api/v1/reports/sessions/{sessionId}` - Detailed session report (tier-gated round detail)
+- `POST /api/v1/reports/export` - Generate export job (CSV/PDF), returns job ID
+- `GET /api/v1/jobs/{jobId}` - Poll export job status, retrieve download URL
+```
 
-**Primary API Style:** **RESTful JSON API (OpenAPI 3.1 Specification)**
+### Context: synchronous-rest-pattern (from 04_Behavior_and_Communication.md)
 
-**Rationale:**
-- **Simplicity & Familiarity:** REST over HTTPS provides a well-understood contract for CRUD operations on resources (users, rooms, subscriptions)
-- **Tooling Ecosystem:** OpenAPI specification enables automatic client SDK generation (TypeScript for React frontend), API documentation (Swagger UI), and contract testing
-- **Caching Support:** HTTP semantics (ETags, Cache-Control headers) enable browser and CDN caching for read-heavy endpoints (room configurations, user profiles)
-- **Versioning Strategy:** URL-based versioning (`/api/v1/`) for backward compatibility during iterative releases
-
-<!-- anchor: synchronous-rest-pattern -->
+```markdown
 ##### Synchronous REST (Request/Response)
 
 **Use Cases:**
@@ -76,190 +73,65 @@ The following are the relevant sections from the architecture and plan documents
 - Error responses use standard HTTP status codes (4xx client errors, 5xx server errors)
 
 **Example Endpoints:**
-- `POST /api/v1/auth/oauth/callback` - Exchange OAuth2 code for JWT token
-- `POST /api/v1/rooms` - Create new estimation room
-- `GET /api/v1/rooms/{roomId}` - Retrieve room configuration
-- `PUT /api/v1/users/{userId}/preferences` - Update user preferences
-- `POST /api/v1/subscriptions/{subscriptionId}/upgrade` - Upgrade subscription tier
 - `GET /api/v1/reports/sessions?from=2025-01-01&to=2025-01-31` - Query session history
 ```
 
-### Context: OpenAPI Specification for Reporting Endpoints (from openapi.yaml)
+### Context: asynchronous-job-processing-pattern (from 04_Behavior_and_Communication.md)
 
-```yaml
-/api/v1/reports/sessions:
-  get:
-    tags:
-      - Reports
-    summary: List session history
-    description: |
-      Returns paginated session history with filters.
-      **Tier Requirements:**
-      - Free tier: Last 30 days, max 10 results
-      - Pro tier: Last 90 days, max 100 results
-      - Pro Plus/Enterprise: Unlimited history
-    operationId: listSessions
-    parameters:
-      - name: from
-        in: query
-        schema:
-          type: string
-          format: date
-        description: Start date (ISO 8601 format)
-        example: "2025-01-01"
-      - name: to
-        in: query
-        schema:
-          type: string
-          format: date
-        description: End date (ISO 8601 format)
-        example: "2025-01-31"
-      - name: roomId
-        in: query
-        schema:
-          type: string
-          pattern: '^[a-z0-9]{6}$'
-        description: Filter by room ID
-        example: "abc123"
-      - $ref: '#/components/parameters/PageParam'
-      - $ref: '#/components/parameters/SizeParam'
-    responses:
-      '200':
-        description: Session list retrieved
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/SessionListResponse'
-      '401':
-        $ref: '#/components/responses/Unauthorized'
-      '403':
-        description: Insufficient subscription tier
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ErrorResponse'
-      '500':
-        $ref: '#/components/responses/InternalServerError'
+```markdown
+##### Asynchronous Job Processing (Fire-and-Forget)
 
-/api/v1/reports/sessions/{sessionId}:
-  get:
-    tags:
-      - Reports
-    summary: Get detailed session report
-    description: |
-      Returns detailed session report including all rounds and votes.
-      **Tier Requirements:**
-      - Free tier: Summary only (average, median)
-      - Pro tier and above: Full round-by-round detail with individual votes
-    operationId: getSessionReport
-    parameters:
-      - name: sessionId
-        in: path
-        required: true
-        schema:
-          type: string
-          format: uuid
-        description: Session ID
-        example: "123e4567-e89b-12d3-a456-426614174000"
-    responses:
-      '200':
-        description: Session report retrieved
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/SessionDetailDTO'
-      '401':
-        $ref: '#/components/responses/Unauthorized'
-      '403':
-        description: Insufficient subscription tier for detailed report
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ErrorResponse'
-      '404':
-        $ref: '#/components/responses/NotFound'
-      '500':
-        $ref: '#/components/responses/InternalServerError'
+**Use Cases:**
+- Report export generation (CSV, PDF) for large datasets
+- Email notifications (subscription confirmations, payment receipts)
+- Analytics aggregation for organizational dashboards
+- Audit log archival to object storage
 
-/api/v1/reports/export:
-  post:
-    tags:
-      - Reports
-    summary: Generate export job (CSV/PDF)
-    description: |
-      Creates an asynchronous export job for session data. Returns job ID for polling status.
-      **Tier Requirements:** Pro tier or higher
-    operationId: createExportJob
-    requestBody:
-      required: true
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ExportRequest'
-    responses:
-      '202':
-        description: Export job created
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ExportJobResponse'
-      '400':
-        $ref: '#/components/responses/BadRequest'
-      '401':
-        $ref: '#/components/responses/Unauthorized'
-      '403':
-        description: Export feature requires Pro tier or higher
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ErrorResponse'
-      '500':
-        $ref: '#/components/responses/InternalServerError'
+**Pattern Characteristics:**
+- REST endpoint returns `202 Accepted` immediately with job ID
+- Job message enqueued to Redis Stream
+- Background worker consumes stream, processes job
+- Client polls status endpoint or receives WebSocket notification on completion
+- Job results stored in object storage (S3) with time-limited signed URLs
 
-/api/v1/jobs/{jobId}:
-  get:
-    tags:
-      - Reports
-    summary: Poll export job status
-    description: |
-      Returns job status (PENDING, PROCESSING, COMPLETED, FAILED). When COMPLETED, includes download URL (expires in 24h).
-    operationId: getJobStatus
-    parameters:
-      - name: jobId
-        in: path
-        required: true
-        schema:
-          type: string
-          format: uuid
-        description: Job ID returned from export endpoint
-        example: "123e4567-e89b-12d3-a456-426614174000"
-    responses:
-      '200':
-        description: Job status retrieved
+**Flow Example (Report Export):**
+1. Client: `POST /api/v1/reports/export` → Server: `202 Accepted` + `{"jobId": "uuid", "status": "pending"}`
+2. Server enqueues job to Redis Stream: `jobs:reports`
+3. Background worker consumes job, queries PostgreSQL, generates CSV
+4. Worker uploads file to S3, updates job status in database
+5. Client polls: `GET /api/v1/jobs/{jobId}` → `{"status": "completed", "downloadUrl": "https://..."}`
 ```
 
-**Standard Parameters:**
-```yaml
-PageParam:
-  name: page
-  in: query
-  schema:
-    type: integer
-    minimum: 0
-    default: 0
-  description: Page number (0-indexed)
-  example: 0
+### Context: reporting-requirements (from 01_Context_and_Drivers.md)
 
-SizeParam:
-  name: size
-  in: query
-  schema:
-    type: integer
-    minimum: 1
-    maximum: 100
-    default: 20
-  description: Page size
-  example: 20
+```markdown
+#### Reporting Requirements
+- **Free Tier:** Basic session summaries (story count, consensus rate, average vote)
+- **Pro Tier:** Round-level detail, user consistency metrics, CSV/JSON/PDF export
+- **Enterprise Tier:** Organizational dashboards, team trends, SSO-filtered reports, audit logs
+```
+
+### Context: performance-nfrs (from 01_Context_and_Drivers.md)
+
+```markdown
+#### Performance
+- **Latency:** <200ms round-trip time for WebSocket messages within region
+- **Throughput:** Support 500 concurrent sessions with 6,000 active WebSocket connections
+- **Response Time:** REST API endpoints respond within <500ms for p95
+- **Real-time Updates:** State synchronization across clients within 100ms
+```
+
+### Context: task-i6-t4 (from 02_Iteration_I6.md)
+
+```markdown
+*   **Task 6.4: Create Reporting REST Controllers**
+    *   **Acceptance Criteria:**
+        *   GET /reports/sessions returns paginated list (default 20 per page)
+        *   GET /reports/sessions/{id} returns basic summary for Free tier
+        *   Pro tier user gets detailed report with round breakdown
+        *   POST /reports/export creates job and returns job ID
+        *   GET /jobs/{jobId} returns PENDING while processing, COMPLETED with URL when done
+        *   Unauthorized access to other user's sessions returns 403
 ```
 
 ---
@@ -271,101 +143,126 @@ The following analysis is based on my direct review of the current codebase. Use
 ### Relevant Existing Code
 
 *   **File:** `backend/src/main/java/com/scrumpoker/domain/reporting/ReportingService.java`
-    *   **Summary:** Core service implementing tier-gated analytics with three main capabilities: `getBasicSessionSummary()` for Free tier, `getDetailedSessionReport()` for Pro tier with round-by-round breakdown, and `generateExport()` for CSV/PDF export job enqueuing via Redis Stream.
-    *   **Recommendation:** You MUST inject this service into your ReportingController. The service already handles all tier enforcement via `FeatureGate`. Methods return `Uni<SessionSummaryDTO>` and `Uni<DetailedSessionReportDTO>`.
-    *   **Key Methods:**
-        - `getBasicSessionSummary(UUID sessionId)` - Available to all tiers, returns basic stats
-        - `getDetailedSessionReport(UUID sessionId, User user)` - Requires PRO tier, throws FeatureNotAvailableException for Free users
-        - `generateExport(UUID sessionId, String format, User user)` - Requires PRO tier, returns Redis Stream message ID (job ID)
+    *   **Summary:** This is the core service you MUST inject and use. It provides three critical methods:
+        - `getBasicSessionSummary(UUID sessionId)` - Returns `Uni<SessionSummaryDTO>` for Free tier users (no tier enforcement at this level)
+        - `getDetailedSessionReport(UUID sessionId, User user)` - Returns `Uni<DetailedSessionReportDTO>` for Pro tier users (enforces tier via FeatureGate internally)
+        - `generateExport(UUID sessionId, String format, User user)` - Returns `Uni<String>` (jobId as String, not UUID) for Pro tier users (enforces tier via FeatureGate internally)
+    *   **Recommendation:** You MUST use these exact methods in your controller. Do NOT attempt to bypass the service layer or call repositories directly. The service handles all tier enforcement and business logic.
 
 *   **File:** `backend/src/main/java/com/scrumpoker/domain/reporting/SessionHistoryService.java`
-    *   **Summary:** Service for querying session history records with methods like `getUserSessions(userId, from, to)` for date range queries.
-    *   **Recommendation:** You MUST inject this service for the session list endpoint. Use it to fetch paginated sessions and convert to DTOs.
+    *   **Summary:** This service handles session history queries with proper partition optimization for PostgreSQL. It exposes:
+        - `getUserSessions(UUID userId, Instant from, Instant to)` - Returns `Uni<List<SessionHistory>>` with partition-optimized queries
+        - `getSessionById(UUID sessionId)` - Returns `Uni<SessionHistory>` (may scan multiple partitions)
+    *   **Recommendation:** You MUST inject this service for the session list endpoint. Use `getUserSessions()` for date-range queries to leverage partition pruning. The service already returns reactive `Uni<>` types compatible with your controller methods.
 
-*   **File:** `backend/src/main/java/com/scrumpoker/domain/reporting/SessionSummaryDTO.java`
-    *   **Summary:** DTO for basic session summary (Free tier). Contains fields: sessionId, roomTitle, startedAt, endedAt, totalStories, totalRounds, consensusRate, averageVote, participantCount, totalVotes.
-    *   **Recommendation:** This DTO should be used for the session list response and for Free tier session detail responses.
+*   **File:** `backend/src/main/java/com/scrumpoker/api/rest/dto/SessionListResponse.java`
+    *   **Summary:** This DTO is ALREADY created and ready to use. It contains:
+        - `List<SessionSummaryDTO> sessions` - The session summaries for the current page
+        - `int page` - Current page number (0-indexed)
+        - `int size` - Page size (number of items per page)
+        - `int total` - Total number of sessions matching the query
+        - `boolean hasNext` - Whether there are more pages available
+    *   **Recommendation:** You MUST import and use this exact class for the session list endpoint response. Do NOT create a new DTO class. The file already exists at line 1-70.
 
-*   **File:** `backend/src/main/java/com/scrumpoker/domain/reporting/DetailedSessionReportDTO.java`
-    *   **Summary:** DTO for detailed session report (Pro tier). Extends basic summary with nested classes `RoundDetailDTO` (contains round metadata and list of `VoteDetailDTO`) and `userConsistency` map.
-    *   **Recommendation:** This DTO should be returned for Pro tier users on the session detail endpoint.
+*   **File:** `backend/src/main/java/com/scrumpoker/api/rest/dto/ExportJobResponse.java`
+    *   **Summary:** This DTO is ALREADY created and ready to use. It contains:
+        - `UUID jobId` - Unique job identifier for polling status
+    *   **Recommendation:** You MUST import and use this exact class for the export endpoint response. Do NOT create a new DTO class. The file already exists at line 1-33.
+
+*   **File:** `backend/src/main/java/com/scrumpoker/api/rest/dto/JobStatusResponse.java`
+    *   **Summary:** This DTO is ALREADY created and ready to use. It contains:
+        - `UUID jobId` - Job identifier
+        - `String status` - Job status (PENDING, PROCESSING, COMPLETED, FAILED)
+        - `String downloadUrl` - Download URL when completed (nullable)
+        - `String errorMessage` - Error message when failed (nullable)
+        - `Instant createdAt` - Job creation timestamp
+        - `Instant completedAt` - Job completion timestamp (nullable)
+    *   **Recommendation:** You MUST import and use this exact class for the job status endpoint response. Do NOT create a new DTO class. The file already exists at line 1-84.
 
 *   **File:** `backend/src/main/java/com/scrumpoker/domain/reporting/ExportJob.java`
-    *   **Summary:** Hibernate entity tracking export job lifecycle. Has static method `findByJobId(UUID)` for lookup. Contains fields: jobId, sessionId, user, format, status (enum), downloadUrl, errorMessage, timestamps (createdAt, processingStartedAt, completedAt, failedAt).
-    *   **Recommendation:** You MUST use `ExportJob.findByJobId(jobId)` in the job status endpoint to retrieve job details. The entity already has all the fields needed for the response DTO.
+    *   **Summary:** This is the Panache entity for export jobs. It provides static query methods:
+        - `ExportJob.findByJobId(UUID jobId)` - Returns `Uni<ExportJob>` (see line 169-171)
+        - `ExportJob.findByUserId(UUID userId)` - Returns `Uni<List<ExportJob>>` (see line 179-181)
+        - Important fields: jobId (UUID), sessionId (UUID), user (User entity), format (String), status (JobStatus enum), downloadUrl (String), errorMessage (String), createdAt/completedAt timestamps
+    *   **Recommendation:** You MUST use `ExportJob.findByJobId()` in the job status endpoint to retrieve job details from the database. For the export endpoint, you need to create a NEW ExportJob entity and persist it.
+
+*   **File:** `backend/src/main/java/com/scrumpoker/security/SecurityContextImpl.java`
+    *   **Summary:** This is the CRITICAL service for extracting the authenticated user from the security context. It provides:
+        - `getCurrentUserId()` - Returns `UUID` of authenticated user (see line 87-90)
+        - `getCurrentClaims()` - Returns full `JwtClaims` object (see line 139-159)
+        - `isCurrentUser(UUID resourceUserId)` - Validates user owns a resource (see line 206-212)
+    *   **Recommendation:** You MUST inject this service and use it to:
+        1. Get the current user's ID for querying their sessions
+        2. Validate authorization (user accessing only their own sessions)
+        3. Retrieve the User object from UserRepository using the userId
 
 *   **File:** `backend/src/main/java/com/scrumpoker/api/rest/RoomController.java`
-    *   **Summary:** Example REST controller demonstrating the project's patterns: JAX-RS annotations (`@Path`, `@GET`, `@POST`, `@PUT`), reactive Uni return types, OpenAPI annotations (`@Operation`, `@APIResponse`), service injection, DTO mapping, and exception handling via exception mappers.
-    *   **Recommendation:** You SHOULD follow this exact pattern for your ReportingController. Key patterns: Use `@Path("/api/v1")`, `@Produces(MediaType.APPLICATION_JSON)`, inject services via `@Inject`, return `Uni<Response>`, use `Response.ok()` / `Response.status()` builders.
-
-*   **File:** `backend/src/main/java/com/scrumpoker/api/rest/UserController.java`
-    *   **Summary:** Another controller example showing authentication patterns (currently `@RolesAllowed("USER")` with TODOs for actual enforcement), parameter validation, and authorization checks.
-    *   **Recommendation:** You SHOULD use `@RolesAllowed("USER")` on protected endpoints. The task requires authorization checks to prevent users from accessing other users' sessions.
-
-*   **File:** `backend/src/main/java/com/scrumpoker/security/FeatureGate.java`
-    *   **Summary:** Service for tier-based feature access control. Provides methods like `hasSufficientTier()`, `requireCanAccessAdvancedReports()` that throw `FeatureNotAvailableException`.
-    *   **Recommendation:** The ReportingService already uses FeatureGate internally, so you do NOT need to call it directly in the controller. However, be aware that 403 responses come from FeatureNotAvailableException which is handled by `FeatureNotAvailableExceptionMapper`.
-
-*   **File:** `backend/src/main/java/com/scrumpoker/api/rest/dto/` (directory)
-    *   **Summary:** Contains existing DTO classes like `ErrorResponse`, `RoomDTO`, `UserDTO`, request/response DTOs.
-    *   **Recommendation:** You MUST create new DTOs in this directory: `SessionListResponse.java` and `ExportJobResponse.java`. Follow the naming convention and use Jackson annotations (`@JsonProperty`) for field naming.
+    *   **Summary:** This is an EXISTING controller demonstrating the exact patterns you should follow:
+        - Uses `@Path("/api/v1")` for base path (line 33)
+        - Uses JAX-RS annotations (`@GET`, `@POST`, `@Path`, `@PathParam`, `@QueryParam`)
+        - Returns reactive `Uni<Response>` types (line 57, 93)
+        - Uses OpenAPI annotations (`@Operation`, `@APIResponse`)
+        - Injects services and mappers using `@Inject` (line 39-42)
+    *   **Recommendation:** You SHOULD copy this controller's structure, package declaration, imports, and annotation patterns for consistency.
 
 ### Implementation Tips & Notes
 
-*   **Tip:** For pagination, you'll need to add query parameters `@QueryParam("page")` and `@QueryParam("size")` with default values matching the OpenAPI spec (page=0, size=20).
-*   **Tip:** The session list response needs to include pagination metadata. Create a `SessionListResponse` DTO that contains: `List<SessionSummaryDTO> sessions`, `int totalCount`, `int page`, `int size`, `boolean hasNext`.
-*   **Tip:** For the export endpoint, you need to create a request DTO (e.g., `ExportRequest`) with fields: `sessionId` (UUID) and `format` (String: "CSV" or "PDF"). The response DTO `ExportJobResponse` should contain the `jobId` (String or UUID).
-*   **Tip:** For the job status endpoint, you need to create a response DTO that includes: `jobId`, `status` (String enum: PENDING/PROCESSING/COMPLETED/FAILED), `downloadUrl` (nullable), `errorMessage` (nullable), `createdAt`, `completedAt`.
-*   **Tip:** When calling `SessionHistoryService.getUserSessions()`, you'll need to convert the date query parameters (Strings in ISO format) to `Instant` objects. Use `LocalDate.parse(dateString).atStartOfDay(ZoneOffset.UTC).toInstant()`.
-*   **Tip:** For the session detail endpoint that returns tier-based content, you need to check the user's tier and call either `getBasicSessionSummary()` or `getDetailedSessionReport()` accordingly. However, the acceptance criteria suggests that `getDetailedSessionReport()` already handles this by throwing FeatureNotAvailableException for Free tier users, so you might just always call the detailed method and let the exception mapper handle the 403 response.
-*   **Note:** The task mentions authorization enforcement ("user can only access own sessions or rooms they participated in"). You'll need to get the authenticated user from the security context and verify they own the session or participated in it. The current codebase has TODOs for getting user from SecurityContext, so you may need to implement a helper method or use a pattern similar to the existing controllers.
-*   **Note:** The `generateExport()` method in ReportingService returns a `Uni<String>` containing the job ID (which is the Redis Stream message ID). You should create an ExportJob entity record with status PENDING and persist it to the database, then return the job ID. Actually, looking at the ExportJob entity, it has a `jobId` UUID field. The ReportingService generates a UUID for `jobId` and includes it in the Redis message. You need to create the ExportJob entity with that same jobId BEFORE enqueuing to Redis.
-*   **Warning:** The export endpoint should return HTTP 202 Accepted (not 201 Created) because the job is asynchronous. Use `Response.status(Response.Status.ACCEPTED)`.
-*   **Warning:** Make sure to handle the case where a user tries to access a session they don't own. You'll need to query the SessionHistory to check if the authenticated user's ID matches the room owner or is in the participants list.
+*   **Tip:** The session list endpoint MUST implement pagination. For this task, you should:
+    1. Accept query parameters: `from`, `to`, `page` (default 0), `size` (default 20), `sort` (default "desc")
+    2. Parse `from` and `to` as ISO date strings and convert to `Instant` (use `LocalDate.parse().atStartOfDay(ZoneOffset.UTC).toInstant()`)
+    3. Call `sessionHistoryService.getUserSessions(userId, from, to)` to get ALL sessions in date range
+    4. Implement manual pagination by slicing the list: `sessions.subList(skip, Math.min(skip + size, sessions.size()))`
+    5. Calculate `total` count and `hasNext` flag: `hasNext = (page + 1) * size < total`
+    6. For each SessionHistory in the page, call `reportingService.getBasicSessionSummary(sessionHistory.id.sessionId)` to get the DTO
+    7. Collect all DTOs using `Multi.createFrom().iterable()` and `transformToUniAndConcatenate()`
 
-### Critical Integration Points
+*   **Tip:** For the session detail endpoint, you MUST:
+    1. Extract the authenticated user from SecurityContextImpl: `UUID userId = securityContext.getCurrentUserId()`
+    2. Fetch the User entity from UserRepository: `userRepository.findById(userId)`
+    3. Call `reportingService.getDetailedSessionReport(sessionId, user)` which will:
+        - Return detailed report for Pro/Enterprise users
+        - Throw `FeatureNotAvailableException` for Free tier users (which becomes 403 via exception mapper)
+    4. The service ALREADY checks tiers internally, so you do NOT need manual tier checking
 
-1. **ReportingService Integration:** Your controller is a thin wrapper around ReportingService. The service does all the heavy lifting (tier checks, data fetching, export job enqueuing). Your job is to handle HTTP concerns (request parsing, response building, status codes).
+*   **Tip:** For the export job endpoint, you MUST:
+    1. Accept a JSON request body with `sessionId` (UUID) and `format` (String) fields
+    2. Create a DTO class `ExportRequest` in the dto package to parse this body (has fields: `@JsonProperty("session_id") UUID sessionId` and `@JsonProperty("format") String format`)
+    3. Extract the authenticated user from SecurityContextImpl and fetch User entity
+    4. Call `reportingService.generateExport(sessionId, format, user)` which returns a String jobId
+    5. Parse the String jobId as UUID: `UUID jobUuid = UUID.fromString(jobId)`
+    6. Create an ExportJob entity: `ExportJob job = new ExportJob(); job.jobId = jobUuid; job.sessionId = sessionId; job.user = user; job.format = format; job.status = JobStatus.PENDING; job.persist()`
+    7. Return `202 Accepted` with `ExportJobResponse(jobUuid)`
 
-2. **SessionHistoryService Integration:** For the session list endpoint, inject SessionHistoryService and use `getUserSessions()` method with pagination. The service returns `List<SessionHistory>` which you need to convert to `List<SessionSummaryDTO>`.
+*   **Tip:** For the job status endpoint, you MUST:
+    1. Parse the jobId from the path parameter as UUID
+    2. Call `ExportJob.findByJobId(jobId)` to retrieve the job
+    3. If job is null, return 404 Not Found: `Response.status(404).entity(new ErrorResponse(...)).build()`
+    4. Map the ExportJob entity to JobStatusResponse: `new JobStatusResponse(job.jobId, job.status.name(), job.downloadUrl, job.errorMessage, job.createdAt, job.completedAt)`
+    5. Return 200 OK with the response
 
-3. **ExportJob Entity Integration:** For the export endpoint, after calling `ReportingService.generateExport()`, you need to create an ExportJob entity with the returned job ID, persist it to the database, then return the job ID in the response. For the job status endpoint, use `ExportJob.findByJobId()` to retrieve the job and return its current status.
+*   **Warning:** The ReportingService methods for detailed reports and exports throw `FeatureNotAvailableException` if the user lacks the required tier. You MUST let this exception propagate to the exception mapper (found in `backend/src/main/java/com/scrumpoker/api/rest/exception/FeatureNotAvailableExceptionMapper.java`), which will convert it to a 403 Forbidden response. Do NOT catch this exception in the controller.
 
-4. **Authentication Context:** You need to extract the authenticated User from the security context (likely via `@Context SecurityContext` injection or a custom `@AuthenticatedUser` CDI qualifier if the project has one). Check existing controllers for the pattern.
+*   **Warning:** You MUST enforce authorization for session access. A user should only be able to:
+    1. List their own sessions (sessions where their userId matches the query)
+    2. View session details for their own sessions
+    3. Export their own sessions
+    For this iteration, you can enforce this by ONLY querying sessions for the authenticated user's ID (from SecurityContextImpl). Do NOT allow userId as a query parameter.
 
-5. **Error Handling:** The project uses exception mappers (in `backend/src/main/java/com/scrumpoker/api/rest/exception/`). You don't need to catch exceptions in your controller methods; let them propagate and be handled by the mappers. Relevant mappers: `UserNotFoundExceptionMapper`, `IllegalArgumentExceptionMapper`, `FeatureNotAvailableExceptionMapper`.
+*   **Note:** The project uses Hibernate Reactive Panache with reactive Mutiny patterns. All controller methods MUST return `Uni<Response>` for non-blocking I/O. Use `.onItem().transform()` for synchronous transformations and `.onItem().transformToUni()` for async operations that return Uni.
 
-### Testing Strategy
+*   **Note:** All endpoints MUST be secured with JWT authentication. Use `@RolesAllowed("USER")` annotation on controller class or methods that require authentication. The JwtAuthenticationFilter will automatically validate tokens and populate the SecurityContext.
 
-*   The acceptance criteria require testing that Free tier users get basic summaries while Pro tier users get detailed reports. You'll need to mock or set the user's subscriptionTier in your tests.
-*   Test pagination by creating multiple sessions and verifying the page/size parameters work correctly.
-*   Test authorization by verifying 403 responses when users try to access other users' sessions.
-*   For the export endpoint, verify that it returns 202 Accepted and that an ExportJob record is created in the database.
-*   For the job status endpoint, test all four job statuses (PENDING, PROCESSING, COMPLETED, FAILED) and verify the correct fields are returned.
+*   **Note:** For the export endpoint, you need to create a new DTO file `ExportRequest.java` in the dto package because it doesn't exist yet. It should have:
+    - `@JsonProperty("session_id") public UUID sessionId`
+    - `@JsonProperty("format") public String format`
+    - Standard constructors (default + all-args)
 
----
+*   **Note:** Exception handling is already configured via exception mappers in `backend/src/main/java/com/scrumpoker/api/rest/exception/`. You do NOT need to manually catch exceptions for standard error cases (IllegalArgumentException, FeatureNotAvailableException). Let them propagate to the mappers.
 
-## 4. Additional Context
+*   **Note:** The UserRepository is a Panache repository that provides `findById(UUID userId)` returning `Uni<User>`. You MUST use this to fetch the authenticated user entity after extracting the userId from SecurityContextImpl.
 
-### Dependencies Status
-- **I6.T2 (ReportingService):** ✅ DONE - Service is fully implemented and tested
-- **I6.T3 (ExportJobProcessor):** ✅ DONE - Background worker implemented, ExportJob entity exists
+*   **Note:** When converting SessionHistory entities to SessionSummaryDTOs, you MUST call `reportingService.getBasicSessionSummary()` for EACH session in the paginated list. Use `Multi.createFrom().iterable(paginatedSessions).onItem().transformToUniAndConcatenate(session -> reportingService.getBasicSessionSummary(session.id.sessionId)).collect().asList()` to process them reactively in parallel.
 
-### Next Steps After This Task
-- I6.T5: Frontend SessionHistoryPage (depends on this task)
-- I6.T6: Frontend SessionDetailPage (depends on this task)
+*   **Reminder:** Your controller MUST be placed at `backend/src/main/java/com/scrumpoker/api/rest/ReportingController.java` as specified in the task target files. Follow the exact package structure `package com.scrumpoker.api.rest;`.
 
-### Suggested Implementation Order
-1. Create DTOs: `SessionListResponse`, `ExportJobResponse`, `ExportRequest`, `JobStatusResponse`
-2. Create `ReportingController` class with basic structure and annotations
-3. Implement `GET /api/v1/reports/sessions` (session list with pagination)
-4. Implement `GET /api/v1/reports/sessions/{sessionId}` (session detail with tier checks)
-5. Implement `POST /api/v1/reports/export` (create export job)
-6. Implement `GET /api/v1/jobs/{jobId}` (poll job status)
-7. Add OpenAPI annotations to all endpoints
-8. Write integration tests
-
-### Architecture References
-- REST API patterns: `.codemachine/artifacts/architecture/04_Behavior_and_Communication.md`
-- Tier-based reporting requirements: `.codemachine/artifacts/architecture/01_Context_and_Drivers.md` (reporting-requirements section)
-- OpenAPI specification: `api/openapi.yaml`
+*   **Reminder:** The DTOs `SessionListResponse`, `ExportJobResponse`, and `JobStatusResponse` ALREADY EXIST. Do NOT recreate them. Import them from `com.scrumpoker.api.rest.dto` package.

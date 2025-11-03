@@ -28,7 +28,7 @@ CREATE TABLE export_job (
     processing_started_at TIMESTAMP WITH TIME ZONE,
     completed_at TIMESTAMP WITH TIME ZONE,
     failed_at TIMESTAMP WITH TIME ZONE,
-    CONSTRAINT fk_export_job_user FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+    CONSTRAINT fk_export_job_user FOREIGN KEY (user_id) REFERENCES "user"(user_id) ON DELETE CASCADE
 );
 
 COMMENT ON TABLE export_job IS 'Tracks asynchronous CSV/PDF export job status and download URLs';

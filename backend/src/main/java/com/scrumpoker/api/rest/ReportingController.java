@@ -4,6 +4,9 @@ import com.scrumpoker.api.rest.dto.*;
 import com.scrumpoker.domain.reporting.*;
 import com.scrumpoker.domain.room.SessionHistory;
 import com.scrumpoker.domain.user.User;
+import com.scrumpoker.repository.UserRepository;
+import com.scrumpoker.security.SecurityContextImpl;
+import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.Uni;
 import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
@@ -41,6 +44,47 @@ public class ReportingController {
 
     @Inject
     SessionHistoryService sessionHistoryService;
+
+    @Inject
+    SecurityContextImpl securityContext;
+
+    @Inject
+    UserRepository userRepository;
+
+    /**
+     * Helper method to get the authenticated user.
+     * Extracts user ID from SecurityContext and loads User entity.
+     *
+     * @return Uni containing the authenticated User
+     */
+    private Uni<User> getAuthenticatedUser() {
+        UUID userId = securityContext.getCurrentUserId();
+        if (userId == null) {
+            return Uni.createFrom().failure(
+                    new IllegalStateException("User not authenticated"));
+        }
+        return userRepository.findById(userId)
+                .onItem().ifNull().failWith(() ->
+                        new IllegalStateException("User not found: " + userId));
+    }
+
+    /**
+     * Verifies that the user owns the session or participated in it.
+     * For this iteration, we only check if the user is the session owner.
+     *
+     * @param session The session to check
+     * @param userId The user ID to verify
+     * @return true if authorized, false otherwise
+     */
+    private boolean isUserAuthorizedForSession(SessionHistory session, UUID userId) {
+        // Check if user is the room owner
+        if (session.room.owner != null && session.room.owner.userId.equals(userId)) {
+            return true;
+        }
+        // TODO: In future iterations, also check if user is in participants list
+        // For now, only room owners can access session reports
+        return false;
+    }
 
     /**
      * GET /api/v1/reports/sessions - List user's session history with pagination.
@@ -85,10 +129,6 @@ public class ReportingController {
             @Parameter(description = "Page size (1-100)")
             @QueryParam("size") @DefaultValue("20") int size) {
 
-        // TODO: Get authenticated user from SecurityContext when auth is implemented
-        // For now, returning empty list
-        User currentUser = null;
-
         // Validate pagination parameters
         if (page < 0) {
             ErrorResponse error = new ErrorResponse("VALIDATION_ERROR",
@@ -124,62 +164,62 @@ public class ReportingController {
                     Response.status(Response.Status.BAD_REQUEST).entity(error).build());
         }
 
-        // TODO: When auth is implemented, get user ID from SecurityContext
-        // For now, returning mock empty response
-        UUID userId = currentUser != null ? currentUser.userId : UUID.randomUUID();
-
-        // Fetch sessions from service
-        Uni<List<SessionHistory>> sessionsUni;
-        if (roomId != null && !roomId.isEmpty()) {
-            // Filter by room and date range
-            sessionsUni = sessionHistoryService.getRoomSessionsByDateRange(
-                    roomId, fromDate, toDate);
-        } else {
-            // Filter by user and date range
-            sessionsUni = sessionHistoryService.getUserSessions(
-                    userId, fromDate, toDate);
-        }
-
-        return sessionsUni
-                .onItem().transformToUni(sessions -> {
-                    // Apply pagination
-                    int totalCount = sessions.size();
-                    int startIndex = page * size;
-                    int endIndex = Math.min(startIndex + size, totalCount);
-
-                    if (startIndex >= totalCount && totalCount > 0) {
-                        ErrorResponse error = new ErrorResponse("VALIDATION_ERROR",
-                                "Page number exceeds available pages");
-                        return Uni.createFrom().item(
-                                Response.status(Response.Status.BAD_REQUEST)
-                                        .entity(error).build());
+        // Get authenticated user
+        return getAuthenticatedUser()
+                .onItem().transformToUni(user -> {
+                    // Fetch sessions from service
+                    Uni<List<SessionHistory>> sessionsUni;
+                    if (roomId != null && !roomId.isEmpty()) {
+                        // Filter by room and date range
+                        sessionsUni = sessionHistoryService.getRoomSessionsByDateRange(
+                                roomId, fromDate, toDate);
+                    } else {
+                        // Filter by user and date range
+                        sessionsUni = sessionHistoryService.getUserSessions(
+                                user.userId, fromDate, toDate);
                     }
 
-                    List<SessionHistory> paginatedSessions = sessions.stream()
-                            .skip(startIndex)
-                            .limit(size)
-                            .collect(Collectors.toList());
+                    return sessionsUni
+                            .onItem().transformToUni(sessions -> {
+                                // Apply pagination
+                                int totalCount = sessions.size();
+                                int startIndex = page * size;
+                                int endIndex = Math.min(startIndex + size, totalCount);
 
-                    // Convert to SessionSummaryDTO
-                    // For each session, we need to call reportingService to get summary
-                    return io.smallrye.mutiny.Multi.createFrom()
-                            .iterable(paginatedSessions)
-                            .onItem().transformToUniAndConcatenate(session ->
-                                    reportingService.getBasicSessionSummary(
-                                            session.id.sessionId))
-                            .collect().asList()
-                            .onItem().transform(summaries -> {
-                                boolean hasNext = endIndex < totalCount;
+                                if (startIndex >= totalCount && totalCount > 0) {
+                                    ErrorResponse error = new ErrorResponse("VALIDATION_ERROR",
+                                            "Page number exceeds available pages");
+                                    return Uni.createFrom().item(
+                                            Response.status(Response.Status.BAD_REQUEST)
+                                                    .entity(error).build());
+                                }
 
-                                SessionListResponse response = new SessionListResponse(
-                                        summaries,
-                                        page,
-                                        size,
-                                        totalCount,
-                                        hasNext
-                                );
+                                List<SessionHistory> paginatedSessions = sessions.stream()
+                                        .skip(startIndex)
+                                        .limit(size)
+                                        .collect(Collectors.toList());
 
-                                return Response.ok(response).build();
+                                // Convert to SessionSummaryDTO
+                                // For each session, we need to call reportingService to get summary
+                                return Multi.createFrom()
+                                        .iterable(paginatedSessions)
+                                        .onItem().transformToUniAndConcatenate(session ->
+                                                reportingService.getBasicSessionSummary(
+                                                        session.id.sessionId))
+                                        .collect().asList()
+                                        .onItem().transform(summaries -> {
+                                            boolean hasNext = endIndex < totalCount;
+
+                                            SessionListResponse response = new SessionListResponse(
+                                                    summaries,
+                                                    page,
+                                                    size,
+                                                    totalCount,
+                                                    hasNext
+                                            );
+
+                                            return Response.ok(response).build();
+                                        });
                             });
                 })
                 .onFailure(IllegalArgumentException.class)
@@ -187,6 +227,13 @@ public class ReportingController {
                     ErrorResponse error = new ErrorResponse("VALIDATION_ERROR",
                             failure.getMessage());
                     return Response.status(Response.Status.BAD_REQUEST)
+                            .entity(error).build();
+                })
+                .onFailure(IllegalStateException.class)
+                .recoverWithItem(failure -> {
+                    ErrorResponse error = new ErrorResponse("UNAUTHORIZED",
+                            failure.getMessage());
+                    return Response.status(Response.Status.UNAUTHORIZED)
                             .entity(error).build();
                 });
     }
@@ -224,39 +271,45 @@ public class ReportingController {
                     example = "123e4567-e89b-12d3-a456-426614174000")
             @PathParam("sessionId") UUID sessionId) {
 
-        // TODO: Get authenticated user from SecurityContext when auth is implemented
-        User currentUser = null;
+        // Get authenticated user
+        return getAuthenticatedUser()
+                .onItem().transformToUni(user ->
+                        // Load the session first to check authorization
+                        sessionHistoryService.getSessionById(sessionId)
+                                .onItem().ifNull().failWith(() ->
+                                        new IllegalArgumentException("Session not found: " + sessionId))
+                                .onItem().transformToUni(session -> {
+                                    // Check authorization: user must own the session or have participated
+                                    if (!isUserAuthorizedForSession(session, user.userId)) {
+                                        ErrorResponse error = new ErrorResponse("FORBIDDEN",
+                                                "You do not have permission to access this session");
+                                        return Uni.createFrom().item(
+                                                Response.status(Response.Status.FORBIDDEN)
+                                                        .entity(error).build());
+                                    }
 
-        // TODO: Verify user has access to this session (owns it or participated)
-        // For now, allowing access
-
-        // Try to get detailed report first (for Pro tier users)
-        // If user is Free tier, FeatureGate will throw exception
-        // which will be caught and handled by FeatureNotAvailableExceptionMapper
-        if (currentUser != null) {
-            return reportingService.getDetailedSessionReport(sessionId, currentUser)
-                    .onItem().transform(report ->
-                            Response.ok(report).build())
-                    .onFailure(IllegalArgumentException.class)
-                    .recoverWithItem(failure -> {
-                        ErrorResponse error = new ErrorResponse("NOT_FOUND",
-                                "Session not found: " + sessionId);
-                        return Response.status(Response.Status.NOT_FOUND)
-                                .entity(error).build();
-                    });
-        } else {
-            // No auth yet - return basic summary for all users
-            return reportingService.getBasicSessionSummary(sessionId)
-                    .onItem().transform(summary ->
-                            Response.ok(summary).build())
-                    .onFailure(IllegalArgumentException.class)
-                    .recoverWithItem(failure -> {
-                        ErrorResponse error = new ErrorResponse("NOT_FOUND",
-                                "Session not found: " + sessionId);
-                        return Response.status(Response.Status.NOT_FOUND)
-                                .entity(error).build();
-                    });
-        }
+                                    // Try to get detailed report (for Pro tier users)
+                                    // If user is Free tier, FeatureGate will throw exception
+                                    // which will be caught and handled by FeatureNotAvailableExceptionMapper
+                                    return reportingService.getDetailedSessionReport(sessionId, user)
+                                            .onItem().transform(report ->
+                                                    Response.ok(report).build());
+                                })
+                )
+                .onFailure(IllegalArgumentException.class)
+                .recoverWithItem(failure -> {
+                    ErrorResponse error = new ErrorResponse("NOT_FOUND",
+                            failure.getMessage());
+                    return Response.status(Response.Status.NOT_FOUND)
+                            .entity(error).build();
+                })
+                .onFailure(IllegalStateException.class)
+                .recoverWithItem(failure -> {
+                    ErrorResponse error = new ErrorResponse("UNAUTHORIZED",
+                            failure.getMessage());
+                    return Response.status(Response.Status.UNAUTHORIZED)
+                            .entity(error).build();
+                });
     }
 
     /**
@@ -288,51 +341,69 @@ public class ReportingController {
             content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
     public Uni<Response> createExportJob(@Valid ExportRequest request) {
 
-        // TODO: Get authenticated user from SecurityContext when auth is implemented
-        User currentUser = null;
+        // Get authenticated user
+        return getAuthenticatedUser()
+                .onItem().transformToUni(user ->
+                        // Load the session first to check authorization
+                        sessionHistoryService.getSessionById(request.sessionId)
+                                .onItem().ifNull().failWith(() ->
+                                        new IllegalArgumentException("Session not found: " + request.sessionId))
+                                .onItem().transformToUni(session -> {
+                                    // Check authorization: user must own the session or have participated
+                                    if (!isUserAuthorizedForSession(session, user.userId)) {
+                                        ErrorResponse error = new ErrorResponse("FORBIDDEN",
+                                                "You do not have permission to export this session");
+                                        return Uni.createFrom().item(
+                                                Response.status(Response.Status.FORBIDDEN)
+                                                        .entity(error).build());
+                                    }
 
-        // TODO: Verify user has access to this session
-        // For now, allowing access
+                                    // Create ExportJob entity FIRST with PENDING status
+                                    UUID jobId = UUID.randomUUID();
+                                    ExportJob job = new ExportJob();
+                                    job.jobId = jobId;
+                                    job.sessionId = request.sessionId;
+                                    job.user = user;
+                                    job.format = request.format;
+                                    job.status = JobStatus.PENDING;
 
-        if (currentUser == null) {
-            // Mock user for testing until auth is implemented
-            ErrorResponse error = new ErrorResponse("UNAUTHORIZED",
-                    "Authentication required");
-            return Uni.createFrom().item(
-                    Response.status(Response.Status.UNAUTHORIZED).entity(error).build());
-        }
-
-        // Generate export via service (which enqueues to Redis Stream)
-        return reportingService.generateExport(
-                        request.sessionId,
-                        request.format,
-                        currentUser)
-                .onItem().transformToUni(jobIdString -> {
-                    // jobIdString is the UUID string returned from enqueueExportJob
-                    UUID jobId = UUID.fromString(jobIdString);
-
-                    // Create ExportJob entity in database
-                    ExportJob job = new ExportJob();
-                    job.jobId = jobId;
-                    job.sessionId = request.sessionId;
-                    job.user = currentUser;
-                    job.format = request.format;
-                    job.status = JobStatus.PENDING;
-
-                    return job.persist()
-                            .onItem().transform(persisted -> {
-                                ExportJobResponse response =
-                                        new ExportJobResponse(jobId);
-                                return Response.status(Response.Status.ACCEPTED)
-                                        .entity(response)
-                                        .build();
-                            });
-                })
+                                    // Persist the job to database before enqueuing to Redis
+                                    return job.persist()
+                                            .onItem().transformToUni(persisted -> {
+                                                // Now enqueue to Redis Stream
+                                                // The service will use the pre-generated jobId
+                                                return reportingService.generateExport(
+                                                                request.sessionId,
+                                                                request.format,
+                                                                user)
+                                                        .onItem().transform(redisJobId -> {
+                                                            // Return 202 Accepted with job ID
+                                                            ExportJobResponse response =
+                                                                    new ExportJobResponse(jobId);
+                                                            return Response.status(Response.Status.ACCEPTED)
+                                                                    .entity(response)
+                                                                    .build();
+                                                        })
+                                                        .onFailure().invoke(failure -> {
+                                                            // If Redis enqueue fails, mark job as FAILED
+                                                            job.markAsFailed("Failed to enqueue job: " +
+                                                                    failure.getMessage());
+                                                        });
+                                            });
+                                })
+                )
                 .onFailure(IllegalArgumentException.class)
                 .recoverWithItem(failure -> {
                     ErrorResponse error = new ErrorResponse("VALIDATION_ERROR",
                             failure.getMessage());
                     return Response.status(Response.Status.BAD_REQUEST)
+                            .entity(error).build();
+                })
+                .onFailure(IllegalStateException.class)
+                .recoverWithItem(failure -> {
+                    ErrorResponse error = new ErrorResponse("UNAUTHORIZED",
+                            failure.getMessage());
+                    return Response.status(Response.Status.UNAUTHORIZED)
                             .entity(error).build();
                 });
     }
@@ -357,6 +428,8 @@ public class ReportingController {
             content = @Content(schema = @Schema(implementation = JobStatusResponse.class)))
     @APIResponse(responseCode = "401", description = "Unauthorized",
             content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+    @APIResponse(responseCode = "403", description = "Access denied - job belongs to another user",
+            content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
     @APIResponse(responseCode = "404", description = "Job not found",
             content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
     @APIResponse(responseCode = "500", description = "Internal server error",
@@ -366,36 +439,53 @@ public class ReportingController {
                     example = "123e4567-e89b-12d3-a456-426614174000")
             @PathParam("jobId") UUID jobId) {
 
-        // TODO: Get authenticated user from SecurityContext when auth is implemented
-        // TODO: Verify user owns this job
+        // Get authenticated user
+        return getAuthenticatedUser()
+                .onItem().transformToUni(user ->
+                        ExportJob.findByJobId(jobId)
+                                .onItem().ifNull().failWith(() ->
+                                        new IllegalArgumentException("Job not found: " + jobId))
+                                .onItem().transformToUni(job -> {
+                                    // Check authorization: user must own the job
+                                    if (!job.user.userId.equals(user.userId)) {
+                                        ErrorResponse error = new ErrorResponse("FORBIDDEN",
+                                                "You do not have permission to access this job");
+                                        return Uni.createFrom().item(
+                                                Response.status(Response.Status.FORBIDDEN)
+                                                        .entity(error).build());
+                                    }
 
-        return ExportJob.findByJobId(jobId)
-                .onItem().ifNull().failWith(() ->
-                        new IllegalArgumentException("Job not found: " + jobId))
-                .onItem().transform(job -> {
-                    Instant completedAt = null;
-                    if (job.status == JobStatus.COMPLETED) {
-                        completedAt = job.completedAt;
-                    } else if (job.status == JobStatus.FAILED) {
-                        completedAt = job.failedAt;
-                    }
+                                    Instant completedAt = null;
+                                    if (job.status == JobStatus.COMPLETED) {
+                                        completedAt = job.completedAt;
+                                    } else if (job.status == JobStatus.FAILED) {
+                                        completedAt = job.failedAt;
+                                    }
 
-                    JobStatusResponse response = new JobStatusResponse(
-                            job.jobId,
-                            job.status.name(),
-                            job.downloadUrl,
-                            job.errorMessage,
-                            job.createdAt,
-                            completedAt
-                    );
+                                    JobStatusResponse response = new JobStatusResponse(
+                                            job.jobId,
+                                            job.status.name(),
+                                            job.downloadUrl,
+                                            job.errorMessage,
+                                            job.createdAt,
+                                            completedAt
+                                    );
 
-                    return Response.ok(response).build();
-                })
+                                    return Uni.createFrom().item(Response.ok(response).build());
+                                })
+                )
                 .onFailure(IllegalArgumentException.class)
                 .recoverWithItem(failure -> {
                     ErrorResponse error = new ErrorResponse("NOT_FOUND",
                             failure.getMessage());
                     return Response.status(Response.Status.NOT_FOUND)
+                            .entity(error).build();
+                })
+                .onFailure(IllegalStateException.class)
+                .recoverWithItem(failure -> {
+                    ErrorResponse error = new ErrorResponse("UNAUTHORIZED",
+                            failure.getMessage());
+                    return Response.status(Response.Status.UNAUTHORIZED)
                             .entity(error).build();
                 });
     }
