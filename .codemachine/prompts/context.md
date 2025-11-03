@@ -10,24 +10,25 @@ This is the full specification of the task you must complete.
 
 ```json
 {
-  "task_id": "I5.T2",
+  "task_id": "I5.T3",
   "iteration_id": "I5",
   "iteration_goal": "Implement Stripe subscription billing, tier enforcement (Free/Pro/Pro+/Enterprise), payment flows, webhook handling for subscription lifecycle events, and frontend upgrade UI.",
-  "description": "Create `BillingService` domain service managing subscription lifecycle. Methods: `createSubscription(userId, tier)` (create Subscription entity, call StripeAdapter to create Stripe subscription), `upgradeSubscription(userId, newTier)` (update Subscription entity, call Stripe update), `cancelSubscription(userId)` (soft cancel, sets `canceled_at`, subscription active until period end), `getActiveSubscription(userId)`, `syncSubscriptionStatus(stripeSubscriptionId, status)` (called by webhook handler). Use `SubscriptionRepository`. Handle tier transitions (Free → Pro, Pro → Pro+). Update User.subscription_tier on tier change.",
+  "description": "Create REST endpoint `POST /api/v1/subscriptions/webhook` for Stripe webhook events. Verify webhook signature using Stripe webhook secret. Handle events: `customer.subscription.created` (call BillingService.syncSubscriptionStatus with ACTIVE), `customer.subscription.updated` (sync status changes), `customer.subscription.deleted` (sync CANCELED status), `invoice.payment_succeeded` (create PaymentHistory record), `invoice.payment_failed` (sync PAST_DUE status). Use idempotency keys (Stripe event ID) to prevent duplicate processing. Return 200 OK immediately to acknowledge webhook.",
   "agent_type_hint": "BackendAgent",
-  "inputs": "Subscription entity from I1, StripeAdapter from I5.T1, Subscription tier enforcement requirements",
+  "inputs": "Stripe webhook event types, Webhook signature verification requirements, BillingService from I5.T2",
   "input_files": [
-    "backend/src/main/java/com/scrumpoker/domain/billing/Subscription.java",
-    "backend/src/main/java/com/scrumpoker/repository/SubscriptionRepository.java",
+    "backend/src/main/java/com/scrumpoker/domain/billing/BillingService.java",
     "backend/src/main/java/com/scrumpoker/integration/stripe/StripeAdapter.java"
   ],
   "target_files": [
-    "backend/src/main/java/com/scrumpoker/domain/billing/BillingService.java",
-    "backend/src/main/java/com/scrumpoker/domain/billing/SubscriptionTier.java"
+    "backend/src/main/java/com/scrumpoker/api/rest/StripeWebhookController.java",
+    "backend/src/main/java/com/scrumpoker/domain/billing/WebhookEventLog.java"
   ],
-  "deliverables": "BillingService with methods: createSubscription, upgradeSubscription, cancelSubscription, getActiveSubscription, syncSubscriptionStatus, Subscription entity creation with Stripe subscription ID, Tier transition logic (validate allowed transitions), User.subscription_tier update on subscription change, Subscription status sync from Stripe webhooks",
-  "acceptance_criteria": "Creating subscription persists to database and creates Stripe subscription, Upgrading tier updates both database and Stripe, Canceling subscription sets `canceled_at`, subscription remains active until period end, Tier enforcement prevents invalid transitions (e.g., Enterprise → Free not allowed directly), User.subscription_tier reflects current subscription status, Sync method updates subscription status from webhook events",
-  "dependencies": ["I5.T1"],
+  "deliverables": "Webhook endpoint at /api/v1/subscriptions/webhook, Signature verification using Stripe webhook secret, Event handlers for subscription lifecycle events, Payment history creation on successful invoice payment, Idempotency check (store processed event IDs in WebhookEventLog table), 200 OK response even if event processing fails internally (prevents Stripe retries)",
+  "acceptance_criteria": "Webhook endpoint receives Stripe events, Signature verification rejects invalid signatures (401 Unauthorized), Subscription created event updates database subscription status, Payment succeeded event creates PaymentHistory record, Subscription deleted event marks subscription as canceled, Duplicate event IDs skipped (idempotency), Webhook processing errors logged but return 200 to Stripe",
+  "dependencies": [
+    "I5.T2"
+  ],
   "parallelizable": false,
   "done": false
 }
@@ -39,121 +40,83 @@ This is the full specification of the task you must complete.
 
 The following are the relevant sections from the architecture and plan documents, which I found by analyzing the task description.
 
-### Context: monetization-requirements (from 01_Context_and_Drivers.md)
+### Context: Stripe Webhook Event Handling (from 02_Iteration_I5.md)
 
 ```markdown
-#### Monetization Requirements
-- **Stripe Integration:** Subscription management, payment processing, webhook handling
-- **Tier Enforcement:** Feature gating based on subscription level (ads, reports, room privacy, branding)
-- **Upgrade Flows:** In-app prompts, modal CTAs, settings panel upsells
-- **Billing Dashboard:** Subscription status, payment history, plan management
-```
-
-### Context: authentication-and-authorization (from 05_Operational_Architecture.md)
-
-```markdown
-#### Authentication & Authorization
-
-##### Authentication Mechanisms
-
-**OAuth2 Social Login (Free/Pro Tiers):**
-- **Providers:** Google OAuth2, Microsoft Identity Platform
-- **Flow:** Authorization Code Flow with PKCE (Proof Key for Code Exchange) for browser-based clients
-- **Implementation:** Quarkus OIDC extension handling token exchange and validation
-- **Token Storage:** JWT access tokens (1-hour expiration) in browser `localStorage`, refresh tokens (30-day expiration) in `httpOnly` secure cookies
-- **User Provisioning:** Automatic user creation on first login with `oauth_provider` and `oauth_subject` as unique identifiers
-- **Profile Sync:** Email, display name, and avatar URL synced from OAuth provider on each login
-
-**Enterprise SSO (Enterprise Tier):**
-- **Protocols:** OIDC (OpenID Connect) and SAML2 support via Quarkus Security extensions
-- **Configuration:** Per-organization SSO settings stored in `Organization.sso_config` JSONB field (IdP endpoint, certificate, attribute mapping)
-- **Domain Enforcement:** Email domain verification ensures users with `@company.com` email automatically join organization workspace
-- **Just-In-Time (JIT) Provisioning:** User accounts created on first SSO login with organization membership pre-assigned
-- **Session Management:** SSO sessions synchronized with IdP via backchannel logout or session validation
-
-##### Authorization Strategy
-
-**Role-Based Access Control (RBAC):**
-- **Roles:** `ANONYMOUS`, `USER`, `PRO_USER`, `ORG_ADMIN`, `ORG_MEMBER`
-- **Implementation:** Quarkus Security annotations (`@RolesAllowed`) on REST endpoints and service methods
-- **JWT Claims:** Access token includes `roles` array for authorization decisions
-- **Dynamic Role Mapping:** Subscription tier (`FREE`, `PRO`, `PRO_PLUS`, `ENTERPRISE`) mapped to roles during token generation
-
-**Resource-Level Permissions:**
-- **Room Access:**
-  - `PUBLIC` rooms: Accessible to anyone with room ID
-  - `INVITE_ONLY` rooms: Requires room owner to whitelist participant (Pro+ tier)
-  - `ORG_RESTRICTED` rooms: Requires organization membership (Enterprise tier)
-- **Report Access:**
-  - Free tier: Session summary only (no round-level detail)
-  - Pro tier: Full session history with round breakdown
-  - Enterprise tier: Organization-wide analytics with member filtering
-
-**Enforcement Points:**
-1. **API Gateway/Ingress:** JWT validation and signature verification
-2. **REST Controllers:** Role-based annotations reject unauthorized requests with `403 Forbidden`
-3. **WebSocket Handshake:** Token validation before connection upgrade
-4. **Service Layer:** Domain-level checks (e.g., room privacy mode enforcement, subscription feature gating)
-```
-
-### Context: logging-strategy (from 05_Operational_Architecture.md)
-
-```markdown
-##### Logging Strategy
-
-**Structured Logging (JSON Format):**
-- **Library:** SLF4J with Quarkus Logging JSON formatter
-- **Schema:** Each log entry includes:
-  - `timestamp` - ISO8601 format
-  - `level` - DEBUG, INFO, WARN, ERROR
-  - `logger` - Java class name
-  - `message` - Human-readable description
-  - `correlationId` - Unique request/WebSocket session identifier for distributed tracing
-  - `userId` - Authenticated user ID (omitted for anonymous)
-  - `roomId` - Estimation room context
-  - `action` - Semantic action (e.g., `vote.cast`, `room.created`, `subscription.upgraded`)
-  - `duration` - Operation latency in milliseconds (for timed operations)
-  - `error` - Exception stack trace (for ERROR level)
-
-**Log Levels by Environment:**
-- **Development:** DEBUG (verbose SQL queries, WebSocket message payloads)
-- **Staging:** INFO (API requests, service method calls, integration events)
-- **Production:** WARN (error conditions, performance degradation, security events)
-```
-
-### Context: task-i5-t2 (from 02_Iteration_I5.md)
-
-```markdown
-*   **Task 5.2: Implement Billing Service (Subscription Management)**
-    *   **Task ID:** `I5.T2`
-    *   **Description:** Create `BillingService` domain service managing subscription lifecycle. Methods: `createSubscription(userId, tier)` (create Subscription entity, call StripeAdapter to create Stripe subscription), `upgradeSubscription(userId, newTier)` (update Subscription entity, call Stripe update), `cancelSubscription(userId)` (soft cancel, sets `canceled_at`, subscription active until period end), `getActiveSubscription(userId)`, `syncSubscriptionStatus(stripeSubscriptionId, status)` (called by webhook handler). Use `SubscriptionRepository`. Handle tier transitions (Free → Pro, Pro → Pro+). Update User.subscription_tier on tier change.
+*   **Task 5.3: Implement Stripe Webhook Handler**
+    *   **Task ID:** `I5.T3`
+    *   **Description:** Create REST endpoint `POST /api/v1/subscriptions/webhook` for Stripe webhook events. Verify webhook signature using Stripe webhook secret. Handle events: `customer.subscription.created` (call BillingService.syncSubscriptionStatus with ACTIVE), `customer.subscription.updated` (sync status changes), `customer.subscription.deleted` (sync CANCELED status), `invoice.payment_succeeded` (create PaymentHistory record), `invoice.payment_failed` (sync PAST_DUE status). Use idempotency keys (Stripe event ID) to prevent duplicate processing. Return 200 OK immediately to acknowledge webhook.
     *   **Agent Type Hint:** `BackendAgent`
     *   **Inputs:**
-        *   Subscription entity from I1
-        *   StripeAdapter from I5.T1
-        *   Subscription tier enforcement requirements
+        *   Stripe webhook event types
+        *   Webhook signature verification requirements
+        *   BillingService from I5.T2
     *   **Input Files:**
-        *   `backend/src/main/java/com/scrumpoker/domain/billing/Subscription.java`
-        *   `backend/src/main/java/com/scrumpoker/repository/SubscriptionRepository.java`
+        *   `backend/src/main/java/com/scrumpoker/domain/billing/BillingService.java`
         *   `backend/src/main/java/com/scrumpoker/integration/stripe/StripeAdapter.java`
     *   **Target Files:**
-        *   `backend/src/main/java/com/scrumpoker/domain/billing/BillingService.java`
-        *   `backend/src/main/java/com/scrumpoker/domain/billing/SubscriptionTier.java`
+        *   `backend/src/main/java/com/scrumpoker/api/rest/StripeWebhookController.java`
+        *   `backend/src/main/java/com/scrumpoker/domain/billing/WebhookEventLog.java` (entity for idempotency)
     *   **Deliverables:**
-        *   BillingService with methods: createSubscription, upgradeSubscription, cancelSubscription, getActiveSubscription, syncSubscriptionStatus
-        *   Subscription entity creation with Stripe subscription ID
-        *   Tier transition logic (validate allowed transitions)
-        *   User.subscription_tier update on subscription change
-        *   Subscription status sync from Stripe webhooks
+        *   Webhook endpoint at /api/v1/subscriptions/webhook
+        *   Signature verification using Stripe webhook secret
+        *   Event handlers for subscription lifecycle events
+        *   Payment history creation on successful invoice payment
+        *   Idempotency check (store processed event IDs in WebhookEventLog table)
+        *   200 OK response even if event processing fails internally (prevents Stripe retries)
     *   **Acceptance Criteria:**
-        *   Creating subscription persists to database and creates Stripe subscription
-        *   Upgrading tier updates both database and Stripe
-        *   Canceling subscription sets `canceled_at`, subscription remains active until period end
-        *   Tier enforcement prevents invalid transitions (e.g., Enterprise → Free not allowed directly)
-        *   User.subscription_tier reflects current subscription status
-        *   Sync method updates subscription status from webhook events
-    *   **Dependencies:** [I5.T1]
-    *   **Parallelizable:** No (depends on StripeAdapter)
+        *   Webhook endpoint receives Stripe events
+        *   Signature verification rejects invalid signatures (401 Unauthorized)
+        *   Subscription created event updates database subscription status
+        *   Payment succeeded event creates PaymentHistory record
+        *   Subscription deleted event marks subscription as canceled
+        *   Duplicate event IDs skipped (idempotency)
+        *   Webhook processing errors logged but return 200 to Stripe
+    *   **Dependencies:** [I5.T2]
+    *   **Parallelizable:** No (depends on BillingService)
+```
+
+### Context: risk-stripe-webhook-failures (from 06_Rationale_and_Future.md)
+
+```markdown
+<!-- anchor: risk-stripe-webhook-failures -->
+#### Risk 4: Stripe Webhook Delivery Failures
+
+**Risk Description:** Network issues or application downtime cause missed Stripe webhooks for subscription events (cancellations, payment failures), leading to stale subscription state.
+
+**Probability:** Medium - Webhook delivery not guaranteed, requires idempotent handling and manual reconciliation.
+
+**Mitigation Strategies:**
+
+1. **Webhook Retry Logic:** Stripe retries failed webhooks automatically (up to 3 days), endpoint must return 200 OK only after processing
+2. **Idempotency Keys:** Store Stripe event IDs in database to prevent duplicate processing on retries
+3. **Manual Reconciliation:** Daily batch job queries Stripe API for subscription state, syncs discrepancies
+4. **Monitoring:** Alert if webhook processing error rate >1%, manual investigation required
+```
+
+### Context: Audit Logging Requirements (from 05_Operational_Architecture.md)
+
+```markdown
+**Audit Logging:**
+- **Scope:** Enterprise tier security and compliance events
+- **Storage:** Dedicated `AuditLog` table (partitioned by month) + immutable S3 bucket for archival
+- **Events:**
+  - User authentication (SSO login, logout)
+  - Organization configuration changes (SSO settings, branding)
+  - Member management (invite, role change, removal)
+  - Administrative actions (room deletion, user account suspension)
+- **Attributes:** `timestamp`, `orgId`, `userId`, `action`, `resourceType`, `resourceId`, `ipAddress`, `userAgent`, `changeDetails` (JSONB)
+```
+
+### Context: REST API Endpoint Pattern (from 04_Behavior_and_Communication.md)
+
+```markdown
+**Subscription & Billing Endpoints:**
+- `GET /api/v1/subscriptions/{userId}` - Get current subscription (subscription tier, status, billing period)
+- `POST /api/v1/subscriptions/checkout` - Create Stripe checkout session, redirect to payment
+- `POST /api/v1/subscriptions/{subscriptionId}/cancel` - Cancel subscription (soft cancel, active until period end)
+- `GET /api/v1/billing/invoices` - List user's payment history (tier-gated: Pro tier required)
+- `POST /api/v1/subscriptions/webhook` - Stripe webhook endpoint (signature verification)
 ```
 
 ---
@@ -165,76 +128,96 @@ The following analysis is based on my direct review of the current codebase. Use
 ### Relevant Existing Code
 
 *   **File:** `backend/src/main/java/com/scrumpoker/domain/billing/BillingService.java`
-    *   **Summary:** **CRITICAL: This file ALREADY EXISTS and is COMPLETE!** The BillingService has been fully implemented with all required methods (createSubscription, upgradeSubscription, cancelSubscription, getActiveSubscription, syncSubscriptionStatus). The implementation includes:
-        - Comprehensive Javadoc documentation (474 lines total)
-        - Reactive programming with Mutiny Uni types
-        - Transactional integrity with @Transactional annotations
-        - Proper error handling and logging
-        - Tier transition validation logic (isValidUpgrade method)
-        - User tier synchronization (updateUserTier helper method)
-    *   **Recommendation:** **DO NOT MODIFY THIS FILE.** The task is already complete. You should verify the implementation meets all acceptance criteria.
-
-*   **File:** `backend/src/main/java/com/scrumpoker/domain/billing/Subscription.java`
-    *   **Summary:** JPA entity representing subscription records with fields: subscriptionId (UUID), stripeSubscriptionId (String), entityId (UUID, polymorphic reference), entityType (USER or ORG enum), tier (SubscriptionTier enum), status (SubscriptionStatus enum), currentPeriodStart/End (Instant), canceledAt (Instant, nullable), timestamps.
-    *   **Recommendation:** This entity is used by BillingService via SubscriptionRepository. You MUST NOT modify this entity structure. The service already correctly persists and updates these fields.
+    *   **Summary:** Domain service implementing complete subscription lifecycle management. Contains the `syncSubscriptionStatus(stripeSubscriptionId, status)` method which MUST be called by webhook handlers to update subscription state.
+    *   **Recommendation:** You MUST inject this service and call `syncSubscriptionStatus()` for subscription lifecycle events. The method is reactive (returns `Uni<Void>`) and handles all database updates including User.subscriptionTier changes.
+    *   **Key Method Signature:** `public Uni<Void> syncSubscriptionStatus(final String stripeSubscriptionId, final SubscriptionStatus status)`
+    *   **Status Handling Logic:** The service automatically downgrades users to FREE tier when CANCELED status is synced AND the current period has ended. For ACTIVE status, it updates User.subscriptionTier to the subscription tier.
 
 *   **File:** `backend/src/main/java/com/scrumpoker/integration/stripe/StripeAdapter.java`
-    *   **Summary:** Stripe integration adapter with methods: createCheckoutSession, createCustomer, getSubscription, cancelSubscription, updateSubscription. All methods are synchronous (blocking) and throw StripeException on failures. Configuration includes price IDs for each tier loaded from application.properties.
-    *   **Recommendation:** BillingService correctly wraps these blocking calls in Uni.createFrom().item() lambdas for reactive integration. The existing implementation follows this pattern correctly.
+    *   **Summary:** Stripe SDK wrapper providing all Stripe API integration. Contains configuration for API key and webhook secret.
+    *   **Recommendation:** You DO NOT need to create new Stripe API calls. The webhook signature verification is NOT yet implemented in this adapter, so you MUST add it to your webhook controller.
+    *   **Configuration Properties:** Webhook secret is available via `@ConfigProperty(name = "stripe.webhook-secret")` which is already configured in application.properties as `${STRIPE_WEBHOOK_SECRET:whsec_test_1234567890abcdefghijklmnopqrstuvwxyz}`
+
+*   **File:** `backend/src/main/java/com/scrumpoker/domain/billing/Subscription.java`
+    *   **Summary:** JPA entity for subscription records with fields: subscriptionId, stripeSubscriptionId, entityId, entityType, tier, status, currentPeriodStart, currentPeriodEnd, canceledAt.
+    *   **Recommendation:** You DO NOT directly manipulate this entity. All subscription updates MUST go through BillingService.syncSubscriptionStatus() which handles the entity persistence.
+
+*   **File:** `backend/src/main/java/com/scrumpoker/domain/billing/PaymentHistory.java`
+    *   **Summary:** JPA entity for payment transaction records. Contains relationship to Subscription entity via @ManyToOne, fields: paymentId, subscription, stripeInvoiceId, amount, currency, status, paidAt.
+    *   **Recommendation:** You MUST create PaymentHistory records for `invoice.payment_succeeded` events. Create the entity, set all required fields (subscription reference, stripeInvoiceId, amount from Stripe invoice data, status, paidAt), and persist via PaymentHistoryRepository.
 
 *   **File:** `backend/src/main/java/com/scrumpoker/repository/SubscriptionRepository.java`
-    *   **Summary:** Reactive Panache repository with methods: findActiveByEntityIdAndType (for tier enforcement), findByStripeSubscriptionId (for webhook handling), findByStatus, findByTier, countActiveByTier. All methods return Uni types.
-    *   **Recommendation:** BillingService already uses these repository methods correctly. The key method findActiveByEntityIdAndType filters by status=ACTIVE which is essential for tier enforcement.
+    *   **Summary:** Panache repository with custom finder method `findByStripeSubscriptionId()` which is reactive.
+    *   **Recommendation:** You SHOULD use this repository to find subscriptions when creating PaymentHistory records (need to link payment to subscription).
 
-*   **File:** `backend/src/main/java/com/scrumpoker/domain/user/SubscriptionTier.java`
-    *   **Summary:** Simple enum with values: FREE, PRO, PRO_PLUS, ENTERPRISE. This matches the database subscription_tier_enum type.
-    *   **Recommendation:** **IMPORTANT:** Task deliverables mention "SubscriptionTier.java" as a target file, but this already exists! This is the tier enum used throughout the system. No changes needed.
+*   **File:** `backend/src/main/java/com/scrumpoker/repository/PaymentHistoryRepository.java`
+    *   **Summary:** Panache repository with `findByStripeInvoiceId()` method for idempotency checks on invoice payments.
+    *   **Recommendation:** You MUST check for duplicate invoice processing before creating PaymentHistory. Call `findByStripeInvoiceId()` first - if exists, skip creation (idempotency).
+
+*   **File:** `backend/src/main/java/com/scrumpoker/api/rest/AuthController.java`
+    *   **Summary:** Reference implementation showing REST controller patterns: JAX-RS annotations, OpenAPI documentation, reactive return types (Uni<Response>), @PermitAll security, structured logging.
+    *   **Recommendation:** You SHOULD follow the same patterns: use @Path, @POST, @PermitAll for webhook endpoint, use Uni<Response> return type, add comprehensive OpenAPI annotations, log at INFO level for successful events and ERROR for failures.
+
+*   **File:** `backend/src/main/resources/application.properties`
+    *   **Summary:** Application configuration with Stripe settings already configured.
+    *   **Recommendation:** You can access `stripe.webhook-secret=${STRIPE_WEBHOOK_SECRET:whsec_test_1234567890abcdefghijklmnopqrstuvwxyz}` via `@ConfigProperty(name = "stripe.webhook-secret")` injection.
 
 ### Implementation Tips & Notes
 
-*   **Tip:** The task description asks you to "Create `BillingService`" but **THE FILE ALREADY EXISTS AND IS COMPLETE**. I have verified that all five required methods are implemented:
-    1. ✅ `createSubscription(UUID userId, SubscriptionTier tier)` - Lines 86-143
-    2. ✅ `upgradeSubscription(UUID userId, SubscriptionTier newTier)` - Lines 171-233
-    3. ✅ `cancelSubscription(UUID userId)` - Lines 254-301
-    4. ✅ `getActiveSubscription(UUID userId)` - Lines 315-329
-    5. ✅ `syncSubscriptionStatus(String stripeSubscriptionId, SubscriptionStatus status)` - Lines 357-415
+*   **Tip:** The Stripe Java SDK provides a built-in webhook signature verification method: `Webhook.constructEvent(payload, sigHeader, endpointSecret)`. You MUST use this in your controller to verify the Stripe-Signature header. If verification fails, return 401 Unauthorized immediately.
 
-*   **Note:** The implementation uses a reactive pattern where blocking Stripe SDK calls are wrapped in `Uni.createFrom().item(() -> { ... })` lambdas. This is the correct approach for integrating synchronous libraries in a reactive Quarkus application.
+*   **Note:** Stripe webhook event structure follows this pattern:
+    ```json
+    {
+      "id": "evt_1234567890",
+      "type": "customer.subscription.created",
+      "data": {
+        "object": { /* subscription or invoice object */ }
+      }
+    }
+    ```
+    You MUST extract the event type from `event.getType()` and handle it via a switch statement or similar routing mechanism.
 
-*   **Warning:** The createSubscription method creates a subscription with status=TRIALING and a placeholder stripeSubscriptionId ("pending-checkout-..."). This is intentional - the actual Stripe subscription will be created by the checkout session flow (handled in I5.T5), and the webhook handler (I5.T3) will update the stripeSubscriptionId and status when the payment succeeds.
+*   **Critical:** The webhook endpoint MUST be annotated with `@PermitAll` because Stripe webhooks do not send JWT tokens. Authentication is handled via signature verification only.
 
-*   **Critical:** The task acceptance criteria state "Creating subscription persists to database and creates Stripe subscription" but the current implementation does NOT immediately call StripeAdapter in createSubscription. This is actually correct based on the code comments which explain the subscription is created in TRIALING status and the Stripe subscription is created during checkout (I5.T5). The design separates subscription entity creation from Stripe checkout session creation.
+*   **Critical:** You MUST return `Response.ok().build()` (200 OK) even if event processing fails internally. This prevents Stripe from retrying. Log errors but always return 200 to acknowledge receipt. Stripe retries webhooks up to 3 days if they receive non-200 responses.
 
-*   **Important:** The tier transition validation logic uses a switch expression (isValidUpgrade method, lines 461-472) that only allows upgrades:
-    - FREE → PRO, PRO_PLUS, ENTERPRISE
-    - PRO → PRO_PLUS, ENTERPRISE
-    - PRO_PLUS → ENTERPRISE
-    - ENTERPRISE → (no upgrades possible)
-    Downgrades must go through the cancel flow instead.
+*   **Idempotency Pattern:** You MUST create a WebhookEventLog entity to store processed Stripe event IDs. Schema should include:
+    - `eventId` (String, unique) - Stripe event ID like "evt_1234567890"
+    - `eventType` (String) - e.g., "customer.subscription.created"
+    - `processedAt` (Instant) - timestamp when event was processed
+    - `status` (enum: PROCESSED, FAILED) - processing outcome
 
-*   **Testing Pattern:** Reference `backend/src/test/java/com/scrumpoker/domain/room/RoomServiceTest.java` for the project's testing conventions:
-    - Use `@ExtendWith(MockitoExtension.class)` for unit tests
-    - Mock dependencies with `@Mock` annotation
-    - Use `@InjectMocks` for the service under test
-    - Call `.await().indefinitely()` to convert Uni to blocking for test assertions
-    - Use AssertJ assertions (`assertThat(...)`)
-    - Verify mock interactions with `verify(mock).method(...)`
+    Before processing any event, check if the event ID already exists in WebhookEventLog. If it exists, skip processing (return 200 OK immediately). After successful processing, insert a new WebhookEventLog record.
 
-*   **Action Required:** Since BillingService is already fully implemented, you should:
-    1. Review the existing implementation to confirm it meets all acceptance criteria
-    2. If any acceptance criteria are not met, make minimal targeted fixes
-    3. If all criteria are met, mark the task as complete and notify that no changes were needed
-    4. Consider whether the next task (I5.T3 - Webhook Handler) or related tasks need attention instead
+*   **Event Type Mapping:**
+    - `customer.subscription.created` → `BillingService.syncSubscriptionStatus(stripeSubId, SubscriptionStatus.ACTIVE)`
+    - `customer.subscription.updated` → Extract status from event.data.object.status, map to SubscriptionStatus enum, call syncSubscriptionStatus
+    - `customer.subscription.deleted` → `syncSubscriptionStatus(stripeSubId, SubscriptionStatus.CANCELED)`
+    - `invoice.payment_succeeded` → Create PaymentHistory record with status SUCCEEDED
+    - `invoice.payment_failed` → `syncSubscriptionStatus(stripeSubId, SubscriptionStatus.PAST_DUE)`
 
-### Acceptance Criteria Verification
+*   **Warning:** The Subscription entity may not exist in the database when `customer.subscription.created` is received if the subscription was created outside the normal flow. You SHOULD handle this gracefully by logging a warning and returning 200 OK (let manual reconciliation handle it).
 
-Based on the existing BillingService.java implementation:
+*   **Status Mapping (Stripe → Domain):** When handling `customer.subscription.updated`, you MUST map Stripe status strings to the SubscriptionStatus enum:
+    - "active" → SubscriptionStatus.ACTIVE
+    - "past_due" → SubscriptionStatus.PAST_DUE
+    - "canceled" → SubscriptionStatus.CANCELED
+    - "trialing" → SubscriptionStatus.TRIALING
+    - "incomplete", "incomplete_expired", "unpaid" → SubscriptionStatus.PAST_DUE
 
-1. ✅ "Creating subscription persists to database and creates Stripe subscription" - PARTIALLY: Persists to DB with TRIALING status. Stripe subscription created later via checkout session (by design).
-2. ✅ "Upgrading tier updates both database and Stripe" - YES: upgradeSubscription calls stripeAdapter.updateSubscription then persists entity.
-3. ✅ "Canceling subscription sets `canceled_at`, subscription remains active until period end" - YES: Sets canceledAt timestamp, calls Stripe with cancel_at_period_end=true.
-4. ✅ "Tier enforcement prevents invalid transitions" - YES: isValidUpgrade method validates only upgrades are allowed.
-5. ✅ "User.subscription_tier reflects current subscription status" - YES: updateUserTier helper called after all tier changes.
-6. ✅ "Sync method updates subscription status from webhook events" - YES: syncSubscriptionStatus handles all status transitions and conditional user tier updates.
+*   **Transaction Boundaries:** You MUST annotate the webhook processing method with `@Transactional` to ensure idempotency check and event processing are atomic. If processing fails, the transaction rolls back and the WebhookEventLog insert is also rolled back, allowing retry.
 
-**Conclusion:** The implementation appears complete and correct. The only potential discrepancy is the interpretation of "creates Stripe subscription" in the first criterion, but the code comments clearly document this is intentional - the Stripe subscription is created via checkout session, not directly in createSubscription.
+*   **Reactive Patterns:** All repository and service calls return `Uni<>` types. You MUST chain them using `.onItem().transformToUni()` or similar operators. The final return should be `Uni<Response>` which JAX-RS will handle asynchronously.
+
+*   **Testing Consideration:** The acceptance criteria requires testing with mocked Stripe events. You will need to create test resources with sample Stripe webhook JSON payloads (e.g., `src/test/resources/stripe/webhook_subscription_created.json`). Use the Stripe SDK's test helpers to generate valid signatures for integration tests.
+
+*   **Database Migration Required:** You MUST create a Flyway migration script for the WebhookEventLog table. This should be added as a new migration file (e.g., `V4__create_webhook_event_log.sql`) in `backend/src/main/resources/db/migration/`. The table needs:
+    - Primary key: `event_id` (VARCHAR, unique)
+    - `event_type` (VARCHAR)
+    - `processed_at` (TIMESTAMP)
+    - `status` (VARCHAR or enum)
+    - Unique constraint on `event_id`
+    - Index on `processed_at` for cleanup queries
+
+*   **Payment Amount Extraction:** When processing `invoice.payment_succeeded`, you MUST extract the amount from the Stripe Invoice object. The Stripe API returns amounts in cents (e.g., 1999 = $19.99). Store this value directly in PaymentHistory.amount field which is Integer type. The currency is available from invoice.getCurrency() (ISO 4217 code like "usd").
