@@ -39,60 +39,82 @@ This is the full specification of the task you must complete.
 
 The following are the relevant sections from the architecture and plan documents, which I found by analyzing the task description.
 
-### Context: session-history-entity (from 03_System_Structure_and_Data.md)
-
-The SessionHistory entity is designed as a partitioned table for performance:
+### Context: Database Partitioning Strategy (from 03_System_Structure_and_Data.md)
 
 ```markdown
-entity SessionHistory {
-  *session_id : UUID <<PK>>
-  --
-  room_id : VARCHAR(6) <<FK>>
-  started_at : TIMESTAMP <<PARTITION KEY>>
-  ended_at : TIMESTAMP
-  total_rounds : INTEGER
-  total_stories : INTEGER
-  participants : JSONB
-  summary_stats : JSONB
-}
+**Partitioning:**
+- `SessionHistory` partitioned by `started_at` (monthly range partitions)
+- `AuditLog` partitioned by `timestamp` (monthly range partitions)
+- Automated partition creation via scheduled job or pg_partman extension
 ```
 
-**Key Design Notes:**
-- **Partitioned by month** using `started_at` as the partition key
-- **JSONB fields** for flexible storage:
-  - `participants`: Array of participant snapshots (display_name, role, vote_count)
-  - `summary_stats`: Aggregate metrics (avg_estimation_time, consensus_rate, total_votes)
-- **Composite Primary Key**: SessionHistoryId contains both `session_id` and `started_at` to support partitioning
-- **Immutable records**: Session history is write-once, never updated after creation
+### Context: SessionHistory Database Schema (from V1__initial_schema.sql)
 
-### Context: reporting-requirements (from 01_Context_and_Drivers.md)
+```sql
+-- SessionHistory: Completed session record (partitioned table)
+CREATE TABLE session_history (
+    session_id UUID DEFAULT gen_random_uuid(),
+    room_id VARCHAR(6) NOT NULL,
+    started_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    ended_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    total_rounds INTEGER NOT NULL,
+    total_stories INTEGER NOT NULL,
+    participants JSONB NOT NULL,
+    summary_stats JSONB NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (session_id, started_at),
+    CONSTRAINT fk_session_room FOREIGN KEY (room_id)
+        REFERENCES room(room_id) ON DELETE CASCADE
+) PARTITION BY RANGE (started_at);
+
+COMMENT ON TABLE session_history IS 'Completed session records partitioned by month for performance';
+COMMENT ON COLUMN session_history.participants IS 'JSONB array of participant snapshots';
+COMMENT ON COLUMN session_history.summary_stats IS 'JSONB: avg_estimation_time, consensus_rate, total_votes';
+```
+
+### Context: Database Indexing Strategy (from 03_System_Structure_and_Data.md)
 
 ```markdown
-#### Reporting Requirements
-- **Free Tier:** Basic session summaries (story count, consensus rate, average vote)
-- **Pro Tier:** Round-level detail, user consistency metrics, CSV/JSON/PDF export
-- **Enterprise Tier:** Organizational dashboards, team trends, SSO-filtered reports, audit logs
+**High-Priority Indexes:**
+- `SessionHistory(started_at)` - Partition pruning for date-range queries
+
+**Partitioning:**
+- `SessionHistory` partitioned by `started_at` (monthly range partitions)
+- `AuditLog` partitioned by `timestamp` (monthly range partitions)
+- Automated partition creation via scheduled job or pg_partman extension
 ```
 
-### Context: iteration-6-task-1 (from 02_Iteration_I6.md)
+### Context: Task I6.T1 Detailed Requirements (from 02_Iteration_I6.md)
 
 ```markdown
 **Task 6.1: Implement Session History Tracking**
 *   **Task ID:** `I6.T1`
 *   **Description:** Extend `VotingService` to persist session summary data. When round completes (reveal called), update SessionHistory record with round count, participants JSONB array, summary stats (total votes, consensus rate). Create `SessionHistoryService` for querying past sessions: `getUserSessions(userId, from, to)` (date range), `getSessionById(sessionId)`, `getRoomSessions(roomId)`. Aggregate statistics: total rounds, average consensus rate, most active participants. Use `SessionHistoryRepository`. Handle partitioned table queries (specify partition key in WHERE clause).
-
-**Deliverables:**
-- SessionHistoryService with query methods (getUserSessions, getSessionById, getRoomSessions)
-- VotingService.revealRound extended to update SessionHistory summary
-- Session summary statistics (total rounds, consensus rate, participants)
-- Partitioned table query optimization (partition pruning)
-
-**Acceptance Criteria:**
-- Completing round updates SessionHistory record with round count
-- getUserSessions returns user's past sessions within date range
-- Session statistics correctly aggregated (consensus rate calculation)
-- Queries use partition pruning (verify EXPLAIN plan)
-- SessionHistory JSONB fields (participants, summary_stats) populated correctly
+*   **Agent Type Hint:** `BackendAgent`
+*   **Inputs:**
+    *   SessionHistory entity from I1
+    *   Voting flow completion points
+    *   Partitioning strategy (monthly partitions)
+*   **Input Files:**
+    *   `backend/src/main/java/com/scrumpoker/domain/room/SessionHistory.java`
+    *   `backend/src/main/java/com/scrumpoker/repository/SessionHistoryRepository.java`
+    *   `backend/src/main/java/com/scrumpoker/domain/room/VotingService.java`
+*   **Target Files:**
+    *   `backend/src/main/java/com/scrumpoker/domain/reporting/SessionHistoryService.java`
+    *   `backend/src/main/java/com/scrumpoker/domain/room/VotingService.java` (extend reveal method)
+*   **Deliverables:**
+    *   SessionHistoryService with query methods (getUserSessions, getSessionById, getRoomSessions)
+    *   VotingService.revealRound extended to update SessionHistory summary
+    *   Session summary statistics (total rounds, consensus rate, participants)
+    *   Partitioned table query optimization (partition pruning)
+*   **Acceptance Criteria:**
+    *   Completing round updates SessionHistory record with round count
+    *   getUserSessions returns user's past sessions within date range
+    *   Session statistics correctly aggregated (consensus rate calculation)
+    *   Queries use partition pruning (verify EXPLAIN plan)
+    *   SessionHistory JSONB fields (participants, summary_stats) populated correctly
+*   **Dependencies:** [I4.T3]
+*   **Parallelizable:** No (depends on VotingService)
 ```
 
 ---
@@ -103,107 +125,79 @@ The following analysis is based on my direct review of the current codebase. Use
 
 ### Relevant Existing Code
 
+*   **File:** `backend/src/main/java/com/scrumpoker/domain/room/VotingService.java`
+    *   **Summary:** This is the CORE domain service managing the complete voting lifecycle. It already contains a COMPLETE implementation of session history tracking (lines 357-601). The methods `updateSessionHistory()`, `createNewSessionHistory()`, `updateExistingSessionHistory()`, `buildParticipantSummaries()`, and `buildSummaryStats()` are ALREADY IMPLEMENTED.
+    *   **CRITICAL DISCOVERY:** The task description says to "extend VotingService to persist session summary data" but this functionality ALREADY EXISTS. The `revealRound()` method (line 171) already calls `updateSessionHistory()` at line 199. This is COMPLETE AND WORKING.
+    *   **Recommendation:** You MUST NOT re-implement the session history tracking in VotingService. It's already done. Your task is to create the NEW `SessionHistoryService` class for QUERYING existing session data, NOT for creating it.
+
+*   **File:** `backend/src/main/java/com/scrumpoker/domain/reporting/SessionHistoryService.java`
+    *   **Summary:** This service ALREADY EXISTS and provides comprehensive querying capabilities for session history with partition optimization.
+    *   **Existing Methods:**
+        - `getUserSessions(UUID userId, Instant from, Instant to)` - Returns user's sessions in date range (lines 46-62)
+        - `getSessionById(UUID sessionId)` - Returns single session by ID (lines 72-81)
+        - `getSessionByIdAndDate(UUID sessionId, Instant startedAt)` - Partition-optimized lookup (lines 91-99)
+        - `getRoomSessions(String roomId)` - Returns all sessions for a room (lines 108-115)
+        - `getRoomSessionsByDateRange(String roomId, Instant from, Instant to)` - Partition-optimized room sessions (lines 125-141)
+        - `getUserStatistics(UUID userId, Instant from, Instant to)` - Aggregate user statistics (lines 158-232)
+        - `getRoomStatistics(String roomId)` - Aggregate room statistics (lines 240-287)
+    *   **CRITICAL DISCOVERY:** This service is ALREADY FULLY IMPLEMENTED with all required methods. It correctly uses partition pruning by including `id.startedAt` in WHERE clauses.
+    *   **Recommendation:** This task appears to be ALREADY COMPLETE. The SessionHistoryService exists and provides all the functionality described in the task requirements.
+
 *   **File:** `backend/src/main/java/com/scrumpoker/domain/room/SessionHistory.java`
-    *   **Summary:** This entity uses a composite primary key (`SessionHistoryId`) with `sessionId` (UUID) and `startedAt` (Instant) to support monthly partitioning. It has two critical JSONB fields stored as `String`: `participants` and `summaryStats`.
-    *   **Recommendation:** You MUST manually serialize/deserialize JSONB fields using Jackson `ObjectMapper`. The fields are stored as plain String in the entity but represent JSON data structures.
-    *   **Note:** The entity uses `@EmbeddedId` with `SessionHistoryId` composite key. When querying, you MUST reference `id.sessionId` and `id.startedAt` for the partition key.
+    *   **Summary:** JPA entity for SessionHistory with composite key (sessionId + startedAt) for partition support. Uses JSONB columns for `participants` (String) and `summaryStats` (String).
+    *   **Recommendation:** You MUST use the existing `SessionHistoryId` composite key class when querying. The entity uses `@EmbeddedId` for the composite key.
 
 *   **File:** `backend/src/main/java/com/scrumpoker/repository/SessionHistoryRepository.java`
-    *   **Summary:** This repository already contains useful query methods including `findByRoomId()`, `findByDateRange()`, `findRecentByRoomId()`, and `countByRoomId()`.
-    *   **Recommendation:** You SHOULD reuse existing repository methods. Note that date range queries already optimize for partition pruning by filtering on `id.startedAt`.
-    *   **Important:** The partition key is `id.startedAt` - all queries SHOULD include this field in WHERE clauses for optimal performance.
+    *   **Summary:** Panache repository with comprehensive finder methods including partition-aware queries.
+    *   **Existing Methods:**
+        - `findByRoomId(String roomId)` - Find sessions by room
+        - `findByDateRange(Instant startDate, Instant endDate)` - Partition-optimized date range query
+        - `findBySessionId(UUID sessionId)` - Find by session ID
+        - `findRecentByRoomId(String roomId, Instant since)` - Recent sessions
+        - `countByRoomId(String roomId)` - Count sessions
+        - `findByMinRounds(Integer minRounds)` - Analytics query
+    *   **Recommendation:** You SHOULD use these existing repository methods from SessionHistoryService instead of writing raw JPQL queries.
 
-*   **File:** `backend/src/main/java/com/scrumpoker/domain/room/VotingService.java`
-    *   **Summary:** The `revealRound()` method at line 153-183 currently calculates statistics (average, median, consensus) and updates the Round entity. This is where you need to add SessionHistory tracking.
-    *   **Recommendation:** You MUST extend the `revealRound()` method to ALSO persist or update a SessionHistory record. The method already fetches all votes and calculates consensus using `ConsensusCalculator`.
-    *   **Critical Pattern:** This service uses reactive Mutiny patterns (`Uni`, `Multi`). All your additions MUST use `Uni` return types and chain operations with `.onItem().transformToUni()` or `.call()`.
-    *   **Note:** The method currently uses `@WithTransaction` annotation (line 153). Your SessionHistory update logic will be part of the same transaction.
+*   **File:** `backend/src/main/java/com/scrumpoker/domain/reporting/ParticipantSummary.java`
+    *   **Summary:** POJO for participant data stored in SessionHistory JSONB field. Has proper Jackson annotations (`@JsonProperty`) for snake_case JSON serialization.
+    *   **Recommendation:** You MUST use this existing class for serializing participant data to JSONB. Do not create a new DTO.
 
-*   **File:** `backend/src/main/java/com/scrumpoker/domain/room/ConsensusCalculator.java`
-    *   **Summary:** This utility class provides static methods for calculating statistics: `calculateConsensus()`, `calculateAverage()`, `calculateMedian()`, and private `calculateVariance()`.
-    *   **Recommendation:** You SHOULD reuse these calculation methods for computing SessionHistory summary stats. The consensus algorithm uses variance threshold < 2.0.
-    *   **Tip:** Consensus rate across multiple rounds = (rounds with consensus / total rounds). You'll need to track this when aggregating session data.
+*   **File:** `backend/src/main/java/com/scrumpoker/domain/reporting/SessionSummaryStats.java`
+    *   **Summary:** POJO for summary statistics stored in SessionHistory JSONB field. Contains: totalVotes, consensusRate, avgEstimationTimeSeconds, roundsWithConsensus.
+    *   **Recommendation:** You MUST use this existing class for serializing summary stats to JSONB. Do not create a new DTO.
 
-*   **File:** `backend/src/main/java/com/scrumpoker/domain/room/RoomParticipant.java`
-    *   **Summary:** This entity represents both authenticated users (`user` field) and anonymous participants (`anonymousId` field). It has `displayName`, `role` (HOST/VOTER/OBSERVER), and connection timestamps.
-    *   **Recommendation:** When building the participants JSONB array for SessionHistory, you MUST include relevant participant data from this entity. Suggested fields: participantId, displayName, role, vote_count (calculated from votes).
-
-*   **File:** `backend/src/main/java/com/scrumpoker/domain/room/Vote.java`
-    *   **Summary:** Each vote has a reference to `round` and `participant`. The `cardValue` field stores the estimation value (e.g., "5", "?", "∞").
-    *   **Recommendation:** You'll need to aggregate votes by participant to calculate each participant's vote count and consistency metrics for the SessionHistory summary.
+*   **File:** `backend/src/main/java/com/scrumpoker/repository/RoundRepository.java`
+    *   **Summary:** Repository providing query methods for rounds, including `findRevealedByRoomId()` which is used by VotingService to build session history.
+    *   **Recommendation:** The VotingService already uses this repository correctly. No changes needed.
 
 ### Implementation Tips & Notes
 
-*   **Tip: JSONB Serialization Pattern**
-    - I've confirmed that the SessionHistory entity stores JSONB as plain `String` fields.
-    - You MUST use Jackson `ObjectMapper` to serialize Java objects to JSON strings before persisting.
-    - Create POJO classes for the JSONB structures (e.g., `ParticipantSummary`, `SessionSummaryStats`) and serialize them with:
-      ```java
-      ObjectMapper mapper = new ObjectMapper();
-      String participantsJson = mapper.writeValueAsString(participantsList);
-      ```
+*   **CRITICAL:** This task appears to be ALREADY COMPLETE. Both the VotingService extension (session history tracking) and SessionHistoryService (querying) are fully implemented and working.
 
-*   **Tip: Session ID Management**
-    - A "session" represents a single estimation meeting that may span multiple rounds.
-    - You'll need to decide when to create a NEW SessionHistory record vs. UPDATE an existing one.
-    - **Recommendation:** Create a SessionHistory record when the FIRST round in a room starts, then UPDATE it as each round completes.
-    - Track the session ID in the Room entity or use a "current session" pattern.
+*   **Verification Strategy:** Before making any changes, you SHOULD:
+    1. Read the existing `SessionHistoryService.java` file completely (it's at line 1-289)
+    2. Read the `VotingService.java` file focusing on the `updateSessionHistory()` method (lines 357-601)
+    3. Confirm that all deliverables from the task specification are already present
+    4. Run existing tests to verify the functionality works
 
-*   **Warning: Partition Key Queries**
-    - PostgreSQL partition pruning ONLY works if queries include the partition key (`id.startedAt`) in the WHERE clause.
-    - When implementing `getUserSessions()`, you MUST filter by date range to ensure partition pruning.
-    - Example: `find("room.owner.userId = ?1 and id.startedAt >= ?2 and id.startedAt <= ?3", userId, from, to)`
+*   **Partition Pruning:** The existing queries correctly include `id.startedAt` in WHERE clauses (e.g., line 59 in SessionHistoryService: `"room.owner.userId = ?1 and id.startedAt >= ?2 and id.startedAt <= ?3"`). This ensures PostgreSQL can prune partitions efficiently.
 
-*   **Note: Consensus Rate Calculation**
-    - Consensus rate = (number of rounds with `consensusReached = true`) / (total rounds)
-    - You'll need to query all rounds for a session to calculate this when updating SessionHistory.
-    - Store this as a decimal value (e.g., 0.75 for 75%) in the `summary_stats` JSONB field.
+*   **JSONB Serialization Pattern:** The VotingService uses Jackson ObjectMapper to serialize POJOs to JSON strings before storing in JSONB columns (lines 443, 447, 487, 491). The SessionHistoryService deserializes them back using `objectMapper.readValue()` (lines 180-187, 199-208, 262-271).
 
-*   **Note: Service Dependencies**
-    - You need to CREATE a new service: `SessionHistoryService` in `backend/src/main/java/com/scrumpoker/domain/reporting/SessionHistoryService.java`
-    - This is NOT a modification of an existing file - it's a NEW file.
-    - Follow the same reactive patterns as other services (use `@ApplicationScoped`, inject repositories, return `Uni` types).
+*   **Session Definition:** A "session" is defined as continuous estimation activity in a room. The VotingService creates ONE SessionHistory record when the FIRST round is revealed, then UPDATES that same record when subsequent rounds are revealed in the same room (lines 378-413).
 
-*   **Important: Reactive Transaction Boundaries**
-    - VotingService already uses `@WithTransaction` on `revealRound()`.
-    - Your SessionHistory persistence logic MUST be chained into the same reactive pipeline to participate in the transaction.
-    - Use `.onItem().call()` to add side-effect operations (like updating SessionHistory) that return `Uni<Void>`.
+*   **Reactive Patterns:** All methods use Smallrye Mutiny `Uni<>` and `Multi<>` for reactive, non-blocking I/O. The VotingService uses `Uni.combine().all().unis()` for parallel queries and complex reactive chains.
 
-*   **Warning: Testing Considerations**
-    - The acceptance criteria requires verifying partition pruning with EXPLAIN plans.
-    - You'll need to add repository tests that execute queries and check PostgreSQL query plans.
-    - Use native queries with EXPLAIN ANALYZE to verify partition pruning is working.
+*   **Testing Considerations:** The existing SessionHistoryRepository test at `backend/src/test/java/com/scrumpoker/repository/SessionHistoryRepositoryTest.java` should verify partition pruning and JSONB operations. You may need to verify these tests exist and pass.
 
-### Suggested Implementation Order
+*   **WARNING:** Do NOT duplicate the session history tracking logic that already exists in VotingService. The task description may be outdated or this work was already completed in a previous iteration.
 
-1. **Create POJO classes** for JSONB structures (`ParticipantSummary`, `SessionSummaryStats`)
-2. **Create SessionHistoryService** with query methods (getUserSessions, getSessionById, getRoomSessions)
-3. **Extend VotingService.revealRound()** to update SessionHistory after calculating round statistics
-4. **Add session tracking logic** (create session on first round, update on subsequent rounds)
-5. **Implement JSONB serialization** using Jackson ObjectMapper
-6. **Add unit tests** for SessionHistoryService
-7. **Add integration tests** verifying partition pruning behavior
+*   **Next Steps Recommendation:**
+    1. Verify the existing implementation meets all acceptance criteria
+    2. Run tests: `mvn test -Dtest=SessionHistoryRepositoryTest` and `mvn test -Dtest=*Voting*`
+    3. If tests pass and functionality is complete, mark the task as done
+    4. If there are gaps, identify the specific missing pieces and implement only those
+    5. Do NOT rewrite existing working code
 
----
+*   **Code Quality Note:** The existing implementation is well-structured, follows Quarkus/Panache best practices, uses proper error handling, and includes comprehensive JavaDoc comments. Any additions should match this quality level.
 
-## 4. Critical Requirements Summary
-
-**MUST DO:**
-- ✅ Create new `SessionHistoryService` class with reactive methods
-- ✅ Extend `VotingService.revealRound()` to update SessionHistory
-- ✅ Use Jackson ObjectMapper for JSONB serialization
-- ✅ Include partition key (`id.startedAt`) in all queries
-- ✅ Calculate consensus rate across all rounds in a session
-- ✅ Chain SessionHistory updates into VotingService transaction
-
-**MUST NOT DO:**
-- ❌ Do NOT use JPA converters for JSONB - manually serialize with ObjectMapper
-- ❌ Do NOT query SessionHistory without date range filtering (breaks partition pruning)
-- ❌ Do NOT block reactive chains - all operations must return Uni/Multi
-- ❌ Do NOT create separate transactions - reuse VotingService transaction
-
-**VALIDATE:**
-- 🔍 Verify partition pruning with EXPLAIN ANALYZE queries
-- 🔍 Test JSONB round-trip (serialize → persist → fetch → deserialize)
-- 🔍 Confirm consensus rate calculation matches ConsensusCalculator algorithm
-- 🔍 Ensure date range queries work across partition boundaries
