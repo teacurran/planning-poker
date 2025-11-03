@@ -10,28 +10,28 @@ This is the full specification of the task you must complete.
 
 ```json
 {
-  "task_id": "I6.T3",
+  "task_id": "I6.T4",
   "iteration_id": "I6",
   "iteration_goal": "Implement session history tracking, tier-based reporting (basic summaries for Free, detailed analytics for Pro/Enterprise), export functionality (CSV/PDF), and frontend reporting UI.",
-  "description": "Create background worker consuming export jobs from Redis Stream. `ExportJobProcessor` listens to `jobs:reports` stream, processes job (query session data, generate CSV or PDF), upload to S3 bucket, update job status in database (JobStatus: PENDING → PROCESSING → COMPLETED/FAILED), generate time-limited signed URL for download. Use Apache Commons CSV for CSV generation, iText or Apache PDFBox for PDF. Handle errors (mark job FAILED, store error message). Implement exponential backoff retry for transient failures.",
+  "description": "Implement REST endpoints for reporting per OpenAPI spec. Endpoints: `GET /api/v1/reports/sessions` (list user's sessions with pagination), `GET /api/v1/reports/sessions/{sessionId}` (get session report, tier-gated detail level), `POST /api/v1/reports/export` (create export job, returns job ID), `GET /api/v1/jobs/{jobId}` (poll export job status, returns download URL when complete). Use `ReportingService`. Return pagination metadata (total count, page, size). Enforce authorization (user can only access own sessions or rooms they participated in).",
   "agent_type_hint": "BackendAgent",
-  "inputs": "Export requirements (CSV/PDF formats), Redis Streams consumer patterns, S3 upload and signed URL generation",
+  "inputs": "OpenAPI spec for reporting endpoints from I2.T1, ReportingService from I6.T2",
   "input_files": [
+    "api/openapi.yaml",
     "backend/src/main/java/com/scrumpoker/domain/reporting/ReportingService.java"
   ],
   "target_files": [
-    "backend/src/main/java/com/scrumpoker/worker/ExportJobProcessor.java",
-    "backend/src/main/java/com/scrumpoker/worker/CsvExporter.java",
-    "backend/src/main/java/com/scrumpoker/worker/PdfExporter.java",
-    "backend/src/main/java/com/scrumpoker/integration/s3/S3Adapter.java",
-    "backend/src/main/java/com/scrumpoker/domain/reporting/ExportJob.java"
+    "backend/src/main/java/com/scrumpoker/api/rest/ReportingController.java",
+    "backend/src/main/java/com/scrumpoker/api/rest/dto/SessionListResponse.java",
+    "backend/src/main/java/com/scrumpoker/api/rest/dto/ExportJobResponse.java"
   ],
-  "deliverables": "ExportJobProcessor consuming Redis Stream, CsvExporter generating CSV files (session data, rounds, votes), PdfExporter generating PDF reports with summary and charts, S3Adapter uploading files to configured bucket, Signed URL generation (7-day expiration), Job status tracking (PENDING → PROCESSING → COMPLETED), Error handling and retry logic",
-  "acceptance_criteria": "Export job message triggers processor, CSV export generates valid file (test with sample session), PDF export generates readable report, File uploaded to S3 successfully, Signed URL allows download without authentication, Job status updated to COMPLETED with download URL, Failed jobs marked with error message, Retry logic handles transient S3 failures",
+  "deliverables": "ReportingController with 4 endpoints, Pagination support (query params: page, size, sort), Session list endpoint with metadata (total, hasNext), Session detail endpoint with tier-based response, Export endpoint enqueuing job and returning job ID, Job status endpoint returning status and download URL",
+  "acceptance_criteria": "GET /reports/sessions returns paginated list (default 20 per page), GET /reports/sessions/{id} returns basic summary for Free tier, Pro tier user gets detailed report with round breakdown, POST /reports/export creates job and returns job ID, GET /jobs/{jobId} returns PENDING while processing, COMPLETED with URL when done, Unauthorized access to other user's sessions returns 403",
   "dependencies": [
-    "I6.T2"
+    "I6.T2",
+    "I6.T3"
   ],
-  "parallelizable": true,
+  "parallelizable": false,
   "done": false
 }
 ```
@@ -42,37 +42,224 @@ This is the full specification of the task you must complete.
 
 The following are the relevant sections from the architecture and plan documents, which I found by analyzing the task description.
 
-### Context: asynchronous-job-processing-pattern (from 04_Behavior_and_Communication.md)
+### Context: API Design & REST Communication Patterns (from 04_Behavior_and_Communication.md)
 
 ```markdown
-##### Asynchronous Job Processing (Fire-and-Forget)
+<!-- anchor: api-design-and-communication -->
+### 3.7. API Design & Communication
+
+<!-- anchor: api-style -->
+#### API Style
+
+**Primary API Style:** **RESTful JSON API (OpenAPI 3.1 Specification)**
+
+**Rationale:**
+- **Simplicity & Familiarity:** REST over HTTPS provides a well-understood contract for CRUD operations on resources (users, rooms, subscriptions)
+- **Tooling Ecosystem:** OpenAPI specification enables automatic client SDK generation (TypeScript for React frontend), API documentation (Swagger UI), and contract testing
+- **Caching Support:** HTTP semantics (ETags, Cache-Control headers) enable browser and CDN caching for read-heavy endpoints (room configurations, user profiles)
+- **Versioning Strategy:** URL-based versioning (`/api/v1/`) for backward compatibility during iterative releases
+
+<!-- anchor: synchronous-rest-pattern -->
+##### Synchronous REST (Request/Response)
 
 **Use Cases:**
-- Report generation (CSV/PDF exports triggered by user, processed in background)
-- Email notifications (subscription renewal reminders, weekly summary digests)
-- Batch operations (monthly usage report aggregation)
+- User authentication and registration
+- Room creation and configuration updates
+- Subscription management (upgrade, cancellation, payment method updates)
+- Report generation triggers and export downloads
+- Organization settings management
 
 **Pattern Characteristics:**
-- Client receives immediate acknowledgment (job ID) and polls for completion status
-- Job messages enqueued to Redis Stream (`jobs:reports`, `jobs:notifications`)
-- Background worker pools consume messages and process jobs
-- Job status tracked in database (PENDING → PROCESSING → COMPLETED/FAILED)
-- Long-running jobs (>30 seconds) use idempotency keys for safe retries
+- Client blocks waiting for server response (typically <500ms)
+- Transactional consistency guaranteed within single database transaction
+- Idempotency keys for payment operations to prevent duplicate charges
+- Error responses use standard HTTP status codes (4xx client errors, 5xx server errors)
 
-**Job Processing Flow:**
-1. Client calls `POST /api/v1/reports/export` with session ID
-2. Server generates job ID (UUID), stores job record in database (status: PENDING)
-3. Server publishes job message to Redis Stream: `{"jobId": "...", "sessionId": "...", "format": "PDF"}`
-4. Server returns job ID to client immediately
-5. Background worker consumes message from stream
-6. Worker queries session data, generates PDF, uploads to S3
-7. Worker updates job status: COMPLETED with download URL
-8. Client polls `GET /api/v1/jobs/{jobId}` until status COMPLETED, receives download URL
+**Example Endpoints:**
+- `POST /api/v1/auth/oauth/callback` - Exchange OAuth2 code for JWT token
+- `POST /api/v1/rooms` - Create new estimation room
+- `GET /api/v1/rooms/{roomId}` - Retrieve room configuration
+- `PUT /api/v1/users/{userId}/preferences` - Update user preferences
+- `POST /api/v1/subscriptions/{subscriptionId}/upgrade` - Upgrade subscription tier
+- `GET /api/v1/reports/sessions?from=2025-01-01&to=2025-01-31` - Query session history
+```
 
-**Error Handling:**
-- Transient failures (S3 timeout): Worker retries with exponential backoff (5 attempts max)
-- Permanent failures (session not found): Worker marks job FAILED with error message
-- Stuck jobs: Scheduled task detects jobs in PROCESSING state for >10 minutes, marks FAILED
+### Context: OpenAPI Specification for Reporting Endpoints (from openapi.yaml)
+
+```yaml
+/api/v1/reports/sessions:
+  get:
+    tags:
+      - Reports
+    summary: List session history
+    description: |
+      Returns paginated session history with filters.
+      **Tier Requirements:**
+      - Free tier: Last 30 days, max 10 results
+      - Pro tier: Last 90 days, max 100 results
+      - Pro Plus/Enterprise: Unlimited history
+    operationId: listSessions
+    parameters:
+      - name: from
+        in: query
+        schema:
+          type: string
+          format: date
+        description: Start date (ISO 8601 format)
+        example: "2025-01-01"
+      - name: to
+        in: query
+        schema:
+          type: string
+          format: date
+        description: End date (ISO 8601 format)
+        example: "2025-01-31"
+      - name: roomId
+        in: query
+        schema:
+          type: string
+          pattern: '^[a-z0-9]{6}$'
+        description: Filter by room ID
+        example: "abc123"
+      - $ref: '#/components/parameters/PageParam'
+      - $ref: '#/components/parameters/SizeParam'
+    responses:
+      '200':
+        description: Session list retrieved
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SessionListResponse'
+      '401':
+        $ref: '#/components/responses/Unauthorized'
+      '403':
+        description: Insufficient subscription tier
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ErrorResponse'
+      '500':
+        $ref: '#/components/responses/InternalServerError'
+
+/api/v1/reports/sessions/{sessionId}:
+  get:
+    tags:
+      - Reports
+    summary: Get detailed session report
+    description: |
+      Returns detailed session report including all rounds and votes.
+      **Tier Requirements:**
+      - Free tier: Summary only (average, median)
+      - Pro tier and above: Full round-by-round detail with individual votes
+    operationId: getSessionReport
+    parameters:
+      - name: sessionId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+        description: Session ID
+        example: "123e4567-e89b-12d3-a456-426614174000"
+    responses:
+      '200':
+        description: Session report retrieved
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SessionDetailDTO'
+      '401':
+        $ref: '#/components/responses/Unauthorized'
+      '403':
+        description: Insufficient subscription tier for detailed report
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ErrorResponse'
+      '404':
+        $ref: '#/components/responses/NotFound'
+      '500':
+        $ref: '#/components/responses/InternalServerError'
+
+/api/v1/reports/export:
+  post:
+    tags:
+      - Reports
+    summary: Generate export job (CSV/PDF)
+    description: |
+      Creates an asynchronous export job for session data. Returns job ID for polling status.
+      **Tier Requirements:** Pro tier or higher
+    operationId: createExportJob
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ExportRequest'
+    responses:
+      '202':
+        description: Export job created
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExportJobResponse'
+      '400':
+        $ref: '#/components/responses/BadRequest'
+      '401':
+        $ref: '#/components/responses/Unauthorized'
+      '403':
+        description: Export feature requires Pro tier or higher
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ErrorResponse'
+      '500':
+        $ref: '#/components/responses/InternalServerError'
+
+/api/v1/jobs/{jobId}:
+  get:
+    tags:
+      - Reports
+    summary: Poll export job status
+    description: |
+      Returns job status (PENDING, PROCESSING, COMPLETED, FAILED). When COMPLETED, includes download URL (expires in 24h).
+    operationId: getJobStatus
+    parameters:
+      - name: jobId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+        description: Job ID returned from export endpoint
+        example: "123e4567-e89b-12d3-a456-426614174000"
+    responses:
+      '200':
+        description: Job status retrieved
+```
+
+**Standard Parameters:**
+```yaml
+PageParam:
+  name: page
+  in: query
+  schema:
+    type: integer
+    minimum: 0
+    default: 0
+  description: Page number (0-indexed)
+  example: 0
+
+SizeParam:
+  name: size
+  in: query
+  schema:
+    type: integer
+    minimum: 1
+    maximum: 100
+    default: 20
+  description: Page size
+  example: 20
 ```
 
 ---
@@ -84,237 +271,101 @@ The following analysis is based on my direct review of the current codebase. Use
 ### Relevant Existing Code
 
 *   **File:** `backend/src/main/java/com/scrumpoker/domain/reporting/ReportingService.java`
-    *   **Summary:** This service ALREADY implements job enqueuing to the Redis Stream `jobs:reports`. The `enqueueExportJob()` method (lines 584-618) creates job messages with fields: `jobId`, `sessionId`, `format`, `userId`, `requestedAt`.
-    *   **Recommendation:** You MUST consume messages with this exact structure. The ReportingService has already done the job enqueuing work - your ExportJobProcessor needs to consume these messages.
-    *   **Key Insight:** Jobs are enqueued to stream key `"jobs:reports"` (line 65: `private static final String EXPORT_JOBS_STREAM = "jobs:reports"`). Your consumer MUST listen to this exact stream name.
+    *   **Summary:** Core service implementing tier-gated analytics with three main capabilities: `getBasicSessionSummary()` for Free tier, `getDetailedSessionReport()` for Pro tier with round-by-round breakdown, and `generateExport()` for CSV/PDF export job enqueuing via Redis Stream.
+    *   **Recommendation:** You MUST inject this service into your ReportingController. The service already handles all tier enforcement via `FeatureGate`. Methods return `Uni<SessionSummaryDTO>` and `Uni<DetailedSessionReportDTO>`.
+    *   **Key Methods:**
+        - `getBasicSessionSummary(UUID sessionId)` - Available to all tiers, returns basic stats
+        - `getDetailedSessionReport(UUID sessionId, User user)` - Requires PRO tier, throws FeatureNotAvailableException for Free users
+        - `generateExport(UUID sessionId, String format, User user)` - Requires PRO tier, returns Redis Stream message ID (job ID)
 
-*   **File:** `backend/src/main/java/com/scrumpoker/worker/ExportJobProcessor.java`
-    *   **Summary:** This file **ALREADY EXISTS with a COMPLETE IMPLEMENTATION** (442 lines). It includes startup event handling (@Observes StartupEvent), consumer group creation with MKSTREAM, XREADGROUP polling (5-second block, batch size 10), message processing pipeline, and XACK acknowledgment.
-    *   **Recommendation:** This file is **PRODUCTION-READY**. You do NOT need to modify it unless bugs are found. It already has:
-        - Consumer group: `"export-workers"` (line 74)
-        - Stream polling with error recovery (lines 217-259)
-        - Job processing with retry: `@Retry(maxRetries = 5)` and `@ExponentialBackoff(factor = 2, maxDelay = 16000)` (lines 306-307)
-        - Job record creation if not exists (lines 358-377)
-        - File generation delegation to CsvExporter/PdfExporter (lines 389-394)
-        - S3 upload via S3Adapter (line 333)
-        - Job status updates via ExportJob.markAsCompleted/markAsFailed (line 337 and 345)
-    *   **Critical Integration:** Line 389-394 expects **BOTH exporters to have signature: `Uni<byte[]> generateXxxExport(SessionHistory session, UUID sessionId)`**
+*   **File:** `backend/src/main/java/com/scrumpoker/domain/reporting/SessionHistoryService.java`
+    *   **Summary:** Service for querying session history records with methods like `getUserSessions(userId, from, to)` for date range queries.
+    *   **Recommendation:** You MUST inject this service for the session list endpoint. Use it to fetch paginated sessions and convert to DTOs.
 
-*   **File:** `backend/src/main/java/com/scrumpoker/worker/CsvExporter.java`
-    *   **Summary:** This file **ALREADY EXISTS with a COMPLETE IMPLEMENTATION** (266 lines). It queries rounds and votes, generates CSV with Apache Commons CSV, and returns byte array.
-    *   **Recommendation:** This file is **COMPLETE and PRODUCTION-READY**. It already:
-        - Has correct signature: `public Uni<byte[]> generateCsvExport(SessionHistory session, UUID sessionId)` (line 86)
-        - Uses Apache Commons CSV with proper headers (line 159-162)
-        - Includes session metadata as comments (lines 166-172)
-        - Handles empty sessions and rounds without votes (lines 105-107, 178-190)
-        - Queries rounds filtering by session timeframe (lines 99-103)
-        - Fetches votes in parallel for all rounds (lines 111-113, 128-139)
-        - Wraps blocking I/O properly for reactive execution
+*   **File:** `backend/src/main/java/com/scrumpoker/domain/reporting/SessionSummaryDTO.java`
+    *   **Summary:** DTO for basic session summary (Free tier). Contains fields: sessionId, roomTitle, startedAt, endedAt, totalStories, totalRounds, consensusRate, averageVote, participantCount, totalVotes.
+    *   **Recommendation:** This DTO should be used for the session list response and for Free tier session detail responses.
 
-*   **File:** `backend/src/main/java/com/scrumpoker/worker/PdfExporter.java`
-    *   **Summary:** This file **ALREADY EXISTS with a COMPLETE IMPLEMENTATION** (474 lines). It creates multi-page PDF reports with Apache PDFBox including title, summary stats, and round details.
-    *   **Recommendation:** This file is **COMPLETE and PRODUCTION-READY**. It already:
-        - Has correct signature: `public Uni<byte[]> generatePdfExport(SessionHistory session, UUID sessionId)` (line 119)
-        - Creates PDF with title page, summary statistics, and round-by-round breakdown (lines 197-270, 282-394)
-        - Handles pagination automatically when content exceeds page space (lines 380-387)
-        - Uses proper PDFBox rendering with fonts, line spacing, and page margins (lines 82-93)
-        - Calculates statistics (consensus rate, average vote) correctly (lines 296-312)
-        - Formats timestamps properly (lines 469-472)
-
-*   **File:** `backend/src/main/java/com/scrumpoker/integration/s3/S3Adapter.java`
-    *   **Summary:** This file **ALREADY EXISTS with a COMPLETE IMPLEMENTATION** (215 lines). It handles S3 uploads and presigned URL generation with AWS SDK v2.
-    *   **Recommendation:** This file is **COMPLETE and PRODUCTION-READY**. It:
-        - Uses blocking S3Client wrapped in reactive Uni running on worker thread pool (line 143: `runSubscriptionOn(Infrastructure.getDefaultWorkerPool())`)
-        - Builds S3 object key: `exports/{sessionId}/{jobId}.{format}` (lines 194-199)
-        - Generates presigned URLs with 7-day expiration (configurable via `export.signed-url-expiration`) (lines 156-180)
-        - Includes proper error handling with S3UploadException (lines 138-142, 176-179)
-        - Sets correct content types for CSV and PDF files (lines 206-212)
+*   **File:** `backend/src/main/java/com/scrumpoker/domain/reporting/DetailedSessionReportDTO.java`
+    *   **Summary:** DTO for detailed session report (Pro tier). Extends basic summary with nested classes `RoundDetailDTO` (contains round metadata and list of `VoteDetailDTO`) and `userConsistency` map.
+    *   **Recommendation:** This DTO should be returned for Pro tier users on the session detail endpoint.
 
 *   **File:** `backend/src/main/java/com/scrumpoker/domain/reporting/ExportJob.java`
-    *   **Summary:** This file **ALREADY EXISTS with a COMPLETE IMPLEMENTATION** (252 lines). It's a Panache entity mapping to export_job table with all required fields and status transition methods.
-    *   **Recommendation:** This file is **COMPLETE and PRODUCTION-READY**. It includes:
-        - Correct Panache entity extending PanacheEntityBase with UUID primary key (lines 56-58)
-        - All database fields matching V5 migration schema (lines 62-157)
-        - Static query method: `findByJobId(UUID jobId)` (lines 169-171)
-        - Helper query methods: `findByUserId`, `findBySessionId`, `findByStatus` (lines 179-204)
-        - Status transition methods used by ExportJobProcessor:
-          - `markAsProcessing()` (lines 214-218)
-          - `markAsCompleted(String downloadUrl)` (lines 229-234)
-          - `markAsFailed(String errorMessage)` (lines 245-250)
+    *   **Summary:** Hibernate entity tracking export job lifecycle. Has static method `findByJobId(UUID)` for lookup. Contains fields: jobId, sessionId, user, format, status (enum), downloadUrl, errorMessage, timestamps (createdAt, processingStartedAt, completedAt, failedAt).
+    *   **Recommendation:** You MUST use `ExportJob.findByJobId(jobId)` in the job status endpoint to retrieve job details. The entity already has all the fields needed for the response DTO.
 
-*   **File:** `backend/src/main/resources/db/migration/V5__create_export_job_table.sql`
-    *   **Summary:** Database migration **ALREADY COMPLETE** (63 lines) creating export_job table and job_status_enum type.
-    *   **Recommendation:** Migration is complete with proper schema, foreign keys, and indexes. No changes needed.
+*   **File:** `backend/src/main/java/com/scrumpoker/api/rest/RoomController.java`
+    *   **Summary:** Example REST controller demonstrating the project's patterns: JAX-RS annotations (`@Path`, `@GET`, `@POST`, `@PUT`), reactive Uni return types, OpenAPI annotations (`@Operation`, `@APIResponse`), service injection, DTO mapping, and exception handling via exception mappers.
+    *   **Recommendation:** You SHOULD follow this exact pattern for your ReportingController. Key patterns: Use `@Path("/api/v1")`, `@Produces(MediaType.APPLICATION_JSON)`, inject services via `@Inject`, return `Uni<Response>`, use `Response.ok()` / `Response.status()` builders.
 
-*   **File:** `backend/src/main/resources/application.properties`
-    *   **Summary:** **ALL CONFIGURATION IS IN PLACE** for Redis (line 41: `quarkus.redis.hosts`), S3 (lines 137-143: region, credentials, bucket name), and export settings (line 146: signed URL expiration).
-    *   **Recommendation:** Configuration is complete. For local testing, you may need to set environment variables or use LocalStack for S3.
+*   **File:** `backend/src/main/java/com/scrumpoker/api/rest/UserController.java`
+    *   **Summary:** Another controller example showing authentication patterns (currently `@RolesAllowed("USER")` with TODOs for actual enforcement), parameter validation, and authorization checks.
+    *   **Recommendation:** You SHOULD use `@RolesAllowed("USER")` on protected endpoints. The task requires authorization checks to prevent users from accessing other users' sessions.
+
+*   **File:** `backend/src/main/java/com/scrumpoker/security/FeatureGate.java`
+    *   **Summary:** Service for tier-based feature access control. Provides methods like `hasSufficientTier()`, `requireCanAccessAdvancedReports()` that throw `FeatureNotAvailableException`.
+    *   **Recommendation:** The ReportingService already uses FeatureGate internally, so you do NOT need to call it directly in the controller. However, be aware that 403 responses come from FeatureNotAvailableException which is handled by `FeatureNotAvailableExceptionMapper`.
+
+*   **File:** `backend/src/main/java/com/scrumpoker/api/rest/dto/` (directory)
+    *   **Summary:** Contains existing DTO classes like `ErrorResponse`, `RoomDTO`, `UserDTO`, request/response DTOs.
+    *   **Recommendation:** You MUST create new DTOs in this directory: `SessionListResponse.java` and `ExportJobResponse.java`. Follow the naming convention and use Jackson annotations (`@JsonProperty`) for field naming.
 
 ### Implementation Tips & Notes
 
-*   **CRITICAL FINDING:** After reading all target files, I have discovered that **ALL CODE FOR THIS TASK IS ALREADY COMPLETE AND PRODUCTION-READY**:
-    1. ✅ **ExportJobProcessor.java** - COMPLETE (442 lines) - fully functional Redis Stream consumer with retry logic
-    2. ✅ **CsvExporter.java** - COMPLETE (266 lines) - generates valid CSV files with proper headers and data rows
-    3. ✅ **PdfExporter.java** - COMPLETE (474 lines) - generates readable PDF reports with summary and round details
-    4. ✅ **S3Adapter.java** - COMPLETE (215 lines) - handles S3 uploads and presigned URL generation
-    5. ✅ **ExportJob.java** - COMPLETE (252 lines) - Panache entity with all status transition methods
-    6. ✅ **Database migration V5** - COMPLETE (63 lines) - export_job table with indexes
-    7. ✅ **JobStatus enum** - EXISTS at `backend/src/main/java/com/scrumpoker/domain/reporting/JobStatus.java`
-    8. ✅ **ExportGenerationException** - EXISTS at `backend/src/main/java/com/scrumpoker/worker/ExportGenerationException.java`
+*   **Tip:** For pagination, you'll need to add query parameters `@QueryParam("page")` and `@QueryParam("size")` with default values matching the OpenAPI spec (page=0, size=20).
+*   **Tip:** The session list response needs to include pagination metadata. Create a `SessionListResponse` DTO that contains: `List<SessionSummaryDTO> sessions`, `int totalCount`, `int page`, `int size`, `boolean hasNext`.
+*   **Tip:** For the export endpoint, you need to create a request DTO (e.g., `ExportRequest`) with fields: `sessionId` (UUID) and `format` (String: "CSV" or "PDF"). The response DTO `ExportJobResponse` should contain the `jobId` (String or UUID).
+*   **Tip:** For the job status endpoint, you need to create a response DTO that includes: `jobId`, `status` (String enum: PENDING/PROCESSING/COMPLETED/FAILED), `downloadUrl` (nullable), `errorMessage` (nullable), `createdAt`, `completedAt`.
+*   **Tip:** When calling `SessionHistoryService.getUserSessions()`, you'll need to convert the date query parameters (Strings in ISO format) to `Instant` objects. Use `LocalDate.parse(dateString).atStartOfDay(ZoneOffset.UTC).toInstant()`.
+*   **Tip:** For the session detail endpoint that returns tier-based content, you need to check the user's tier and call either `getBasicSessionSummary()` or `getDetailedSessionReport()` accordingly. However, the acceptance criteria suggests that `getDetailedSessionReport()` already handles this by throwing FeatureNotAvailableException for Free tier users, so you might just always call the detailed method and let the exception mapper handle the 403 response.
+*   **Note:** The task mentions authorization enforcement ("user can only access own sessions or rooms they participated in"). You'll need to get the authenticated user from the security context and verify they own the session or participated in it. The current codebase has TODOs for getting user from SecurityContext, so you may need to implement a helper method or use a pattern similar to the existing controllers.
+*   **Note:** The `generateExport()` method in ReportingService returns a `Uni<String>` containing the job ID (which is the Redis Stream message ID). You should create an ExportJob entity record with status PENDING and persist it to the database, then return the job ID. Actually, looking at the ExportJob entity, it has a `jobId` UUID field. The ReportingService generates a UUID for `jobId` and includes it in the Redis message. You need to create the ExportJob entity with that same jobId BEFORE enqueuing to Redis.
+*   **Warning:** The export endpoint should return HTTP 202 Accepted (not 201 Created) because the job is asynchronous. Use `Response.status(Response.Status.ACCEPTED)`.
+*   **Warning:** Make sure to handle the case where a user tries to access a session they don't own. You'll need to query the SessionHistory to check if the authenticated user's ID matches the room owner or is in the participants list.
 
-*   **YOUR PRIMARY TASK IS NOW VALIDATION, NOT IMPLEMENTATION:**
-    1. **COMPILE** the project to ensure no compilation errors
-    2. **RUN** the application to verify the ExportJobProcessor starts correctly
-    3. **TEST** the export flow end-to-end (trigger job → verify processing → check S3 upload → verify signed URL)
-    4. **VERIFY** all acceptance criteria are met
-    5. **FIX** any bugs discovered during testing (but expect minimal or no bugs - code is production-quality)
-    6. **WRITE INTEGRATION TESTS** if they don't already exist
+### Critical Integration Points
 
-*   **Tip:** To verify the system works:
-    ```bash
-    # 1. Start local services
-    docker-compose up -d postgres redis
+1. **ReportingService Integration:** Your controller is a thin wrapper around ReportingService. The service does all the heavy lifting (tier checks, data fetching, export job enqueuing). Your job is to handle HTTP concerns (request parsing, response building, status codes).
 
-    # 2. Run Quarkus in dev mode
-    cd backend && mvn quarkus:dev
+2. **SessionHistoryService Integration:** For the session list endpoint, inject SessionHistoryService and use `getUserSessions()` method with pagination. The service returns `List<SessionHistory>` which you need to convert to `List<SessionSummaryDTO>`.
 
-    # 3. Watch logs for "Initializing Export Job Processor..." and "Starting export job consumer"
+3. **ExportJob Entity Integration:** For the export endpoint, after calling `ReportingService.generateExport()`, you need to create an ExportJob entity with the returned job ID, persist it to the database, then return the job ID in the response. For the job status endpoint, use `ExportJob.findByJobId()` to retrieve the job and return its current status.
 
-    # 4. Trigger an export (requires I6.T4 API endpoints or manual Redis Stream publish)
-    # Example using redis-cli to manually enqueue a job:
-    redis-cli XADD jobs:reports * jobId $(uuidgen) sessionId <session-uuid> format CSV userId <user-uuid> requestedAt $(date -u +"%Y-%m-%dT%H:%M:%SZ")
+4. **Authentication Context:** You need to extract the authenticated User from the security context (likely via `@Context SecurityContext` injection or a custom `@AuthenticatedUser` CDI qualifier if the project has one). Check existing controllers for the pattern.
 
-    # 5. Monitor logs for job processing
-    # Expected log sequence:
-    # - "Received 1 export job(s) from stream"
-    # - "Processing export job <jobId> for session <sessionId> (format: CSV)"
-    # - "Generating CSV export for session <sessionId>"
-    # - "Uploading export file to S3: key=exports/<sessionId>/<jobId>.csv"
-    # - "Successfully uploaded file to S3: etag=..."
-    # - "Generated presigned URL for S3 object"
-    # - "Successfully processed export job <jobId>"
+5. **Error Handling:** The project uses exception mappers (in `backend/src/main/java/com/scrumpoker/api/rest/exception/`). You don't need to catch exceptions in your controller methods; let them propagate and be handled by the mappers. Relevant mappers: `UserNotFoundExceptionMapper`, `IllegalArgumentExceptionMapper`, `FeatureNotAvailableExceptionMapper`.
 
-    # 6. Query database to verify job status
-    psql -U postgres -d scrumpoker -c "SELECT job_id, status, download_url FROM export_job WHERE job_id = '<jobId>';"
-    ```
+### Testing Strategy
 
-*   **Note:** For S3 testing without AWS account, use LocalStack:
-    ```bash
-    # Add to docker-compose.yml (if not already present)
-    localstack:
-      image: localstack/localstack:latest
-      ports:
-        - "4566:4566"
-      environment:
-        - SERVICES=s3
-        - AWS_DEFAULT_REGION=us-east-1
-
-    # Configure application to use LocalStack
-    # Set environment variables:
-    export S3_ENDPOINT_OVERRIDE=http://localhost:4566
-    export AWS_ACCESS_KEY_ID=test
-    export AWS_SECRET_ACCESS_KEY=test
-    export S3_BUCKET_NAME=scrum-poker-exports
-
-    # Create bucket in LocalStack
-    aws --endpoint-url=http://localhost:4566 s3 mb s3://scrum-poker-exports
-    ```
-
-*   **Warning:** The code uses **Hibernate Reactive Panache** with reactive programming patterns (`Uni`, `Multi`). All database operations are non-blocking. The exporters and S3Adapter correctly wrap blocking I/O in `runSubscriptionOn(Infrastructure.getDefaultWorkerPool())`.
-
-*   **Note:** All Maven dependencies are already configured in pom.xml:
-    - Apache Commons CSV 1.10.0 ✓
-    - Apache PDFBox 2.0.30 ✓
-    - Quarkus Amazon S3 extension ✓
-    - Quarkus Redis client (for Streams) ✓
-    - All Hibernate Reactive dependencies ✓
+*   The acceptance criteria require testing that Free tier users get basic summaries while Pro tier users get detailed reports. You'll need to mock or set the user's subscriptionTier in your tests.
+*   Test pagination by creating multiple sessions and verifying the page/size parameters work correctly.
+*   Test authorization by verifying 403 responses when users try to access other users' sessions.
+*   For the export endpoint, verify that it returns 202 Accepted and that an ExportJob record is created in the database.
+*   For the job status endpoint, test all four job statuses (PENDING, PROCESSING, COMPLETED, FAILED) and verify the correct fields are returned.
 
 ---
 
-## 4. Next Steps for Coder Agent
+## 4. Additional Context
 
-**Since all code is already implemented, your workflow should be:**
+### Dependencies Status
+- **I6.T2 (ReportingService):** ✅ DONE - Service is fully implemented and tested
+- **I6.T3 (ExportJobProcessor):** ✅ DONE - Background worker implemented, ExportJob entity exists
 
-1. **COMPILE** the project:
-   ```bash
-   cd backend && mvn clean compile
-   ```
-   Expected: Compilation succeeds with no errors.
+### Next Steps After This Task
+- I6.T5: Frontend SessionHistoryPage (depends on this task)
+- I6.T6: Frontend SessionDetailPage (depends on this task)
 
-2. **RUN APPLICATION** in dev mode:
-   ```bash
-   mvn quarkus:dev
-   ```
-   Expected: Application starts, ExportJobProcessor initializes consumer group, starts polling Redis Stream.
+### Suggested Implementation Order
+1. Create DTOs: `SessionListResponse`, `ExportJobResponse`, `ExportRequest`, `JobStatusResponse`
+2. Create `ReportingController` class with basic structure and annotations
+3. Implement `GET /api/v1/reports/sessions` (session list with pagination)
+4. Implement `GET /api/v1/reports/sessions/{sessionId}` (session detail with tier checks)
+5. Implement `POST /api/v1/reports/export` (create export job)
+6. Implement `GET /api/v1/jobs/{jobId}` (poll job status)
+7. Add OpenAPI annotations to all endpoints
+8. Write integration tests
 
-3. **VERIFY LOGS** show:
-   - "Initializing Export Job Processor..."
-   - "Consumer group initialized: export-workers" (or warning about existing group - both OK)
-   - "Starting export job consumer: <hostname>-<uuid> (consumer group: export-workers)"
-   - Continuous polling (may see "No new export jobs, waiting..." every 5 seconds)
-
-4. **TRIGGER TEST EXPORT** (if possible - requires session data in database):
-   - Option A: If I6.T4 is complete, call REST API `POST /api/v1/reports/export` with valid session ID
-   - Option B: Manually enqueue test message to Redis Stream (see bash example in Tips section above)
-   - Option C: Write integration test that creates test data and enqueues job
-
-5. **VERIFY END-TO-END FLOW:**
-   - [ ] Job message consumed from Redis Stream (check logs)
-   - [ ] Job status updated to PROCESSING in database
-   - [ ] CSV or PDF file generated (check logs for "Generated CSV export: N bytes")
-   - [ ] File uploaded to S3 (check logs for "Successfully uploaded file to S3")
-   - [ ] Signed URL generated (check logs for "Generated presigned URL")
-   - [ ] Job status updated to COMPLETED with download_url in database
-   - [ ] Download URL works (copy from database, paste in browser, file downloads)
-
-6. **TEST ERROR SCENARIOS:**
-   - Test with invalid sessionId → job marked FAILED with error message
-   - Simulate S3 failure (stop LocalStack or misconfigure credentials) → retries 5 times → FAILED
-   - Test database connection failure recovery
-
-7. **WRITE/RUN INTEGRATION TESTS:**
-   - Check if `backend/src/test/java/com/scrumpoker/worker/` contains integration tests
-   - If missing, create `ExportJobProcessorIntegrationTest.java` testing happy path and error scenarios
-   - Use Testcontainers for PostgreSQL and Redis, LocalStack for S3
-
-8. **MARK TASK COMPLETE** if all acceptance criteria verified.
-
----
-
-## 5. Acceptance Criteria Checklist
-
-Verify each criterion before marking the task complete:
-
-| # | Criterion | Verification Method | Status |
-|---|-----------|---------------------|--------|
-| 1 | Export job message triggers processor | Start app, enqueue message, check logs for "Received N export job(s)" | ⏳ |
-| 2 | CSV export generates valid file | Trigger CSV export, download file, open in spreadsheet, verify headers and data rows | ⏳ |
-| 3 | PDF export generates readable report | Trigger PDF export, download file, open in PDF reader, verify title, stats, and rounds | ⏳ |
-| 4 | File uploaded to S3 successfully | Check S3 bucket (or LocalStack) for file with key `exports/<sessionId>/<jobId>.<format>` | ⏳ |
-| 5 | Signed URL allows download without authentication | Copy download_url from database, paste in browser (without auth), file downloads | ⏳ |
-| 6 | Job status updated to COMPLETED with download URL | Query export_job table, verify status='COMPLETED' and download_url is populated | ⏳ |
-| 7 | Failed jobs marked with error message | Trigger job with invalid sessionId, verify status='FAILED' and error_message populated | ⏳ |
-| 8 | Retry logic handles transient S3 failures | ExportJobProcessor has @Retry annotation - code review confirmed ✓ | ✅ |
-
-**OVERALL STATUS:** All code implemented ✅ - Requires validation and testing ⏳
-
----
-
-## 6. Summary
-
-**🎉 EXCELLENT NEWS:** This task is **99% COMPLETE**. All target files exist with full, production-ready implementations:
-
-- ✅ ExportJobProcessor (442 lines) - Redis Stream consumer with retry logic
-- ✅ CsvExporter (266 lines) - CSV generation with Apache Commons CSV
-- ✅ PdfExporter (474 lines) - PDF generation with Apache PDFBox
-- ✅ S3Adapter (215 lines) - S3 upload and presigned URL generation
-- ✅ ExportJob entity (252 lines) - Panache entity with status methods
-- ✅ Database migration V5 - export_job table schema
-- ✅ JobStatus enum - PENDING, PROCESSING, COMPLETED, FAILED
-- ✅ ExportGenerationException - custom exception for exports
-- ✅ Maven dependencies - All libraries configured
-- ✅ Application properties - S3, Redis, export config complete
-
-**YOUR ROLE:** Validation engineer. Compile, run, test, and verify the system works correctly. Fix bugs if found (unlikely). Write integration tests if missing. Mark task complete when all acceptance criteria verified.
-
-**ESTIMATED EFFORT:** 30-60 minutes for validation and testing, NOT days of implementation.
+### Architecture References
+- REST API patterns: `.codemachine/artifacts/architecture/04_Behavior_and_Communication.md`
+- Tier-based reporting requirements: `.codemachine/artifacts/architecture/01_Context_and_Drivers.md` (reporting-requirements section)
+- OpenAPI specification: `api/openapi.yaml`
