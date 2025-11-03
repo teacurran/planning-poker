@@ -6,7 +6,11 @@ import RoomPage from '@/pages/RoomPage';
 import DashboardPage from '@/pages/DashboardPage';
 import LoginPage from '@/pages/LoginPage';
 import OAuthCallbackPage from '@/pages/OAuthCallbackPage';
+import { PricingPage } from '@/pages/PricingPage';
+import { SubscriptionSettingsPage } from '@/pages/SubscriptionSettingsPage';
+import { BillingSuccessPage } from '@/pages/BillingSuccessPage';
 import PrivateRoute from '@/components/auth/PrivateRoute';
+import { UpgradeModalProvider } from '@/contexts/UpgradeModalContext';
 
 // Create a QueryClient instance for React Query
 const queryClient = new QueryClient({
@@ -22,22 +26,34 @@ const queryClient = new QueryClient({
 const App: React.FC = () => {
   return (
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<HomePage />} />
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="/auth/callback" element={<OAuthCallbackPage />} />
-          <Route path="/room/:roomId" element={<RoomPage />} />
-          <Route
-            path="/dashboard"
-            element={
-              <PrivateRoute>
-                <DashboardPage />
-              </PrivateRoute>
-            }
-          />
-        </Routes>
-      </BrowserRouter>
+      <UpgradeModalProvider>
+        <BrowserRouter>
+          <Routes>
+            <Route path="/" element={<HomePage />} />
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/auth/callback" element={<OAuthCallbackPage />} />
+            <Route path="/pricing" element={<PricingPage />} />
+            <Route path="/billing/success" element={<BillingSuccessPage />} />
+            <Route path="/room/:roomId" element={<RoomPage />} />
+            <Route
+              path="/dashboard"
+              element={
+                <PrivateRoute>
+                  <DashboardPage />
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/billing/settings"
+              element={
+                <PrivateRoute>
+                  <SubscriptionSettingsPage />
+                </PrivateRoute>
+              }
+            />
+          </Routes>
+        </BrowserRouter>
+      </UpgradeModalProvider>
     </QueryClientProvider>
   );
 };

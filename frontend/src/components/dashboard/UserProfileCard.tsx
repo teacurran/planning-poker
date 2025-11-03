@@ -4,46 +4,11 @@
  */
 
 import React from 'react';
-import type { UserDTO, SubscriptionTier } from '@/types/auth';
+import type { UserDTO } from '@/types/auth';
+import { getTierBadgeClasses, formatTierName } from '@/utils/subscriptionUtils';
 
 interface UserProfileCardProps {
   user: UserDTO;
-}
-
-/**
- * Get color classes for subscription tier badge.
- */
-function getTierBadgeClasses(tier: SubscriptionTier): string {
-  switch (tier) {
-    case 'FREE':
-      return 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300';
-    case 'PRO':
-      return 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300';
-    case 'PRO_PLUS':
-      return 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-300';
-    case 'ENTERPRISE':
-      return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300';
-    default:
-      return 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300';
-  }
-}
-
-/**
- * Format subscription tier for display.
- */
-function formatTierName(tier: SubscriptionTier): string {
-  switch (tier) {
-    case 'FREE':
-      return 'Free';
-    case 'PRO':
-      return 'Pro';
-    case 'PRO_PLUS':
-      return 'Pro Plus';
-    case 'ENTERPRISE':
-      return 'Enterprise';
-    default:
-      return tier;
-  }
 }
 
 export const UserProfileCard: React.FC<UserProfileCardProps> = ({ user }) => {

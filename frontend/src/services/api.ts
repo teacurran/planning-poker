@@ -12,6 +12,7 @@ import axios, { AxiosError, AxiosRequestConfig, InternalAxiosRequestConfig } fro
 import { useAuthStore } from '@/stores/authStore';
 import { refreshAccessToken } from './authApi';
 import type { ErrorResponse } from '@/types/auth';
+import type { FeatureNotAvailableDetails } from '@/types/subscription';
 
 // Configure base URL from environment variable with fallback
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1';
@@ -39,6 +40,22 @@ let isRefreshing = false;
  * Each item is a promise resolver that will retry the original request.
  */
 let refreshSubscribers: ((token: string) => void)[] = [];
+
+/**
+ * Callback for handling 403 FeatureNotAvailable errors.
+ * This will be set by the UpgradeModalProvider.
+ */
+let featureNotAvailableHandler: ((requiredTier: string, feature: string) => void) | null = null;
+
+/**
+ * Register a handler for 403 FeatureNotAvailable errors.
+ * Should be called once during app initialization.
+ */
+export function registerFeatureNotAvailableHandler(
+  handler: (requiredTier: string, feature: string) => void
+): void {
+  featureNotAvailableHandler = handler;
+}
 
 /**
  * Subscribe a request to the refresh queue.
@@ -94,7 +111,24 @@ apiClient.interceptors.response.use(
   async (error: AxiosError<ErrorResponse>) => {
     const originalRequest = error.config as AxiosRequestConfig & { _retry?: boolean };
 
-    // Only handle 401 errors
+    // Handle 403 FeatureNotAvailable errors
+    if (error.response?.status === 403) {
+      const errorData = error.response.data;
+
+      // Check if this is a feature gate error
+      if (errorData?.error === 'FEATURE_NOT_AVAILABLE' && errorData?.details) {
+        const details = errorData.details as unknown as FeatureNotAvailableDetails;
+
+        // Trigger the upgrade modal if handler is registered
+        if (featureNotAvailableHandler && details.requiredTier && details.feature) {
+          featureNotAvailableHandler(details.requiredTier, details.feature);
+        }
+      }
+
+      return Promise.reject(error);
+    }
+
+    // Only handle 401 errors for token refresh
     if (error.response?.status !== 401) {
       return Promise.reject(error);
     }
