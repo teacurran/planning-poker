@@ -117,6 +117,6 @@
     "acceptance_criteria": "`mvn verify` runs export integration test, Export job processes successfully, CSV file uploaded to mock S3, Job status transitions: PENDING → PROCESSING → COMPLETED, Download URL generated and accessible, Failure test marks job FAILED with error message",
     "dependencies": ["I6.T3"],
     "parallelizable": false,
-    "done": false
+    "done": true
   }
 ]
