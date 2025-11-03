@@ -18,7 +18,7 @@
         <quarkus.platform.version>3.15.1</quarkus.platform.version>
         <skipITs>true</skipITs>
         <surefire-plugin.version>3.1.2</surefire-plugin.version>
-        <opensaml.version>5.1.2</opensaml.version>
+        <opensaml.version>4.3.2</opensaml.version>
     </properties>
 
     <repositories>
@@ -172,11 +172,6 @@
         </dependency>
 
         <!-- OpenSAML for SAML2 SSO support -->
-        <!-- COMMENTED OUT: OpenSAML dependencies require additional configuration -->
-        <!-- and are not available in Maven Central. SAML2 support is partially -->
-        <!-- implemented in Saml2Provider.java with detailed TODOs for completion. -->
-        <!-- Uncomment and configure Shibboleth repository when ready to complete SAML2. -->
-        <!--
         <dependency>
             <groupId>org.opensaml</groupId>
             <artifactId>opensaml-core</artifactId>
@@ -202,7 +197,6 @@
             <artifactId>opensaml-security-impl</artifactId>
             <version>${opensaml.version}</version>
         </dependency>
-        -->
 
         <!-- Quarkus Amazon S3 extension for object storage -->
         <dependency>

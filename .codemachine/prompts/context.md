@@ -98,61 +98,54 @@ The following are the relevant sections from the architecture and plan documents
 4. **Service Layer:** Domain-level checks (e.g., room privacy mode enforcement, subscription feature gating)
 ```
 
-### Context: audit-logging (from 05_Operational_Architecture.md)
+### Context: data-model-organization (from 03_System_Structure_and_Data.md)
 
 ```markdown
-**Audit Logging:**
-- **Scope:** Enterprise tier security and compliance events
-- **Storage:** Dedicated `AuditLog` table (partitioned by month) + immutable S3 bucket for archival
-- **Events:**
-  - User authentication (SSO login, logout)
-  - Organization configuration changes (SSO settings, branding)
-  - Member management (invite, role change, removal)
-  - Administrative actions (room deletion, user account suspension)
-- **Attributes:** `timestamp`, `orgId`, `userId`, `action`, `resourceType`, `resourceId`, `ipAddress`, `userAgent`, `changeDetails` (JSONB)
+| **Organization** | Enterprise SSO workspace | `org_id` (PK), `name`, `domain`, `sso_config` (JSONB: OIDC/SAML2 settings), `branding` (JSONB), `subscription_id` (FK) |
+| **OrgMember** | User-organization membership | `org_id` (FK), `user_id` (FK), `role` (ADMIN/MEMBER), `joined_at` |
+
+**Design Principles:**
+1. **Normalized Core Entities:** Users, Rooms, Organizations follow 3NF to prevent update anomalies
+2. **Denormalized Read Models:** SessionSummary and VoteStatistics tables precompute aggregations for reporting performance
+3. **JSONB for Flexibility:** RoomConfig, DeckDefinition, UserPreferences stored as JSONB to support customization without schema migrations
+4. **Soft Deletes:** Critical entities (Users, Rooms) use `deleted_at` timestamp for audit trail and GDPR compliance
+5. **Partitioning Strategy:** SessionHistory and AuditLog partitioned by month for query performance and data lifecycle management
 ```
 
-### Context: application-security (from 05_Operational_Architecture.md)
+### Context: task-i7-t1-plan (from 02_Iteration_I7.md)
 
 ```markdown
-##### Application Security
-
-**Input Validation:**
-- **REST APIs:** Bean Validation (JSR-380) annotations on DTOs, automatic validation in Quarkus REST layer
-- **WebSocket Messages:** Zod schema validation on client, server-side JSON schema validation before deserialization
-- **SQL Injection Prevention:** Parameterized queries via Hibernate Reactive, no dynamic SQL concatenation
-- **XSS Prevention:** React automatic escaping for user-generated content, CSP (Content Security Policy) headers
-
-**Authentication Security:**
-- **JWT Signature:** RS256 (RSA with SHA-256) algorithm, private key stored in Kubernetes Secret
-- **Token Expiration:** Short-lived access tokens (1 hour), refresh tokens rotated on use
-- **OAuth2 State Parameter:** CSRF protection for OAuth flow, state validated on callback
-- **PKCE:** Protects authorization code from interception in browser-based flows
-
-**Authorization Security:**
-- **Least Privilege:** Default deny policy, explicit role grants required for resource access
-- **Resource Ownership Validation:** Service layer verifies user owns/has permission for requested resource (e.g., room, report)
-- **Rate Limiting:** Redis-backed token bucket algorithm:
-  - Anonymous users: 10 req/min per IP
-  - Authenticated users: 100 req/min per user
-  - WebSocket messages: 50 msg/min per connection
-
-**Data Protection:**
-- **Encryption at Rest:** PostgreSQL Transparent Data Encryption (TDE) for sensitive columns (email, payment metadata)
-- **PII Handling:** User emails hashed in logs, full values only in database and audit logs
-- **Secrets Management:** Kubernetes Secrets for database credentials, OAuth client secrets, JWT signing keys
-- **Payment Security:** Stripe tokenization for card details, no PCI-sensitive data stored in application database
-```
-
-### Context: enterprise-requirements (from 01_Context_and_Drivers.md)
-
-```markdown
-#### Enterprise Requirements
-- **SSO Integration:** OIDC and SAML2 support for identity providers (Okta, Azure AD, OneLogin)
-- **Organization Management:** Multi-user workspaces with role-based access (Admin, Member)
-- **Audit Logging:** Immutable event log for compliance (authentication, configuration changes, member management)
-- **Custom Branding:** Organization logo, color scheme application-wide (Pro+ and Enterprise)
-- **Advanced Analytics:** Organization-wide reporting dashboards with member filtering
+<!-- anchor: task-i7-t1 -->
+*   **Task 7.1: Implement SSO Adapter (OIDC & SAML2)**
+    *   **Task ID:** `I7.T1`
+    *   **Description:** Create `SsoAdapter` service supporting OIDC and SAML2 protocols using Quarkus Security extensions. OIDC: configure IdP discovery endpoint, handle authorization code flow, validate ID token, extract user attributes (email, name, groups). SAML2: configure IdP metadata URL, handle SAML response, validate assertions, extract attributes from assertion. Map IdP attributes to User entity fields. Support per-organization SSO configuration (stored in Organization.sso_config JSONB). Implement backchannel logout (OIDC logout endpoint, SAML SLO).
+    *   **Agent Type Hint:** `BackendAgent`
+    *   **Inputs:**
+        *   SSO requirements from architecture blueprint
+        *   Quarkus OIDC and SAML2 extension documentation
+        *   Enterprise SSO patterns (Okta, Azure AD)
+    *   **Input Files:**
+        *   `.codemachine/artifacts/architecture/05_Operational_Architecture.md` (SSO section)
+    *   **Target Files:**
+        *   `backend/src/main/java/com/scrumpoker/integration/sso/SsoAdapter.java`
+        *   `backend/src/main/java/com/scrumpoker/integration/sso/OidcProvider.java`
+        *   `backend/src/main/java/com/scrumpoker/integration/sso/Saml2Provider.java`
+        *   `backend/src/main/java/com/scrumpoker/integration/sso/SsoUserInfo.java` (DTO)
+    *   **Deliverables:**
+        *   SsoAdapter with OIDC and SAML2 support
+        *   Organization-specific SSO configuration (IdP endpoint, certificate, attribute mapping from JSONB)
+        *   User attribute extraction (email, name, groups/roles)
+        *   Backchannel logout implementation
+        *   SSO provider-specific implementations (Okta, Azure AD tested)
+    *   **Acceptance Criteria:**
+        *   OIDC authentication flow completes with test IdP (Okta sandbox)
+        *   SAML2 authentication flow completes (Azure AD or SAML test IdP)
+        *   User attributes correctly mapped from ID token/assertion
+        *   Organization-specific SSO config loaded from database
+        *   Logout endpoint invalidates SSO session
+        *   Certificate validation works for SAML2
+    *   **Dependencies:** []
+    *   **Parallelizable:** Yes
 ```
 
 ---
@@ -163,164 +156,117 @@ The following analysis is based on my direct review of the current codebase. Use
 
 ### Relevant Existing Code
 
-*   **File:** `backend/src/main/java/com/scrumpoker/integration/oauth/OAuth2Adapter.java`
-    *   **Summary:** This is the existing OAuth2 integration adapter that handles Google and Microsoft social login. It uses a Strategy pattern with provider-specific implementations (`GoogleOAuthProvider`, `MicrosoftOAuthProvider`).
-    *   **Recommendation:** You SHOULD follow the EXACT SAME PATTERN for SSO. Create `SsoAdapter` similar to `OAuth2Adapter`, with provider-specific implementations for OIDC and SAML2. Study the method signatures `exchangeCodeForToken()` and `validateIdToken()` as these patterns will be relevant for SSO token validation.
-    *   **Key Insight:** The OAuth2Adapter demonstrates:
-        - Provider routing via switch statement on provider name
-        - Common interface (`OAuthUserInfo`) returned by all providers
-        - Dependency injection of provider implementations
-        - Comprehensive input validation before delegation
-        - Structured logging with provider context
+*   **File:** `backend/src/main/java/com/scrumpoker/integration/sso/SsoAdapter.java`
+    *   **Summary:** **CRITICAL - THIS FILE ALREADY EXISTS AND IS FULLY IMPLEMENTED!** The SsoAdapter service is already complete with OIDC and SAML2 support. It implements the Strategy pattern, delegating to OidcProvider and Saml2Provider based on the protocol in the SSO configuration. The adapter includes authentication, logout, and protocol support checking methods.
+    *   **Recommendation:** **DO NOT REWRITE THIS FILE.** Review it carefully to understand the expected interface and integration pattern. The file shows that:
+        - `authenticate()` method accepts ssoConfigJson (from Organization.ssoConfig), authenticationData, additionalParams, and organizationId
+        - It parses the JSONB config into a `SsoConfig` POJO
+        - It delegates to `OidcProvider` or `Saml2Provider` based on the protocol
+        - It includes `logout()` method for backchannel logout/SLO
+        - It uses reactive `Uni<>` return types consistent with the reactive stack
+    *   **Key Integration Points:**
+        - Expects `OidcProvider` and `Saml2Provider` to be injected via CDI `@Inject`
+        - Expects `ObjectMapper` for JSON parsing
+        - Uses custom `SsoAuthParams` and `SsoLogoutParams` inner classes for parameter passing
+        - Throws `SsoAuthenticationException` on errors
+
+*   **File:** `backend/src/main/java/com/scrumpoker/integration/sso/OidcProvider.java`
+    *   **Summary:** This file already exists and contains the OIDC provider implementation.
+    *   **Recommendation:** Review this file to understand what it implements. You likely need to complete or enhance the OIDC implementation based on the task acceptance criteria.
+
+*   **File:** `backend/src/main/java/com/scrumpoker/integration/sso/Saml2Provider.java`
+    *   **Summary:** This file already exists and contains the SAML2 provider implementation.
+    *   **Recommendation:** Review this file to understand what it implements. You likely need to complete or enhance the SAML2 implementation based on the task acceptance criteria.
+
+*   **File:** `backend/src/main/java/com/scrumpoker/integration/sso/SsoUserInfo.java`
+    *   **Summary:** This file already exists and is the DTO for SSO user information.
+    *   **Recommendation:** Review this file. It should contain fields like email, name, organizationId, and any group/role mappings returned from IdP.
+
+*   **File:** `backend/src/main/java/com/scrumpoker/integration/sso/SsoConfig.java`
+    *   **Summary:** This file exists and is the POJO for deserializing Organization.ssoConfig JSONB.
+    *   **Recommendation:** Verify it has nested `OidcConfig` and `Saml2Config` objects and a protocol field.
+
+*   **File:** `backend/src/main/java/com/scrumpoker/integration/sso/OidcConfig.java`
+    *   **Summary:** This file exists and contains OIDC configuration fields (IdP endpoint, client ID, etc.).
+    *   **Recommendation:** Ensure it includes all fields needed: issuer/discoveryEndpoint, clientId, clientSecret, redirectUri.
+
+*   **File:** `backend/src/main/java/com/scrumpoker/integration/sso/Saml2Config.java`
+    *   **Summary:** This file exists and contains SAML2 configuration fields.
+    *   **Recommendation:** Ensure it includes: IdP metadata URL, entity ID, certificate, attribute mappings.
 
 *   **File:** `backend/src/main/java/com/scrumpoker/domain/organization/Organization.java`
-    *   **Summary:** This entity already has the `ssoConfig` JSONB field (String type) and `branding` JSONB field for storing per-organization configuration.
-    *   **Recommendation:** You MUST use the existing `Organization.ssoConfig` field to store IdP configuration. This field stores JSON as a String, so you'll need to serialize/deserialize SSO configuration POJOs (IdP endpoint, certificate, attribute mappings) to/from JSON. Consider creating a `SsoConfig` POJO similar to how other parts of the codebase handle JSONB.
-    *   **Key Fields:**
-        - `orgId` (UUID) - Primary key
-        - `domain` (String) - Email domain for user auto-assignment (e.g., "acme.com")
-        - `ssoConfig` (String, JSONB) - Where you'll store IdP settings
-        - `subscription` (ManyToOne) - Link to enterprise subscription
+    *   **Summary:** The Organization entity with `ssoConfig` JSONB field. This field stores the per-organization SSO configuration as a JSON string.
+    *   **Recommendation:** The SsoAdapter already handles parsing this JSON string into the `SsoConfig` object. Ensure the JSONB schema matches what the SsoConfig POJOs expect.
 
 *   **File:** `backend/src/main/java/com/scrumpoker/repository/OrganizationRepository.java`
-    *   **Summary:** Repository with `findByDomain()` method that will be critical for SSO domain-based organization lookup.
-    *   **Recommendation:** You MUST use `OrganizationRepository.findByDomain()` to look up organizations based on user email domain during SSO authentication. This enables automatic organization assignment (JIT provisioning flow).
+    *   **Summary:** Repository for Organization entities. Includes `findByDomain()` method for SSO domain verification.
+    *   **Recommendation:** This repository will be used by the AuthController (in task I7.T4) to look up the organization by email domain, then retrieve the ssoConfig to pass to SsoAdapter.
 
-*   **File:** `backend/src/main/java/com/scrumpoker/security/JwtTokenService.java`
-    *   **Summary:** Service that generates JWT access tokens with user claims (userId, email, roles, tier) and manages refresh tokens in Redis.
-    *   **Recommendation:** You WILL need to call this service after successful SSO authentication to generate JWT tokens. The SSO flow should: 1) Validate SSO assertion/token, 2) Extract user info, 3) Find or create user, 4) Call `JwtTokenService.generateTokens(user)` to get access/refresh token pair.
-    *   **Key Methods:**
-        - `generateTokens(User)` - Creates access and refresh tokens
-        - Token includes roles array based on subscription tier
-        - Access token: 1 hour expiration (RS256 signed)
-        - Refresh token: 30 days in Redis
-
-*   **File:** `backend/src/main/java/com/scrumpoker/api/rest/AuthController.java`
-    *   **Summary:** REST controller handling OAuth2 callback with JIT user provisioning. The `oauthCallback()` method demonstrates the complete flow: code exchange → user provisioning → token generation.
-    *   **Recommendation:** You will eventually need to create an SSO callback endpoint similar to this OAuth2 callback. Study the flow in `oauthCallback()` method:
-        1. Exchange authorization code for user info via adapter
-        2. Call `UserService.findOrCreateUser(oauthUserInfo)` for JIT provisioning
-        3. Generate tokens via `JwtTokenService.generateTokens(user)`
-        4. Return TokenResponse with tokens and user profile
-    *   **Note:** The SSO callback endpoint will be implemented in Task I7.T4, but understanding this pattern NOW is critical for designing the `SsoAdapter` return type and user attribute extraction.
-
-*   **File:** `backend/pom.xml`
-    *   **Summary:** Maven dependencies configuration. Currently includes `quarkus-oidc` extension for OAuth2 support.
-    *   **Recommendation:** You MUST add SAML2 support. Research and add the appropriate Quarkus SAML2 extension. Likely candidates:
-        - `quarkus-elytron-security-saml` or similar WildFly Elytron SAML2 adapter
-        - Consult Quarkus documentation for the correct SAML2 extension in Quarkus 3.15.1
-        - DO NOT add external SAML libraries (like OpenSAML) if Quarkus provides a built-in extension
-    *   **Current Extensions:** quarkus-oidc (line 88-90) is already present for OAuth2/OIDC support.
-
-*   **File:** `backend/src/main/resources/application.properties`
-    *   **Summary:** Application configuration with OIDC settings starting at line 78.
-    *   **Recommendation:** You SHOULD add SSO-specific configuration properties for OIDC enterprise IdPs and SAML2 settings. Since SSO config is per-organization (stored in database), you may only need:
-        - SAML2 entity ID for your application
-        - ACS (Assertion Consumer Service) URL endpoint
-        - Consider making these environment-configurable
-    *   **Pattern:** Follow existing JWT config pattern (lines 54-75) with environment variable fallbacks like `${SSO_ENTITY_ID:default-value}`
+*   **File:** `backend/src/main/java/com/scrumpoker/integration/oauth/OAuth2Adapter.java`
+    *   **Summary:** The existing OAuth2 adapter for Google and Microsoft social login (non-enterprise).
+    *   **Recommendation:** Study this as a reference pattern. The SsoAdapter should follow similar patterns but:
+        - Load config from database (Organization.ssoConfig) NOT from application.properties
+        - Return `SsoUserInfo` (with organizationId) NOT `OAuthUserInfo`
+        - Support per-org certificate validation for SAML2
+        - Handle JIT provisioning with organization membership
 
 ### Implementation Tips & Notes
 
-*   **Tip:** I found that the project consistently uses **Uni<>** reactive return types for all async operations. Your SsoAdapter methods MUST return reactive types (e.g., `Uni<SsoUserInfo>`), NOT blocking types.
+*   **Tip:** The task states "Create `SsoAdapter` service" but **THE FILE ALREADY EXISTS AND IS COMPLETE**. Based on my analysis, the SsoAdapter.java file at 480 lines is a fully implemented adapter with comprehensive Javadoc, error handling, and the Strategy pattern. Your task is NOT to rewrite it.
 
-*   **Tip:** JSONB fields in entities are stored as String type and require manual JSON serialization/deserialization. See how the codebase handles Room.config and Organization.ssoConfig. You SHOULD create helper POJOs (e.g., `SsoConfig.java`, `SamlConfig.java`, `OidcConfig.java`) and use Jackson ObjectMapper to serialize/deserialize to/from the String field.
+*   **Note:** The actual work for this task is to:
+    1. **Review and potentially enhance the OidcProvider and Saml2Provider implementations** to ensure they meet all acceptance criteria
+    2. **Verify the SsoUserInfo, SsoConfig, OidcConfig, Saml2Config DTOs** are complete
+    3. **Test the integration** with actual IdPs (Okta sandbox for OIDC, Azure AD or test IdP for SAML2)
+    4. **Ensure certificate validation works for SAML2** (this is explicitly called out in acceptance criteria)
+    5. **Verify backchannel logout works** for both OIDC and SAML2
 
-*   **Note:** The OAuth2Adapter uses `@ApplicationScoped` CDI annotation and injects provider implementations. Your SsoAdapter MUST follow the same pattern with `@Inject` for `OidcProvider` and `Saml2Provider`.
+*   **Warning:** The acceptance criteria mention testing with "Okta sandbox" and "Azure AD or SAML test IdP". You will need to set up test configurations for these. The configuration should be stored in `application.properties` for test environments or use test-specific properties files.
 
-*   **Warning:** Enterprise SSO is a NEW capability (Iteration 7). There are NO existing SSO-related files in the codebase. You're starting from scratch in the `integration/sso/` package. However, you MUST follow the established patterns from `integration/oauth/` package.
+*   **Tip:** The SsoAdapter uses reactive programming (`Uni<>` return types from Mutiny). Ensure the OidcProvider and Saml2Provider implementations also use reactive patterns to avoid blocking the reactive pipeline.
 
-*   **Note:** The task mentions "backchannel logout" for OIDC and "SAML SLO" (Single Logout). This is ADVANCED functionality that may require:
-    - OIDC: Implementing logout endpoint that receives backchannel logout tokens from IdP
-    - SAML2: Handling LogoutRequest and LogoutResponse SAML messages
-    - Consider marking backchannel logout as a "stretch goal" if time is limited - focus first on authentication flow
+*   **Note:** For OIDC, you'll need to:
+    - Exchange authorization code for tokens using the IdP's token endpoint
+    - Validate the ID token signature (using JWKS from IdP)
+    - Extract claims (sub, email, name, groups) from the ID token
+    - Implement backchannel logout by calling the IdP's end_session_endpoint
 
-*   **Critical:** User attribute extraction must map IdP-specific claim names to our User entity fields:
-    - OIDC: Standard claims (sub, email, name, picture, groups)
-    - SAML2: Custom attribute mapping per organization (e.g., `emailAddress` attribute → email field)
-    - The attribute mapping configuration SHOULD be stored in Organization.ssoConfig JSONB
+*   **Note:** For SAML2, you'll need to:
+    - Parse and decode the Base64-encoded SAML response
+    - Validate the SAML assertion signature using the IdP's certificate from the config
+    - Extract attributes from the assertion based on attribute mappings in the config
+    - Implement Single Logout (SLO) by generating a SAML LogoutRequest
 
-*   **Architecture Insight:** The existing OAuth2 flow doesn't involve organization lookup because social login is for individual users. SSO is fundamentally DIFFERENT: it requires organization context. Your SsoAdapter MUST:
-    1. Extract email domain from user attributes
-    2. Look up organization by domain (use `OrganizationRepository.findByDomain()`)
-    3. Load organization's SSO config from JSONB
-    4. Use that config to validate the assertion/token
-    This is a CIRCULAR dependency challenge: you need org config to validate, but you get user email from the validated token. SOLUTION: Validation happens in two phases - basic signature/structural validation first (using app-wide settings), then attribute extraction, then org-specific validation (if needed).
+*   **Tip:** The architecture specifies that the SsoAdapter is organization-scoped (config from database) unlike OAuth2Adapter (config from application.properties). The SsoAdapter.java already handles this by accepting `ssoConfigJson` as a parameter and parsing it at runtime.
 
-*   **Security Note:** SAML2 certificate validation is CRITICAL for security. The IdP's signing certificate MUST be validated against the certificate stored in Organization.ssoConfig. DO NOT skip certificate validation or use test/development modes that bypass validation in production code.
+*   **Tip:** Error handling is critical for SSO. The existing SsoAdapter uses `SsoAuthenticationException` for all SSO-related errors. Ensure OidcProvider and Saml2Provider throw this exception with clear error messages for debugging.
 
-*   **Testing Strategy:** The acceptance criteria mention "Okta sandbox" and "Azure AD or SAML test IdP". You SHOULD:
-    - Use Okta's free developer account for OIDC testing
-    - Use SAMLtest.id or similar free SAML test IdP for SAML2 testing
-    - Create integration tests with MOCKED IdP responses for CI/CD pipeline
-    - DO NOT require real IdP credentials for automated tests
+*   **Note:** The task mentions "SSO provider-specific implementations (Okta, Azure AD tested)". This means you should ensure the OIDC implementation works with Okta's OIDC endpoints and the SAML2 implementation works with Azure AD's SAML configuration.
 
-*   **Return Type Design:** Based on OAuth2Adapter pattern, create `SsoUserInfo` DTO similar to `OAuthUserInfo`. It should contain:
-    - subject (unique IdP user identifier)
-    - email
-    - name (display name)
-    - groups/roles (optional, for RBAC mapping)
-    - provider ("oidc" or "saml2")
-    - orgId (UUID) - This is DIFFERENT from OAuth2, SSO is organization-scoped
+### File Structure Confirmation
 
-*   **Error Handling:** Follow the existing pattern in OAuth2Adapter - throw custom exceptions:
-    - Create `SsoAuthenticationException` similar to `OAuth2AuthenticationException`
-    - Throw for: invalid assertions, expired tokens, certificate validation failures, unsupported IdP configurations
-    - Include detailed error messages for debugging but sanitize before returning to client (avoid leaking security details)
+Based on my codebase analysis, the following files already exist in `backend/src/main/java/com/scrumpoker/integration/sso/`:
+- ✅ `SsoAdapter.java` (COMPLETE - 480 lines)
+- ✅ `OidcProvider.java` (EXISTS - needs review/enhancement)
+- ✅ `Saml2Provider.java` (EXISTS - needs review/enhancement)
+- ✅ `SsoUserInfo.java` (EXISTS - DTO)
+- ✅ `SsoConfig.java` (EXISTS - POJO)
+- ✅ `OidcConfig.java` (EXISTS - POJO)
+- ✅ `Saml2Config.java` (EXISTS - POJO)
+- ✅ `SsoAuthenticationException.java` (EXISTS - custom exception)
 
-### Package Structure Recommendation
+**Your task is to review, test, and potentially enhance these files to meet all acceptance criteria, NOT to create them from scratch.**
 
-Create the following structure mirroring `integration/oauth/`:
+### Testing Approach
 
-```
-backend/src/main/java/com/scrumpoker/integration/sso/
-├── SsoAdapter.java              (main facade, similar to OAuth2Adapter)
-├── SsoUserInfo.java             (DTO for extracted user attributes)
-├── SsoAuthenticationException.java  (custom exception)
-├── OidcProvider.java            (OIDC-specific implementation)
-├── Saml2Provider.java           (SAML2-specific implementation)
-├── SsoConfig.java               (POJO for deserializing Organization.ssoConfig JSONB)
-└── package-info.java            (Javadoc package description)
-```
+1. **Unit Tests:** Test OidcProvider and Saml2Provider in isolation with mocked HTTP clients for IdP interactions
+2. **Integration Tests:** Test the full SsoAdapter flow with test IdP configurations
+3. **Manual Testing:** Test with real Okta sandbox and Azure AD configurations to verify the acceptance criteria
 
-### Quarkus Extensions Research Required
+### Key Differences from OAuth2
 
-Before starting implementation, you MUST research:
-1. Confirm the correct Quarkus SAML2 extension for version 3.15.1
-2. Review Quarkus OIDC documentation for enterprise IdP configuration patterns
-3. Understand how to configure multi-tenant OIDC (per-organization IdP URLs)
-4. Check if Quarkus has built-in support for SAML2 or if you need WildFly Elytron integration
-
-### JSON Schema for Organization.ssoConfig
-
-Based on architecture requirements, the JSONB should support both OIDC and SAML2:
-
-```json
-{
-  "protocol": "oidc",
-  "oidc": {
-    "issuer": "https://your-org.okta.com",
-    "clientId": "client-id",
-    "clientSecret": "encrypted-secret",
-    "authorizationEndpoint": "...",
-    "tokenEndpoint": "...",
-    "userInfoEndpoint": "...",
-    "jwksUri": "..."
-  },
-  "saml2": {
-    "idpEntityId": "https://idp.example.com",
-    "ssoUrl": "https://idp.example.com/sso",
-    "sloUrl": "https://idp.example.com/slo",
-    "certificate": "-----BEGIN CERTIFICATE-----\n...",
-    "attributeMapping": {
-      "email": "emailAddress",
-      "name": "displayName",
-      "groups": "memberOf"
-    }
-  },
-  "domainVerificationRequired": true,
-  "jitProvisioningEnabled": true
-}
-```
-
-You SHOULD create POJOs matching this structure for type-safe configuration access.
+The architecture document highlights these differences between SSO and OAuth2:
+- **Organization-scoped:** Config loaded from `Organization.ssoConfig` database field, not `application.properties`
+- **Returns SsoUserInfo:** Includes `organizationId` for JIT provisioning and org assignment
+- **Per-org attribute mapping:** SAML2 attribute mappings configured per organization
+- **Domain verification:** Used for JIT provisioning to assign users to correct organization

@@ -6,187 +6,148 @@ The previous code submission did not pass verification. You must fix the followi
 
 ## Original Task Description
 
-Create `SsoAdapter` service supporting OIDC and SAML2 protocols using Quarkus Security extensions. OIDC: configure IdP discovery endpoint, handle authorization code flow, validate ID token, extract user attributes (email, name, groups). SAML2: configure IdP metadata URL, handle SAML response, validate assertions, extract attributes from assertion. Map IdP attributes to User entity fields. Support per-organization SSO configuration (stored in Organization.sso_config JSONB). Implement backchannel logout (OIDC logout endpoint, SAML SLO).
+**Task ID:** I7.T1
+**Description:** Create `SsoAdapter` service supporting OIDC and SAML2 protocols using Quarkus Security extensions. OIDC: configure IdP discovery endpoint, handle authorization code flow, validate ID token, extract user attributes (email, name, groups). SAML2: configure IdP metadata URL, handle SAML response, validate assertions, extract attributes from assertion. Map IdP attributes to User entity fields. Support per-organization SSO configuration (stored in Organization.sso_config JSONB). Implement backchannel logout (OIDC logout endpoint, SAML SLO).
+
+**Acceptance Criteria:**
+- OIDC authentication flow completes with test IdP (Okta sandbox)
+- SAML2 authentication flow completes (Azure AD or SAML test IdP)
+- User attributes correctly mapped from ID token/assertion
+- Organization-specific SSO config loaded from database
+- Logout endpoint invalidates SSO session
+- Certificate validation works for SAML2
 
 ---
 
 ## Issues Detected
 
-### Critical Issues
+### 1. Test Failures - Mockito Unnecessary Stubbing Errors
 
-1. **SAML2 Implementation Incomplete**: The `Saml2Provider.java` is a skeleton implementation that throws `SsoAuthenticationException` with message "SAML2 response parsing not yet implemented. OpenSAML 5 integration required." in the `parseSamlResponsePlaceholder()` method at line 266. This means SAML2 authentication CANNOT work at all.
+**Files Affected:**
+- `backend/src/test/java/com/scrumpoker/integration/sso/OidcProviderTest.java`
+- `backend/src/test/java/com/scrumpoker/integration/sso/SsoAdapterTest.java`
 
-2. **Missing OpenSAML Dependencies**: The `pom.xml` file has OpenSAML dependencies COMMENTED OUT (lines 174-205). Without these dependencies, SAML2 support cannot be completed. The comments indicate:
-   - OpenSAML dependencies require Shibboleth repository configuration
-   - SAML2 support is only "partially implemented"
-   - Dependencies need to be uncommented when ready to complete SAML2
+**Specific Failures:**
+- `OidcProviderTest.validateAndExtractClaims_expiredToken_throwsException` - UnnecessaryStubbingException at lines 296-300
+- `OidcProviderTest.validateAndExtractClaims_invalidIssuer_throwsException` - UnnecessaryStubbingException at lines 309-313
+- `OidcProviderTest.validateAndExtractClaims_invalidAudience_throwsException` - UnnecessaryStubbingException at lines 321-323
+- `SsoAdapterTest.authenticate_nullAuthenticationData_throwsException` - UnnecessaryStubbingException at line 191
+- `SsoAdapterTest.authenticate_nullOrganizationId_throwsException` - UnnecessaryStubbingException at line 210
 
-3. **SAML2 Logout Not Implemented**: The `Saml2Provider.logout()` method at line 386 only logs a warning "SAML2 SLO not yet implemented" and returns `false`, meaning SAML Single Logout does not work.
+**Root Cause:**
+The test helper methods (`createExpiredMockJwt()`, `createMockJwtWithInvalidIssuer()`, `createMockJwtWithInvalidAudience()`) are setting up mock stubs for JWT fields that are never accessed because the validation throws an exception early (e.g., when checking expiration, the issuer and audience stubs are never used).
 
-4. **No Integration Tests**: There are NO test files for the SSO implementation (`Glob` search for `**/test/**/sso/**/*.java` returned no files). The acceptance criteria requires:
-   - "OIDC authentication flow completes with test IdP (Okta sandbox)"
-   - "SAML2 authentication flow completes (Azure AD or SAML test IdP)"
-   - "Certificate validation works for SAML2"
-   These cannot be verified without tests.
+### 2. OpenSAML Version Mismatch
 
-### Moderate Issues
+**File:** `backend/pom.xml`
 
-5. **JWTParser Dependency Not Configured**: The `OidcProvider.java` uses `@Inject JWTParser` at line 62, but this requires proper Quarkus OIDC configuration. The current `application.properties` has OIDC config for Google and Microsoft social login (lines 78-109), but NO enterprise OIDC configuration for multi-tenant IdPs. The JWTParser needs:
-   - JWKS URI configuration for signature verification
-   - Proper tenant/issuer validation setup
-   - This may fail at runtime if JWTParser cannot validate enterprise IdP tokens
+**Issue:**
+The `Saml2Provider.java` implementation uses OpenSAML 5 API, but `pom.xml` specifies OpenSAML version `4.3.2`:
+```xml
+<opensaml.version>4.3.2</opensaml.version>
+```
 
-6. **Blocking HTTP Client in Reactive Code**: The `OidcProvider` uses `java.net.http.HttpClient` (synchronous/blocking) inside `Uni.createFrom().item()` at lines 104-177. This is an ANTI-PATTERN in reactive Quarkus applications. The comment at line 78-80 acknowledges this: "This method is REACTIVE (returns Uni) but internally uses blocking HTTP client. Future enhancement: replace with Mutiny WebClient for fully reactive flow." This can cause thread starvation under load.
+OpenSAML 5 has breaking API changes from version 4, and the current code will fail at runtime with NoClassDefFoundError or similar errors.
 
-7. **Missing OIDC Discovery Implementation**: The `OidcProvider` does NOT implement OIDC discovery (fetching `/.well-known/openid-configuration`). It uses hardcoded fallback at line 127: `tokenEndpoint = oidcConfig.getIssuer() + "/token"`. This is fragile and may not work with all IdPs.
+### 3. Potential Runtime Issues
 
-### Minor Issues
-
-8. **No Certificate Expiration Handling for Renewal**: While `Saml2Provider.loadCertificate()` validates certificate expiration at line 183 (`x509Cert.checkValidity()`), there's NO mechanism to notify administrators when certificates are about to expire or to auto-reload renewed certificates from the database.
-
-9. **Hardcoded Timeout Values**: Connection timeout is hardcoded to 10 seconds (`CONNECT_TIMEOUT_SECONDS = 10` at line 52 in `OidcProvider`). This should be configurable via `application.properties` for different IdP latency requirements.
-
-10. **Missing Attribute Mapping Validation**: The `Saml2Config.attributeMapping` is optional (can be empty Map), but `Saml2Provider.extractUserInfo()` uses `.getOrDefault()` with hardcoded defaults ("email", "name", etc.). If an IdP uses completely different attribute names, this will silently fail to extract user info.
+Although compilation succeeded (because OpenSAML 4 has similar class names), the actual SAML2 authentication flow will likely fail at runtime due to:
+- Different initialization API between OpenSAML 4 and 5
+- Different XML parsing APIs
+- Different signature validation APIs
 
 ---
 
 ## Best Approach to Fix
 
-### CRITICAL: Complete SAML2 Implementation
+### Fix #1: Resolve Test Mockito Stubbing Issues
 
-You MUST complete the SAML2 implementation to meet acceptance criteria. Here's the required approach:
+You MUST update the test helper methods in `OidcProviderTest.java` and `SsoAdapterTest.java` to use **lenient stubbing** for mocks that might not be fully accessed when exceptions are thrown early.
 
-1. **Add OpenSAML Dependencies**:
-   - Uncomment the OpenSAML dependencies in `pom.xml` (lines 174-205)
-   - Verify the Shibboleth repository is accessible
-   - Ensure OpenSAML version 5.1.2 is compatible with Quarkus 3.15.1
+**In OidcProviderTest.java:**
 
-2. **Implement SAML Response Parsing**:
-   - Replace `parseSamlResponsePlaceholder()` with actual OpenSAML implementation
-   - Follow the detailed pseudo-code in the comments (lines 202-253) which shows:
-     - Initialize OpenSAML (`InitializationService.initialize()`)
-     - Unmarshall SAML response XML
-     - Validate signature using IdP certificate
-     - Extract assertion and validate conditions (NotBefore, NotOnOrAfter)
-     - Extract attributes from AttributeStatement
-   - Use the existing `loadCertificate()` method for certificate loading (already implemented correctly)
+1. Locate the helper methods at lines 294-329:
+   - `createExpiredMockJwt()`
+   - `createMockJwtWithInvalidIssuer()`
+   - `createMockJwtWithInvalidAudience()`
 
-3. **Implement SAML Logout**:
-   - In `Saml2Provider.logout()`, build a SAML LogoutRequest XML using OpenSAML
-   - Sign the request (may require SP private key - check architecture docs)
-   - Send to IdP's SLO URL
-   - Handle LogoutResponse parsing
+2. Change the mock creation from:
+   ```java
+   JsonWebToken jwt = mock(JsonWebToken.class);
+   ```
 
-4. **Create Integration Tests**:
-   - Create test file: `backend/src/test/java/com/scrumpoker/integration/sso/OidcProviderTest.java`
-     - Test OIDC token exchange with MOCKED IdP responses
-     - Test ID token validation (signature, expiration, issuer, audience)
-     - Test user attribute extraction (email, name, groups)
-     - Test backchannel logout
-   - Create test file: `backend/src/test/java/com/scrumpoker/integration/sso/Saml2ProviderTest.java`
-     - Test SAML assertion parsing with MOCKED SAML response XML
-     - Test certificate validation (use test certificate)
-     - Test attribute extraction with custom mapping
-     - Test assertion expiration validation
-   - Create test file: `backend/src/test/java/com/scrumpoker/integration/sso/SsoAdapterTest.java`
-     - Test protocol routing (OIDC vs SAML2)
-     - Test JSON config parsing from Organization.ssoConfig format
-     - Test error handling for invalid configs
+   To:
+   ```java
+   JsonWebToken jwt = mock(JsonWebToken.class, withSettings().lenient());
+   ```
 
-### MODERATE: Fix OIDC Issues
+3. This tells Mockito that not all stubs may be used, which is expected for these negative test cases.
 
-5. **Replace Blocking HTTP Client**:
-   - Replace `java.net.http.HttpClient` with Quarkus Mutiny `WebClient` (reactive)
-   - Example: `@Inject @RestClient WebClient webClient;` then use `.sendAsync()` returning `Uni<Response>`
-   - This ensures non-blocking token exchange
+**In SsoAdapterTest.java:**
 
-6. **Implement OIDC Discovery**:
-   - Add method `discoverOidcConfiguration(String issuer)` that fetches `issuer + "/.well-known/openid-configuration"`
-   - Cache discovery results in memory (per organization) to avoid repeated calls
-   - Use discovered endpoints instead of hardcoded fallbacks
+1. Find the two test methods that have unnecessary stubbing errors:
+   - `authenticate_nullAuthenticationData_throwsException` (around line 191)
+   - `authenticate_nullOrganizationId_throwsException` (around line 210)
 
-7. **Configure JWTParser for Multi-Tenant**:
-   - Research how to configure Quarkus SmallRye JWT to validate tokens from MULTIPLE issuers (one per organization)
-   - May need to use `JWTParser` with custom configuration per request, not CDI injection
-   - Consider using `jose4j` library directly for more control over JWKS fetching and caching
+2. Add `lenient()` wrapper to any mock stubs that might not be used when the IllegalArgumentException is thrown early. For example:
+   ```java
+   lenient().when(objectMapper.readValue(anyString(), eq(SsoConfig.class)))
+           .thenReturn(mockSsoConfig);
+   ```
 
-### MINOR: Polish and Production-Ready
+### Fix #2: Upgrade OpenSAML to Version 5.x
 
-8. **Add Configuration Properties**:
-   - Make timeouts configurable in `application.properties`:
-     ```properties
-     sso.oidc.connect-timeout=${SSO_OIDC_TIMEOUT:10000}
-     sso.saml2.clock-skew=${SSO_SAML2_CLOCK_SKEW:300}
-     ```
-   - Use `@ConfigProperty` injection in providers
+You MUST update `backend/pom.xml` to use OpenSAML 5.x to match the implementation in `Saml2Provider.java`.
 
-9. **Add Certificate Expiration Monitoring**:
-   - Create scheduled job (Quarkus `@Scheduled`) that checks all organizations' SAML certificates monthly
-   - Log warnings for certificates expiring within 30 days
-   - Consider emitting audit log events for certificate issues
+**In backend/pom.xml:**
 
-10. **Validate Attribute Mappings**:
-    - In `SsoAdapter.authenticate()`, validate that `Organization.ssoConfig` has required attribute mappings for SAML2
-    - Throw clear error message if email mapping is missing (cannot provision users without email)
+1. Locate line 21:
+   ```xml
+   <opensaml.version>4.3.2</opensaml.version>
+   ```
 
----
+2. Change it to:
+   ```xml
+   <opensaml.version>5.1.2</opensaml.version>
+   ```
 
-## Implementation Priority
+   (OpenSAML 5.1.2 is the latest stable version compatible with Java 17 and the code implementation)
 
-**Phase 1 (BLOCKER - must be done):**
-- Uncomment OpenSAML dependencies in pom.xml
-- Implement SAML response parsing in `Saml2Provider.parseSamlResponsePlaceholder()`
-- Create at least basic unit tests for OIDC and SAML2 providers
+3. Verify the Shibboleth repository is still present (it should be around lines 24-31) - this repository is required for OpenSAML 5 artifacts.
 
-**Phase 2 (HIGH - strongly recommended):**
-- Replace blocking HttpClient with reactive WebClient in OidcProvider
-- Implement OIDC discovery
-- Add SAML logout implementation
+4. After updating, run `mvn clean compile` to verify the new version compiles correctly.
 
-**Phase 3 (MEDIUM - improve production readiness):**
-- Add integration tests with real/test IdPs
-- Fix JWTParser multi-tenant configuration
-- Add configuration properties for timeouts
+### Fix #3: Verify Saml2Provider Implementation
 
-**Phase 4 (LOW - polish):**
-- Certificate expiration monitoring
-- Attribute mapping validation
-- Enhanced error messages
+After upgrading OpenSAML to version 5.x, you should:
+
+1. Run the backend tests again to ensure SAML2 tests pass:
+   ```bash
+   mvn test -Dtest="com.scrumpoker.integration.sso.*Test"
+   ```
+
+2. If there are still test failures in `Saml2ProviderTest`, read the test file and fix any test-specific issues (similar to the Mockito stubbing issues).
+
+### Summary of Required Changes
+
+1. **OidcProviderTest.java**: Add `withSettings().lenient()` to mock creation in 3 helper methods (lines ~294, ~307, ~319)
+2. **SsoAdapterTest.java**: Add `lenient()` wrapper to mock stubs in 2 test methods that validate null arguments
+3. **pom.xml**: Change `<opensaml.version>4.3.2</opensaml.version>` to `<opensaml.version>5.1.2</opensaml.version>`
+
+### Testing Steps After Fixes
+
+1. Run `mvn clean compile -DskipTests` to verify compilation
+2. Run `mvn test -Dtest="com.scrumpoker.integration.sso.*Test"` to verify all SSO tests pass
+3. Verify no linting errors or warnings (except deprecation warnings which are acceptable)
 
 ---
 
-## Testing Strategy
+## Additional Context
 
-After implementing fixes:
+- The OIDC implementation in `OidcProvider.java` is complete and correct
+- The SAML2 implementation in `Saml2Provider.java` is complete and uses OpenSAML 5 API correctly
+- The `SsoAdapter.java` orchestration layer is complete and correct
+- All configuration POJOs (`SsoConfig`, `OidcConfig`, `Saml2Config`, `SsoUserInfo`) are complete
+- The only issues are test mock configuration and dependency version mismatch
 
-1. **Compile**: Run `mvn clean compile` - MUST succeed without errors
-2. **Unit Tests**: Run `mvn test` - all SSO tests MUST pass
-3. **Manual OIDC Test**:
-   - Set up Okta developer account
-   - Configure organization with OIDC config in database
-   - Test authorization code flow manually via curl/Postman
-4. **Manual SAML2 Test**:
-   - Use SAMLtest.id or similar test IdP
-   - Configure organization with SAML2 config
-   - Test assertion validation with real SAML response
-
----
-
-## Reference Implementation
-
-For SAML2 parsing, refer to the detailed pseudo-code already in `Saml2Provider.java` lines 202-253. This code shows EXACTLY how to use OpenSAML 5 API. You must translate this pseudo-code to actual working Java code.
-
-For OIDC token validation, study the existing `OAuth2Adapter` and its providers (`GoogleOAuthProvider`, `MicrosoftOAuthProvider`) in `backend/src/main/java/com/scrumpoker/integration/oauth/` - these show the correct pattern for token exchange and validation, though they use blocking clients which you should improve.
-
----
-
-## Acceptance Criteria Verification
-
-After all fixes, verify EACH criterion:
-
-- [ ] OIDC authentication flow completes with test IdP (Okta sandbox) - **Currently CANNOT verify, no tests**
-- [ ] SAML2 authentication flow completes (Azure AD or SAML test IdP) - **Currently FAILS, not implemented**
-- [ ] User attributes correctly mapped from ID token/assertion - **OIDC: YES, SAML2: NO**
-- [ ] Organization-specific SSO config loaded from database - **YES, implemented in SsoAdapter**
-- [ ] Logout endpoint invalidates SSO session - **OIDC: basic impl, SAML2: NO**
-- [ ] Certificate validation works for SAML2 - **Cert loading: YES, validation in parsing: NO (not implemented)**
+Do NOT rewrite the implementation files. Only fix the test files and pom.xml as specified above.
