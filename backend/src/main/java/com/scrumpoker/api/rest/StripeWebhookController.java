@@ -13,6 +13,7 @@ import com.stripe.exception.SignatureVerificationException;
 import com.stripe.model.Event;
 import com.stripe.model.Invoice;
 import com.stripe.net.Webhook;
+import io.smallrye.common.annotation.Blocking;
 import io.smallrye.mutiny.Uni;
 import jakarta.annotation.security.PermitAll;
 import jakarta.inject.Inject;
@@ -101,6 +102,7 @@ public class StripeWebhookController {
     @POST
     @Consumes(MediaType.APPLICATION_JSON)
     @PermitAll
+    @Blocking
     @Operation(
         summary = "Receive Stripe webhook events",
         description = "Webhook endpoint for Stripe subscription "
@@ -135,6 +137,14 @@ public class StripeWebhookController {
                 event.getId(), event.getType());
         } catch (SignatureVerificationException e) {
             LOG.errorf(e, "Webhook signature verification failed");
+            return Uni.createFrom().item(
+                Response.status(Response.Status.UNAUTHORIZED)
+                    .entity("{\"error\": \"Invalid webhook signature\"}")
+                    .build()
+            );
+        } catch (Exception e) {
+            // Catch other exceptions (e.g., NullPointerException for missing signature header)
+            LOG.errorf(e, "Invalid webhook request");
             return Uni.createFrom().item(
                 Response.status(Response.Status.UNAUTHORIZED)
                     .entity("{\"error\": \"Invalid webhook signature\"}")

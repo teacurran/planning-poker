@@ -13,14 +13,14 @@ jobs:
       # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
       - uses: actions/checkout@v3
 
-      - name: docker-compose up
-        run: docker-compose up -d jaeger postgresql
+      - name: docker compose up
+        run: docker compose up -d jaeger postgresql
 
       - name: Test
-        run: docker-compose run server mvn test
+        run: docker compose run server mvn test
 
       - name: Sonarqube
-        run: docker-compose run server mvn verify sonar:sonar -Dsonar.login=${{ secrets.SONAR_TOKEN }} -Dsonar.host.url="https://sonarcloud.io"
+        run: docker compose run server mvn verify sonar:sonar -Dsonar.login=${{ secrets.SONAR_TOKEN }} -Dsonar.host.url="https://sonarcloud.io"
 
-      - name: docker-compose down
-        run: docker-compose down
+      - name: docker compose down
+        run: docker compose down

@@ -1,0 +1,35 @@
+{
+  "id": "evt_test_subscription_created",
+  "object": "event",
+  "api_version": "2023-10-16",
+  "created": 1678886400,
+  "data": {
+    "object": {
+      "id": "sub_test_created_123",
+      "object": "subscription",
+      "customer": "cus_test_123",
+      "status": "active",
+      "current_period_start": 1678886400,
+      "current_period_end": 1681478400,
+      "items": {
+        "object": "list",
+        "data": [
+          {
+            "id": "si_test_123",
+            "price": {
+              "id": "price_test_pro",
+              "product": "prod_test_pro"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "livemode": false,
+  "pending_webhooks": 1,
+  "request": {
+    "id": "req_test_123",
+    "idempotency_key": null
+  },
+  "type": "customer.subscription.created"
+}

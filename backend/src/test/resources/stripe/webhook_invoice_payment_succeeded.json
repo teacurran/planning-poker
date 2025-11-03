@@ -1,0 +1,29 @@
+{
+  "id": "evt_test_invoice_payment_succeeded",
+  "object": "event",
+  "api_version": "2023-10-16",
+  "created": 1678886700,
+  "data": {
+    "object": {
+      "id": "in_test_payment_succeeded_001",
+      "object": "invoice",
+      "customer": "cus_test_payment_001",
+      "subscription": "sub_test_payment_001",
+      "amount_due": 2999,
+      "amount_paid": 2999,
+      "currency": "usd",
+      "status": "paid",
+      "status_transitions": {
+        "finalized_at": 1678886680,
+        "paid_at": 1678886700
+      }
+    }
+  },
+  "livemode": false,
+  "pending_webhooks": 1,
+  "request": {
+    "id": "req_test_payment_001",
+    "idempotency_key": null
+  },
+  "type": "invoice.payment_succeeded"
+}

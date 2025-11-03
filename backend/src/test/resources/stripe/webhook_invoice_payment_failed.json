@@ -1,0 +1,27 @@
+{
+  "id": "evt_test_invoice_payment_failed",
+  "object": "event",
+  "api_version": "2023-10-16",
+  "created": 1678886800,
+  "data": {
+    "object": {
+      "id": "in_test_payment_failed_002",
+      "object": "invoice",
+      "customer": "cus_test_payment_failed_002",
+      "subscription": "sub_test_payment_failed_002",
+      "amount_due": 2999,
+      "amount_paid": 0,
+      "currency": "usd",
+      "status": "open",
+      "attempted": true,
+      "attempt_count": 1
+    }
+  },
+  "livemode": false,
+  "pending_webhooks": 1,
+  "request": {
+    "id": "req_test_payment_failed_002",
+    "idempotency_key": null
+  },
+  "type": "invoice.payment_failed"
+}
