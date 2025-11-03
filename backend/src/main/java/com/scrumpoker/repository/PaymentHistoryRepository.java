@@ -89,6 +89,49 @@ public class PaymentHistoryRepository implements PanacheRepositoryBase<PaymentHi
     }
 
     /**
+     * Find all payment records for a user across all their subscriptions.
+     * Used for invoice list endpoint.
+     *
+     * @param userId The user ID (entityId in subscription)
+     * @param page Page number (0-indexed)
+     * @param size Page size
+     * @return Uni of list of payment history records for the user
+     */
+    public Uni<List<PaymentHistory>> findByUserId(UUID userId, int page, int size) {
+        return sessionFactory.withSession(session ->
+            session.createQuery(
+                "SELECT p FROM PaymentHistory p " +
+                "WHERE p.subscription.entityId = :userId " +
+                "AND p.subscription.entityType = 'USER' " +
+                "ORDER BY p.paidAt DESC",
+                PaymentHistory.class)
+                .setParameter("userId", userId)
+                .setFirstResult(page * size)
+                .setMaxResults(size)
+                .getResultList()
+        );
+    }
+
+    /**
+     * Count total payment records for a user.
+     * Used for pagination metadata in invoice list endpoint.
+     *
+     * @param userId The user ID (entityId in subscription)
+     * @return Uni containing the count of payments for the user
+     */
+    public Uni<Long> countByUserId(UUID userId) {
+        return sessionFactory.withSession(session ->
+            session.createQuery(
+                "SELECT COUNT(p) FROM PaymentHistory p " +
+                "WHERE p.subscription.entityId = :userId " +
+                "AND p.subscription.entityType = 'USER'",
+                Long.class)
+                .setParameter("userId", userId)
+                .getSingleResult()
+        );
+    }
+
+    /**
      * Calculate total revenue from successful payments.
      * Note: This returns the sum as Long (cents). Convert to decimal for display.
      * Uses Hibernate Reactive SessionFactory for SUM aggregation.
