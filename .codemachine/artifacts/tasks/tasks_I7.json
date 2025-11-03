@@ -27,7 +27,7 @@
     "acceptance_criteria": "Creating organization validates domain (user email matches domain), SSO config persists to Organization.sso_config correctly, Adding member creates OrgMember record with role, Removing member soft-deletes membership (or hard delete based on design), Branding config JSON serializes correctly, Non-Enterprise tier cannot create organization (403)",
     "dependencies": ["I5.T4"],
     "parallelizable": true,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I7.T3",

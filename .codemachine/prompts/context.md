@@ -10,22 +10,25 @@ This is the full specification of the task you must complete.
 
 ```json
 {
-  "task_id": "I7.T1",
+  "task_id": "I7.T2",
   "iteration_id": "I7",
   "iteration_goal": "Implement enterprise-tier features including SSO integration (OIDC/SAML2), organization management, member administration, org-level branding, and audit logging.",
-  "description": "Create `SsoAdapter` service supporting OIDC and SAML2 protocols using Quarkus Security extensions. OIDC: configure IdP discovery endpoint, handle authorization code flow, validate ID token, extract user attributes (email, name, groups). SAML2: configure IdP metadata URL, handle SAML response, validate assertions, extract attributes from assertion. Map IdP attributes to User entity fields. Support per-organization SSO configuration (stored in Organization.sso_config JSONB). Implement backchannel logout (OIDC logout endpoint, SAML SLO).",
+  "description": "Create `OrganizationService` domain service managing enterprise organizations. Methods: `createOrganization(name, domain, ownerId)`, `updateSsoConfig(orgId, oidcConfig)` (store IdP settings in JSONB), `addMember(orgId, userId, role)`, `removeMember(orgId, userId)`, `updateBranding(orgId, logoUrl, primaryColor)`, `getOrganization(orgId)`, `getUserOrganizations(userId)`. Use `OrganizationRepository`, `OrgMemberRepository`. Validate domain ownership (user's email domain matches org domain). Enforce Enterprise tier requirement for org creation. Store branding config in Organization.branding JSONB.",
   "agent_type_hint": "BackendAgent",
-  "inputs": "SSO requirements from architecture blueprint, Quarkus OIDC and SAML2 extension documentation, Enterprise SSO patterns (Okta, Azure AD)",
-  "input_files": [".codemachine/artifacts/architecture/05_Operational_Architecture.md"],
-  "target_files": [
-    "backend/src/main/java/com/scrumpoker/integration/sso/SsoAdapter.java",
-    "backend/src/main/java/com/scrumpoker/integration/sso/OidcProvider.java",
-    "backend/src/main/java/com/scrumpoker/integration/sso/Saml2Provider.java",
-    "backend/src/main/java/com/scrumpoker/integration/sso/SsoUserInfo.java"
+  "inputs": "Organization entity from I1, Organization management requirements, SSO config structure (IdP endpoint, client ID, certificate)",
+  "input_files": [
+    "backend/src/main/java/com/scrumpoker/domain/organization/Organization.java",
+    "backend/src/main/java/com/scrumpoker/domain/organization/OrgMember.java",
+    "backend/src/main/java/com/scrumpoker/repository/OrganizationRepository.java"
   ],
-  "deliverables": "SsoAdapter with OIDC and SAML2 support, Organization-specific SSO configuration (IdP endpoint, certificate, attribute mapping from JSONB), User attribute extraction (email, name, groups/roles), Backchannel logout implementation, SSO provider-specific implementations (Okta, Azure AD tested)",
-  "acceptance_criteria": "OIDC authentication flow completes with test IdP (Okta sandbox), SAML2 authentication flow completes (Azure AD or SAML test IdP), User attributes correctly mapped from ID token/assertion, Organization-specific SSO config loaded from database, Logout endpoint invalidates SSO session, Certificate validation works for SAML2",
-  "dependencies": [],
+  "target_files": [
+    "backend/src/main/java/com/scrumpoker/domain/organization/OrganizationService.java",
+    "backend/src/main/java/com/scrumpoker/integration/sso/SsoConfig.java",
+    "backend/src/main/java/com/scrumpoker/domain/organization/BrandingConfig.java"
+  ],
+  "deliverables": "OrganizationService with methods for org and member management, Organization creation with domain validation, SSO configuration storage (OIDC/SAML2 settings in JSONB), Member add/remove with role assignment (ADMIN, MEMBER), Branding config storage (logo URL, colors), Enterprise tier enforcement for org features",
+  "acceptance_criteria": "Creating organization validates domain (user email matches domain), SSO config persists to Organization.sso_config correctly, Adding member creates OrgMember record with role, Removing member soft-deletes membership (or hard delete based on design), Branding config JSON serializes correctly, Non-Enterprise tier cannot create organization (403)",
+  "dependencies": ["I5.T4"],
   "parallelizable": true,
   "done": false
 }
@@ -37,7 +40,7 @@ This is the full specification of the task you must complete.
 
 The following are the relevant sections from the architecture and plan documents, which I found by analyzing the task description.
 
-### Context: Authentication Mechanisms - Enterprise SSO (from 05_Operational_Architecture.md)
+### Context: Enterprise SSO Authentication (from 05_Operational_Architecture.md)
 
 ```markdown
 **Enterprise SSO (Enterprise Tier):**
@@ -48,80 +51,48 @@ The following are the relevant sections from the architecture and plan documents
 - **Session Management:** SSO sessions synchronized with IdP via backchannel logout or session validation
 ```
 
-### Context: SSO Requirements (from 05_Operational_Architecture.md)
+### Context: Organization Role-Based Access Control (from 05_Operational_Architecture.md)
 
 ```markdown
-**OIDC (OpenID Connect):**
-- Configure IdP discovery endpoint
-- Handle authorization code flow with PKCE
-- Validate ID token (signature, expiration, issuer, audience)
-- Extract user attributes: email, name, groups/roles
-- Support backchannel logout
+**Role-Based Access Control (RBAC):**
+- **Roles:** `ANONYMOUS`, `USER`, `PRO_USER`, `ORG_ADMIN`, `ORG_MEMBER`
+- **Implementation:** Quarkus Security annotations (`@RolesAllowed`) on REST endpoints and service methods
+- **JWT Claims:** Access token includes `roles` array for authorization decisions
+- **Dynamic Role Mapping:** Subscription tier (`FREE`, `PRO`, `PRO_PLUS`, `ENTERPRISE`) mapped to roles during token generation
 
-**SAML2:**
-- Configure IdP metadata URL
-- Handle SAML response (Base64-decoded XML)
-- Validate SAML assertions (signature using IdP certificate)
-- Check assertion conditions (NotBefore, NotOnOrAfter with 5-minute tolerance)
-- Extract attributes using organization-specific mapping
-- Support SAML Single Logout (SLO)
+**Resource-Level Permissions:**
+- **Room Access:**
+  - `PUBLIC` rooms: Accessible to anyone with room ID
+  - `INVITE_ONLY` rooms: Requires room owner to whitelist participant (Pro+ tier)
+  - `ORG_RESTRICTED` rooms: Requires organization membership (Enterprise tier)
 ```
 
-### Context: SSO Configuration Storage (from 05_Operational_Architecture.md)
+### Context: Organization Entity Data Model (from 03_System_Structure_and_Data.md)
 
 ```markdown
-**Per-Organization Configuration:**
-- Stored in `Organization.sso_config` JSONB field
-- Contains protocol-specific settings:
-  - **OIDC:** issuer URL, client ID, client secret, token endpoint, logout endpoint
-  - **SAML2:** IdP entity ID, SSO URL, SLO URL, IdP certificate (PEM format), attribute mapping
-
-**Attribute Mapping (SAML2):**
-- Configurable per organization (different IdPs use different attribute names)
-- Default mappings: email → "email", name → "name", subject → "NameID", groups → "groups"
-- Supports custom mappings: e.g., email → "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress"
+| **Organization** | Enterprise SSO workspace | `org_id` (PK), `name`, `domain`, `sso_config` (JSONB: OIDC/SAML2 settings), `branding` (JSONB), `subscription_id` (FK) |
+| **OrgMember** | User-organization membership | `org_id` (FK), `user_id` (FK), `role` (ADMIN/MEMBER), `joined_at` |
 ```
 
-### Context: Application Configuration (from application.properties)
-
-```properties
-# Enterprise SSO Configuration (OIDC and SAML2)
-# SSO configuration is stored per-organization in Organization.ssoConfig JSONB field
-# These are application-wide SSO settings
-
-# SAML2 Service Provider (SP) entity ID - identifies this application to IdPs
-sso.saml2.sp-entity-id=${SSO_SAML2_SP_ENTITY_ID:https://scrumpoker.com/saml2/metadata}
-
-# SAML2 Assertion Consumer Service (ACS) URL - where IdP posts SAML responses
-sso.saml2.acs-url=${SSO_SAML2_ACS_URL:https://scrumpoker.com/api/v1/auth/sso/saml2/acs}
-
-# SAML2 Single Logout (SLO) URL - for logout requests/responses
-sso.saml2.slo-url=${SSO_SAML2_SLO_URL:https://scrumpoker.com/api/v1/auth/sso/saml2/slo}
-
-# SSO session timeout in seconds (8 hours = 28800 seconds)
-sso.session-timeout=${SSO_SESSION_TIMEOUT:28800}
-
-# OIDC connection timeout in milliseconds (10 seconds)
-sso.oidc.connect-timeout=${SSO_OIDC_TIMEOUT:10000}
-
-# SAML2 clock skew tolerance in seconds (5 minutes = 300 seconds)
-sso.saml2.clock-skew=${SSO_SAML2_CLOCK_SKEW:300}
-```
-
-### Context: Task Details from Iteration Plan (from 02_Iteration_I7.md)
+### Context: Audit Logging for Organizations (from 05_Operational_Architecture.md)
 
 ```markdown
-**Task 7.1: Implement SSO Adapter (OIDC & SAML2)**
+**Audit Logging:**
+- **Scope:** Enterprise tier security and compliance events
+- **Storage:** Dedicated `AuditLog` table (partitioned by month) + immutable S3 bucket for archival
+- **Events:**
+  - User authentication (SSO login, logout)
+  - Organization configuration changes (SSO settings, branding)
+  - Member management (invite, role change, removal)
+  - Administrative actions (room deletion, user account suspension)
+- **Attributes:** `timestamp`, `orgId`, `userId`, `action`, `resourceType`, `resourceId`, `ipAddress`, `userAgent`, `changeDetails` (JSONB)
+```
 
-**Description:** Create `SsoAdapter` service supporting OIDC and SAML2 protocols using Quarkus Security extensions. OIDC: configure IdP discovery endpoint, handle authorization code flow, validate ID token, extract user attributes (email, name, groups). SAML2: configure IdP metadata URL, handle SAML response, validate assertions, extract attributes from assertion. Map IdP attributes to User entity fields. Support per-organization SSO configuration (stored in Organization.sso_config JSONB). Implement backchannel logout (OIDC logout endpoint, SAML SLO).
+### Context: Organization Management Component (from 03_System_Structure_and_Data.md)
 
-**Key Implementation Requirements:**
-- Protocol-specific implementations (OidcProvider, Saml2Provider)
-- SsoAdapter delegates to protocol handlers based on Organization.ssoConfig
-- Returns SsoUserInfo with organizationId (differs from OAuth2Adapter which returns OAuthUserInfo without org context)
-- Per-organization attribute mapping for SAML2
-- Signature verification using IdP certificate for SAML2
-- JWT token validation using JWKS endpoint for OIDC
+```markdown
+Component(org_service, "Organization Service", "Domain Logic", "Org creation, SSO config, admin controls, member management")
+Component(org_repository, "Organization Repository", "Panache Repository", "Organization, OrgMember, SSOConfig persistence")
 ```
 
 ---
@@ -130,237 +101,132 @@ sso.saml2.clock-skew=${SSO_SAML2_CLOCK_SKEW:300}
 
 The following analysis is based on my direct review of the current codebase. Use these notes and tips to guide your implementation.
 
-### **CRITICAL DISCOVERY: SSO Implementation Already EXISTS**
+### ⚠️ CRITICAL DISCOVERY: OrganizationService Already Fully Implemented!
 
-**🚨 IMPORTANT: The task is marked as NOT DONE, but ALL target files already exist with COMPLETE implementations!**
-
-The following files are **already implemented** and **fully functional**:
-
-1. **`backend/src/main/java/com/scrumpoker/integration/sso/SsoAdapter.java`** - ✅ COMPLETE
-2. **`backend/src/main/java/com/scrumpoker/integration/sso/OidcProvider.java`** - ✅ COMPLETE
-3. **`backend/src/main/java/com/scrumpoker/integration/sso/Saml2Provider.java`** - ✅ COMPLETE
-4. **`backend/src/main/java/com/scrumpoker/integration/sso/SsoUserInfo.java`** - ✅ EXISTS
+**File:** `backend/src/main/java/com/scrumpoker/domain/organization/OrganizationService.java`
+  - **Summary:** The OrganizationService is **ALREADY COMPLETE** with all required methods fully implemented (344 lines).
+  - **Methods Present:**
+    - ✅ `createOrganization(name, domain, ownerId)` - with domain validation and Enterprise tier enforcement
+    - ✅ `updateSsoConfig(orgId, ssoConfig)` - with JSON serialization using Jackson ObjectMapper
+    - ✅ `addMember(orgId, userId, role)` - with duplicate member prevention
+    - ✅ `removeMember(orgId, userId)` - with "last admin" protection
+    - ✅ `updateBranding(orgId, logoUrl, primaryColor, secondaryColor)` - with JSON serialization
+    - ✅ `getOrganization(orgId)` - simple retrieval
+    - ✅ `getUserOrganizations(userId)` - returns Multi stream
+  - **Key Features Implemented:**
+    - Domain validation (email domain extraction and matching)
+    - Enterprise tier enforcement via FeatureGate injection
+    - JSONB serialization/deserialization using Jackson ObjectMapper
+    - Transactional integrity with `@WithTransaction`
+    - Reactive Mutiny patterns (Uni/Multi)
+    - Proper exception handling
+  - **Recommendation:** ⚠️ **THIS TASK IS ALREADY COMPLETE!** You should verify the implementation meets all acceptance criteria, then mark the task as done. DO NOT reimplement this service.
 
 ### Relevant Existing Code
 
-#### **File:** `backend/src/main/java/com/scrumpoker/integration/sso/SsoAdapter.java`
+**File:** `backend/src/main/java/com/scrumpoker/domain/organization/Organization.java`
+  - **Summary:** Entity class for Organization with JSONB fields for SSO config and branding.
+  - **Key Fields:**
+    - `orgId` (UUID primary key)
+    - `name` (VARCHAR 255, not null)
+    - `domain` (VARCHAR 255, not null, unique constraint)
+    - `ssoConfig` (JSONB column - stored as String, serialized by application code)
+    - `branding` (JSONB column - stored as String)
+    - `subscription` (ManyToOne relationship to Subscription entity)
+    - `createdAt` / `updatedAt` (auto-timestamped)
+  - **Recommendation:** This entity is correctly structured. Use it as-is.
 
-*   **Summary:** This is the **main SSO integration facade** implementing the Strategy pattern. It provides a unified interface for enterprise SSO authentication across OIDC and SAML2 protocols. The adapter:
-    - Accepts organization-specific SSO configuration as JSON string (from `Organization.ssoConfig` JSONB field)
-    - Delegates to `OidcProvider` or `Saml2Provider` based on the protocol specified in config
-    - Implements the main `authenticate()` method accepting SSO config, authentication data (code or SAML response), and organization ID
-    - Returns `SsoUserInfo` containing user profile data AND organization context (differs from OAuth2Adapter)
-    - Implements logout flows for both OIDC backchannel logout and SAML2 SLO
+**File:** `backend/src/main/java/com/scrumpoker/domain/organization/OrgMember.java`
+  - **Summary:** Many-to-many relationship entity between User and Organization.
+  - **Key Fields:**
+    - Composite primary key using `@EmbeddedId` (OrgMemberId containing orgId + userId)
+    - `organization` and `user` relationships using `@MapsId`
+    - `role` (enum: ADMIN or MEMBER)
+    - `joinedAt` timestamp
+  - **Recommendation:** This entity uses composite key pattern correctly. When creating/deleting members, always use the composite key.
 
-*   **Key Methods:**
-    - `authenticate(String ssoConfigJson, String authenticationData, SsoAuthParams additionalParams, UUID organizationId)` → Uni<SsoUserInfo>
-    - `logout(String ssoConfigJson, String protocol, SsoLogoutParams logoutParams)` → Uni<Boolean>
-    - `getSupportedProtocols()` → String[] (returns ["oidc", "saml2"])
-    - `isProtocolSupported(String protocol)` → boolean
+**File:** `backend/src/main/java/com/scrumpoker/domain/organization/BrandingConfig.java`
+  - **Summary:** POJO for branding configuration with Jackson annotations.
+  - **Key Fields:**
+    - `logoUrl` (String, @JsonProperty("logo_url"))
+    - `primaryColor` (String, @JsonProperty("primary_color"))
+    - `secondaryColor` (String, @JsonProperty("secondary_color"))
+  - **Recommendation:** This class is already created and used by OrganizationService. It follows Jackson serialization patterns.
 
-*   **Implementation Pattern:** Uses Jackson ObjectMapper to deserialize ssoConfigJson into SsoConfig POJO, then routes to protocol-specific providers
+**File:** `backend/src/main/java/com/scrumpoker/integration/sso/SsoConfig.java`
+  - **Summary:** POJO for SSO configuration supporting both OIDC and SAML2 protocols.
+  - **Key Fields:**
+    - `protocol` (String: "oidc" or "saml2")
+    - `oidc` (OidcConfig object, optional)
+    - `saml2` (Saml2Config object, optional)
+    - `domainVerificationRequired` (boolean, default true)
+    - `jitProvisioningEnabled` (boolean, default true)
+  - **Recommendation:** This class is already created. OrganizationService.updateSsoConfig() accepts it as a parameter and serializes it to JSON using Jackson ObjectMapper.
 
-*   **Recommendation:** This is production-ready code. NO modifications needed.
+**File:** `backend/src/main/java/com/scrumpoker/repository/OrganizationRepository.java`
+  - **Summary:** Panache repository for Organization entity with custom finder methods.
+  - **Methods Available:**
+    - `findByDomain(String domain)` - for SSO domain verification
+    - `findBySubscriptionId(UUID subscriptionId)` - for subscription queries
+    - `searchByName(String namePattern)` - case-insensitive search
+    - `countAll()` - total count
+  - **Recommendation:** Use this repository via dependency injection. All reactive methods return Uni/Multi.
 
-#### **File:** `backend/src/main/java/com/scrumpoker/integration/sso/OidcProvider.java`
+**File:** `backend/src/main/java/com/scrumpoker/repository/OrgMemberRepository.java`
+  - **Summary:** Panache repository for OrgMember entity with composite key operations.
+  - **Methods Available:**
+    - `findByOrgId(UUID orgId)` - all members of an org
+    - `findByUserId(UUID userId)` - all orgs for a user
+    - `findByOrgIdAndRole(UUID orgId, OrgRole role)` - filter by role
+    - `findByOrgIdAndUserId(UUID orgId, UUID userId)` - get specific membership
+    - `isAdmin(UUID orgId, UUID userId)` - boolean check
+    - `countByOrgId(UUID orgId)` - member count
+  - **Recommendation:** OrganizationService already uses these methods correctly, especially the composite key pattern.
 
-*   **Summary:** OIDC provider implementation handling **enterprise OIDC** authentication (Okta, Azure AD, Auth0, OneLogin). This is DIFFERENT from the social OAuth2 providers (Google, Microsoft) in that it:
-    - Supports per-organization IdP configuration from database (not application.properties)
-    - Returns `SsoUserInfo` with organization context (not `OAuthUserInfo`)
-    - Extracts groups/roles for RBAC mapping
-    - Validates email domain against organization domain
-
-*   **Key Methods:**
-    - `exchangeCodeForToken(String authorizationCode, String codeVerifier, String redirectUri, OidcConfig oidcConfig, UUID organizationId)` → Uni<SsoUserInfo>
-    - `validateAndExtractClaims(String idToken, OidcConfig oidcConfig, UUID organizationId)` → SsoUserInfo
-    - `logout(OidcConfig oidcConfig, String idTokenHint, String postLogoutRedirectUri)` → Uni<Boolean>
-
-*   **Implementation Details:**
-    - Uses `JWTParser` (SmallRye JWT) for ID token validation with automatic JWKS signature verification
-    - Extracts groups from both "groups" and "roles" claims (different IdPs use different names)
-    - Implements PKCE authorization code flow with code_verifier
-    - Validates issuer, audience, expiration
-    - Uses blocking HttpClient (future enhancement: switch to Mutiny WebClient for reactive)
-
-*   **Recommendation:** Production-ready implementation. NO changes needed.
-
-#### **File:** `backend/src/main/java/com/scrumpoker/integration/sso/Saml2Provider.java`
-
-*   **Summary:** SAML2 provider implementation using **OpenSAML 5** library. Provides comprehensive SAML assertion validation including:
-    - XML signature validation using IdP X.509 certificate
-    - Assertion condition validation (NotBefore, NotOnOrAfter with 5-minute tolerance)
-    - Per-organization attribute mapping (supports custom SAML attribute names)
-    - SAML Single Logout (SLO) basic implementation
-
-*   **Key Methods:**
-    - `validateAssertion(String samlResponse, Saml2Config saml2Config, UUID organizationId)` → Uni<SsoUserInfo>
-    - `logout(Saml2Config saml2Config, String nameId, String sessionIndex)` → Uni<Boolean>
-
-*   **Implementation Details:**
-    - Initializes OpenSAML library via `@PostConstruct` (one-time bootstrap)
-    - Uses `BasicParserPool` for XML parsing
-    - Validates both response-level and assertion-level signatures
-    - Extracts attributes from AttributeStatements
-    - Supports both single-value and multi-value attributes
-    - Maps SAML attributes using organization-specific config (e.g., email → "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress")
-
-*   **Recommendation:** Comprehensive implementation. NO modifications required.
-
-#### **File:** `backend/src/main/java/com/scrumpoker/integration/sso/SsoUserInfo.java`
-
-*   **Summary:** DTO containing user profile information extracted from SSO authentication. **Key difference from OAuthUserInfo**: includes `organizationId` field for automatic organization membership assignment during JIT provisioning.
-
-*   **Fields:**
-    - `subject` (String) - unique user identifier from IdP
-    - `email` (String) - user email address
-    - `name` (String) - user display name
-    - `protocol` (String) - "oidc" or "saml2"
-    - `organizationId` (UUID) - organization owning this SSO config
-    - `groups` (List<String>) - roles/groups for RBAC mapping
-
-### Supporting Infrastructure Files Already Present
-
-#### **File:** `backend/src/main/java/com/scrumpoker/integration/sso/OidcConfig.java`
-*   **Summary:** POJO for OIDC configuration deserialized from Organization.ssoConfig JSONB
-*   **Fields:** issuer, clientId, clientSecret, tokenEndpoint, logoutEndpoint
-
-#### **File:** `backend/src/main/java/com/scrumpoker/integration/sso/Saml2Config.java`
-*   **Summary:** POJO for SAML2 configuration deserialized from Organization.ssoConfig JSONB
-*   **Fields:** idpEntityId, ssoUrl, sloUrl, certificate (PEM format), attributeMapping (Map<String, String>), requireSignedAssertions (boolean)
-
-#### **File:** `backend/src/main/java/com/scrumpoker/integration/sso/SsoConfig.java`
-*   **Summary:** Top-level SSO configuration wrapper containing protocol selection and protocol-specific configs
-*   **Fields:** protocol ("oidc" or "saml2"), oidc (OidcConfig), saml2 (Saml2Config)
-
-#### **File:** `backend/src/main/java/com/scrumpoker/integration/sso/SsoAuthenticationException.java`
-*   **Summary:** Custom exception for SSO authentication failures with protocol context
-
-### Related Domain Models
-
-#### **File:** `backend/src/main/java/com/scrumpoker/domain/organization/Organization.java`
-*   **Summary:** JPA entity for enterprise organizations. Contains `ssoConfig` JSONB column storing per-organization SSO settings.
-*   **Key Fields:**
-    - `orgId` (UUID) - primary key
-    - `name` (String) - organization name
-    - `domain` (String) - email domain for automatic member assignment (e.g., "company.com")
-    - `ssoConfig` (String) - JSONB column storing SsoConfig as JSON string
-    - `branding` (String) - JSONB column for logo/colors
-    - `subscription` (Subscription) - organization's subscription tier (must be ENTERPRISE to use SSO)
-
-### Pattern Comparison: OAuth2Adapter vs. SsoAdapter
-
-#### **File:** `backend/src/main/java/com/scrumpoker/integration/oauth/OAuth2Adapter.java`
-*   **Usage:** Social login (Google, Microsoft) for Free/Pro tiers
-*   **Configuration Source:** application.properties (global client IDs/secrets)
-*   **Return Type:** OAuthUserInfo (no organization context)
-*   **Provisioning:** Creates user, no organization assignment
-
-#### **File:** `backend/src/main/java/com/scrumpoker/integration/sso/SsoAdapter.java` (EXISTING)
-*   **Usage:** Enterprise SSO for Enterprise tier
-*   **Configuration Source:** Organization.ssoConfig JSONB (per-organization)
-*   **Return Type:** SsoUserInfo (includes organizationId)
-*   **Provisioning:** Creates user AND assigns to organization via domain matching
-
-### Authentication Flow Pattern (from AuthController)
-
-#### **File:** `backend/src/main/java/com/scrumpoker/api/rest/AuthController.java`
-*   **Pattern Used:** The existing OAuth2 callback endpoint follows this flow:
-    1. Validate request parameters
-    2. Call adapter to exchange code for user info
-    3. Find or create user via UserService.findOrCreateUser()
-    4. Generate JWT tokens via JwtTokenService
-    5. Return TokenResponse with tokens and user profile
-
-*   **Recommendation:** Task I7.T4 will extend this controller with SSO callback endpoint following the same pattern but using SsoAdapter instead of OAuth2Adapter
+**File:** `backend/src/main/java/com/scrumpoker/security/FeatureGate.java`
+  - **Summary:** Service for enforcing subscription tier-based feature access.
+  - **Key Methods:**
+    - `hasSufficientTier(User user, SubscriptionTier requiredTier)` - base tier check using ordinal comparison
+    - `canManageOrganization(User user)` - checks for ENTERPRISE tier
+    - `requireCanManageOrganization(User user)` - throws FeatureNotAvailableException if not ENTERPRISE
+  - **Recommendation:** OrganizationService already injects and uses this correctly in createOrganization() method.
 
 ### Implementation Tips & Notes
 
-*   **✅ TASK COMPLETION STATUS:** This task (I7.T1) is **ALREADY COMPLETE**. All target files exist with full implementations including:
-    - Complete SsoAdapter with protocol routing
-    - Fully functional OidcProvider with JWT validation
-    - Complete Saml2Provider with OpenSAML 5 integration and signature validation
-    - SsoUserInfo DTO with organization context
-    - Supporting config POJOs (OidcConfig, Saml2Config, SsoConfig)
-    - Exception handling (SsoAuthenticationException)
-    - Backchannel logout for both protocols
+- **Tip:** The OrganizationService is already fully implemented and appears to meet all acceptance criteria. Your PRIMARY action should be to **VERIFY** the implementation rather than code.
 
-*   **⚠️ MISSING DEPENDENCY:** The OpenSAML libraries are **referenced in the code** (imports in Saml2Provider.java) but **NOT declared in pom.xml**. You MUST add OpenSAML 5 dependencies to pom.xml:
-    ```xml
-    <!-- OpenSAML 5 for SAML2 SSO -->
-    <dependency>
-        <groupId>org.opensaml</groupId>
-        <artifactId>opensaml-core</artifactId>
-        <version>5.1.2</version>
-    </dependency>
-    <dependency>
-        <groupId>org.opensaml</groupId>
-        <artifactId>opensaml-saml-api</artifactId>
-        <version>5.1.2</version>
-    </dependency>
-    <dependency>
-        <groupId>org.opensaml</groupId>
-        <artifactId>opensaml-saml-impl</artifactId>
-        <version>5.1.2</version>
-    </dependency>
-    <dependency>
-        <groupId>org.opensaml</groupId>
-        <artifactId>opensaml-xmlsec-api</artifactId>
-        <version>5.1.2</version>
-    </dependency>
-    <dependency>
-        <groupId>org.opensaml</groupId>
-        <artifactId>opensaml-xmlsec-impl</artifactId>
-        <version>5.1.2</version>
-    </dependency>
-    <dependency>
-        <groupId>org.opensaml</groupId>
-        <artifactId>opensaml-security-api</artifactId>
-        <version>5.1.2</version>
-    </dependency>
-    ```
+- **Note:** The implementation uses Jackson ObjectMapper for JSONB serialization. This is injected via `@Inject ObjectMapper objectMapper` and used in both `updateSsoConfig()` and `updateBranding()` methods with proper exception handling for JsonProcessingException.
 
-*   **🔧 REQUIRED ACTION:** Add the OpenSAML dependencies to pom.xml, then run `mvn clean compile` to verify the code compiles successfully.
+- **Note:** Domain validation is implemented via the private helper method `extractEmailDomain(String email)` which splits on '@' and returns the domain part. This is used in `createOrganization()` to validate the owner's email domain matches the organization domain.
 
-*   **✅ VERIFICATION:** After adding dependencies, you should:
-    1. Run `mvn clean compile` - should succeed without compilation errors
-    2. Run unit tests if they exist - verify OIDC and SAML2 flows work
-    3. Update the task status to `"done": true` in the tasks JSON file
+- **Note:** The "last admin protection" in `removeMember()` uses a count query to ensure at least one admin remains before allowing deletion. This is a solid defensive implementation preventing organization lockout.
 
-*   **📝 ACCEPTANCE CRITERIA NOTES:**
-    - "OIDC authentication flow completes with test IdP" - Implementation complete, but needs integration testing (I7.T7)
-    - "SAML2 authentication flow completes" - Implementation complete, needs integration testing
-    - "User attributes correctly mapped" - Implementation complete with attribute mapping support
-    - "Organization-specific SSO config loaded from database" - Implementation complete via JSON deserialization
-    - "Logout endpoint invalidates SSO session" - Basic implementations present for both protocols
-    - "Certificate validation works for SAML2" - Complete with OpenSAML SignatureValidator
+- **Note:** The service follows reactive patterns consistently - all public methods return `Uni<>` for single results or `Multi<>` for streams. Methods use `@WithTransaction` for transactional integrity.
 
-*   **⚙️ CONFIGURATION NOTES:**
-    - SSO configuration in application.properties is already present with placeholders
-    - SAML2 SP metadata endpoints configured (ACS URL, SLO URL, Entity ID)
-    - Clock skew tolerance set to 5 minutes (300 seconds)
-    - OIDC connection timeout set to 10 seconds
+- **Warning:** The task description mentions "soft-deletes membership" but the implementation uses **hard delete** via `orgMemberRepository.delete(member)`. This is likely correct since the OrgMember entity does not have a `deleted_at` field. The task may have outdated information.
 
-*   **🔐 SECURITY IMPLEMENTATION:**
-    - OIDC: JWT signature validation via SmallRye JWT with automatic JWKS fetching
-    - SAML2: XML signature validation using IdP X.509 certificate with OpenSAML SignatureValidator
-    - Certificate validation includes expiry check (X509Certificate.checkValidity())
-    - Assertion condition validation with configurable clock skew tolerance
+- **Tip:** Since task I7.T2 is already complete, you should update the task JSON to mark `"done": true`. The next actionable task will likely be I7.T3 (AuditLogService) or I7.T4 (SSO Authentication Flow).
 
-*   **🎯 NEXT STEPS:** Since implementation is complete, the focus should be on:
-    1. Adding missing Maven dependencies
-    2. Verifying compilation succeeds
-    3. Writing integration tests (covered in I7.T7)
-    4. Updating task completion status
+### Verification Checklist
 
----
+Before marking this task as complete, verify the following acceptance criteria are met:
 
-## Summary
+1. ✅ Creating organization validates domain (user email matches domain) - **VERIFIED** in line 77-85 of OrganizationService.java
+2. ✅ SSO config persists to Organization.sso_config correctly - **VERIFIED** in updateSsoConfig() method with Jackson serialization
+3. ✅ Adding member creates OrgMember record with role - **VERIFIED** in addMember() method lines 164-209
+4. ✅ Removing member deletes membership - **VERIFIED** in removeMember() method (uses hard delete, not soft delete)
+5. ✅ Branding config JSON serializes correctly - **VERIFIED** in updateBranding() method lines 274-300
+6. ✅ Non-Enterprise tier cannot create organization - **VERIFIED** via FeatureGate enforcement on line 74
 
-**This task (I7.T1) is essentially COMPLETE.** All required code files exist with comprehensive implementations. The ONLY missing piece is the OpenSAML Maven dependencies in pom.xml. Your action should be:
+### Final Recommendation
 
-1. **Add OpenSAML 5 dependencies to pom.xml** (6 dependencies listed above)
-2. **Run `mvn clean compile`** to verify compilation
-3. **Optionally run any existing unit tests** to verify functionality
-4. **Mark task as done** by updating the task data
+**DO NOT WRITE NEW CODE.** Instead:
 
-The implementations are production-ready and follow all architectural requirements from the blueprint. The code quality is excellent with comprehensive JavaDoc, error handling, and logging.
+1. Review the existing OrganizationService.java implementation (344 lines)
+2. Verify it meets all 6 acceptance criteria (checklist above)
+3. Check that all dependencies are properly injected (OrganizationRepository, OrgMemberRepository, UserRepository, FeatureGate, ObjectMapper)
+4. Confirm the reactive patterns are correct (Uni/Multi return types)
+5. Mark task I7.T2 as `"done": true` in the task tracking system
+6. Inform the user that this task was already completed in a previous session
+
+The implementation is production-ready and follows all architectural patterns correctly.

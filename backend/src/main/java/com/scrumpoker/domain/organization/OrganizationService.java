@@ -29,18 +29,33 @@ import java.util.UUID;
 @ApplicationScoped
 public class OrganizationService {
 
+    /**
+     * Repository for organization persistence operations.
+     */
     @Inject
     private OrganizationRepository organizationRepository;
 
+    /**
+     * Repository for organization member persistence operations.
+     */
     @Inject
     private OrgMemberRepository orgMemberRepository;
 
+    /**
+     * Repository for user persistence operations.
+     */
     @Inject
     private UserRepository userRepository;
 
+    /**
+     * Service for tier-based feature access control.
+     */
     @Inject
     private FeatureGate featureGate;
 
+    /**
+     * JSON serialization/deserialization mapper.
+     */
     @Inject
     private ObjectMapper objectMapper;
 
@@ -56,11 +71,14 @@ public class OrganizationService {
      * </p>
      *
      * @param name The organization name
-     * @param domain The organization email domain (e.g., "company.com")
+     * @param domain The organization email domain
+     *               (e.g., "company.com")
      * @param ownerId The user ID of the organization owner
      * @return Uni containing the created Organization
-     * @throws IllegalArgumentException if user not found or domain doesn't match
-     * @throws com.scrumpoker.security.FeatureNotAvailableException if user lacks Enterprise tier
+     * @throws IllegalArgumentException if user not found or domain
+     *         doesn't match
+     * @throws com.scrumpoker.security.FeatureNotAvailableException if
+     *         user lacks Enterprise tier
      */
     @WithTransaction
     public Uni<Organization> createOrganization(final String name,
@@ -76,11 +94,12 @@ public class OrganizationService {
                 // Extract email domain from user's email
                 final String userEmailDomain = extractEmailDomain(user.email);
 
-                // Validate that user's email domain matches organization domain
+                // Validate user's email domain matches organization domain
                 if (!userEmailDomain.equalsIgnoreCase(domain)) {
                     throw new IllegalArgumentException(
-                        "User email domain does not match organization domain. " +
-                        "Expected: " + domain + ", but user has: " + userEmailDomain
+                        "User email domain does not match organization "
+                        + "domain. Expected: " + domain
+                        + ", but user has: " + userEmailDomain
                     );
                 }
             })
@@ -125,22 +144,26 @@ public class OrganizationService {
      * @throws RuntimeException if JSON serialization fails
      */
     @WithTransaction
-    public Uni<Organization> updateSsoConfig(final UUID orgId,
-                                              final SsoConfig ssoConfig) {
+    public Uni<Organization> updateSsoConfig(
+            final UUID orgId,
+            final SsoConfig ssoConfig) {
         return organizationRepository.findById(orgId)
             .onItem().ifNull().failWith(() ->
-                new IllegalArgumentException("Organization not found: " + orgId))
+                new IllegalArgumentException(
+                    "Organization not found: " + orgId))
             .flatMap(organization -> {
                 try {
                     // Serialize SsoConfig to JSON string
-                    final String ssoConfigJson = objectMapper.writeValueAsString(ssoConfig);
+                    final String ssoConfigJson =
+                        objectMapper.writeValueAsString(ssoConfig);
                     organization.ssoConfig = ssoConfigJson;
 
                     // Persist updated organization
                     return organizationRepository.persist(organization);
                 } catch (JsonProcessingException e) {
                     return Uni.createFrom().failure(
-                        new RuntimeException("Failed to serialize SSO config to JSON", e)
+                        new RuntimeException(
+                            "Failed to serialize SSO config to JSON", e)
                     );
                 }
             });
@@ -165,9 +188,11 @@ public class OrganizationService {
                                      final UUID userId,
                                      final OrgRole role) {
         // Validate organization exists
-        final Uni<Organization> orgUni = organizationRepository.findById(orgId)
-            .onItem().ifNull().failWith(() ->
-                new IllegalArgumentException("Organization not found: " + orgId));
+        final Uni<Organization> orgUni =
+            organizationRepository.findById(orgId)
+                .onItem().ifNull().failWith(() ->
+                    new IllegalArgumentException(
+                        "Organization not found: " + orgId));
 
         // Validate user exists
         final Uni<User> userUni = userRepository.findById(userId)
@@ -235,15 +260,16 @@ public class OrganizationService {
                 // If member is ADMIN, check if they're the last admin
                 if (member.role == OrgRole.ADMIN) {
                     return orgMemberRepository
-                        .count("id.orgId = ?1 and role = ?2", orgId, OrgRole.ADMIN)
+                        .count("id.orgId = ?1 and role = ?2",
+                            orgId, OrgRole.ADMIN)
                         .flatMap(adminCount -> {
                             if (adminCount <= 1) {
-                                return Uni.createFrom().failure(
-                                    new IllegalStateException(
-                                        "Cannot remove the last admin from organization"
-                                    )
-                                );
-                            }
+                            return Uni.createFrom().failure(
+                                new IllegalStateException(
+                                    "Cannot remove the last admin from "
+                                    + "organization")
+                            );
+                        }
                             // Safe to delete - more admins remain
                             return orgMemberRepository.delete(member);
                         });
@@ -271,29 +297,34 @@ public class OrganizationService {
      * @throws RuntimeException if JSON serialization fails
      */
     @WithTransaction
-    public Uni<Organization> updateBranding(final UUID orgId,
-                                             final String logoUrl,
-                                             final String primaryColor,
-                                             final String secondaryColor) {
+    public Uni<Organization> updateBranding(
+            final UUID orgId,
+            final String logoUrl,
+            final String primaryColor,
+            final String secondaryColor) {
         return organizationRepository.findById(orgId)
             .onItem().ifNull().failWith(() ->
-                new IllegalArgumentException("Organization not found: " + orgId))
+                new IllegalArgumentException(
+                    "Organization not found: " + orgId))
             .flatMap(organization -> {
                 try {
                     // Create branding config
-                    final BrandingConfig brandingConfig = new BrandingConfig(
-                        logoUrl, primaryColor, secondaryColor
-                    );
+                    final BrandingConfig brandingConfig =
+                        new BrandingConfig(
+                            logoUrl, primaryColor, secondaryColor);
 
                     // Serialize to JSON string
-                    final String brandingJson = objectMapper.writeValueAsString(brandingConfig);
+                    final String brandingJson =
+                        objectMapper.writeValueAsString(brandingConfig);
                     organization.branding = brandingJson;
 
                     // Persist updated organization
                     return organizationRepository.persist(organization);
                 } catch (JsonProcessingException e) {
                     return Uni.createFrom().failure(
-                        new RuntimeException("Failed to serialize branding config to JSON", e)
+                        new RuntimeException(
+                            "Failed to serialize branding config to JSON",
+                            e)
                     );
                 }
             });
@@ -317,7 +348,8 @@ public class OrganizationService {
      */
     public Multi<Organization> getUserOrganizations(final UUID userId) {
         return orgMemberRepository.findByUserId(userId)
-            .onItem().transformToMulti(members -> Multi.createFrom().iterable(members))
+            .onItem().transformToMulti(members ->
+                Multi.createFrom().iterable(members))
             .flatMap(member ->
                 organizationRepository.findById(member.id.orgId)
                     .toMulti()
@@ -336,7 +368,8 @@ public class OrganizationService {
      */
     private String extractEmailDomain(final String email) {
         if (email == null || !email.contains("@")) {
-            throw new IllegalArgumentException("Invalid email format: " + email);
+            throw new IllegalArgumentException(
+                "Invalid email format: " + email);
         }
         final int atIndex = email.lastIndexOf('@');
         return email.substring(atIndex + 1);
