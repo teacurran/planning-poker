@@ -10,28 +10,24 @@ This is the full specification of the task you must complete.
 
 ```json
 {
-  "task_id": "I5.T6",
+  "task_id": "I5.T7",
   "iteration_id": "I5",
   "iteration_goal": "Implement Stripe subscription billing, tier enforcement (Free/Pro/Pro+/Enterprise), payment flows, webhook handling for subscription lifecycle events, and frontend upgrade UI.",
-  "description": "Implement React components for subscription management. `PricingPage`: display tier comparison table (Free, Pro, Pro+, Enterprise), feature lists, pricing, \"Upgrade\" buttons calling checkout API. `UpgradeModal`: modal prompting user to upgrade when hitting tier limit (e.g., trying to create invite-only room as Free user), displays tier benefits, \"Upgrade Now\" button. `SubscriptionSettingsPage`: show current subscription tier, billing status, \"Cancel Subscription\" button, payment history table. Integrate with subscription API hooks (`useSubscription`, `useCreateCheckout`, `useCancelSubscription`).",
-  "agent_type_hint": "FrontendAgent",
-  "inputs": "Subscription tier features from product spec, OpenAPI spec for subscription endpoints, Stripe checkout flow",
+  "description": "Create comprehensive unit tests for `BillingService` using mocked `SubscriptionRepository` and `StripeAdapter`. Test scenarios: create subscription (verify Stripe called, entity persisted), upgrade tier (verify tier transition, Stripe update called), cancel subscription (verify `canceled_at` set), sync subscription status (verify entity updated from webhook event). Test edge cases: duplicate subscription creation, invalid tier transitions, canceled subscription upgrades.",
+  "agent_type_hint": "BackendAgent",
+  "inputs": "BillingService from I5.T2, Mockito testing patterns",
   "input_files": [
-    "api/openapi.yaml"
+    "backend/src/main/java/com/scrumpoker/domain/billing/BillingService.java"
   ],
   "target_files": [
-    "frontend/src/pages/PricingPage.tsx",
-    "frontend/src/components/subscription/UpgradeModal.tsx",
-    "frontend/src/pages/SubscriptionSettingsPage.tsx",
-    "frontend/src/components/subscription/TierComparisonTable.tsx",
-    "frontend/src/services/subscriptionApi.ts"
+    "backend/src/test/java/com/scrumpoker/domain/billing/BillingServiceTest.java"
   ],
-  "deliverables": "PricingPage with responsive tier comparison table, Upgrade buttons initiating Stripe checkout (redirect to Stripe), UpgradeModal triggered on feature gate 403 errors, SubscriptionSettingsPage showing current tier, status, cancel button, Payment history table (invoices, dates, amounts), React Query hooks for subscription API calls",
-  "acceptance_criteria": "PricingPage displays all tiers with features, Clicking \"Upgrade\" button calls checkout API and redirects to Stripe, Stripe checkout completes, user returned to app with success message, UpgradeModal appears when 403 FeatureNotAvailable error, SubscriptionSettingsPage shows correct tier badge, Cancel subscription button triggers confirmation modal, then API call, Payment history table lists past invoices",
+  "deliverables": "BillingServiceTest with 15+ test methods, Tests for happy paths (create, upgrade, cancel), Tests for edge cases (duplicate creation, invalid transitions), Mocked StripeAdapter verifying correct Stripe calls, AssertJ assertions for entity state",
+  "acceptance_criteria": "`mvn test` runs billing service tests successfully, Test coverage >90% for BillingService, Subscription creation test verifies Stripe customer created, Tier upgrade test verifies Stripe subscription updated, Cancel test verifies `canceled_at` timestamp set, Invalid transition test throws exception",
   "dependencies": [
-    "I5.T5"
+    "I5.T2"
   ],
-  "parallelizable": false,
+  "parallelizable": true,
   "done": false
 }
 ```
@@ -52,75 +48,37 @@ The following are the relevant sections from the architecture and plan documents
 - **Billing Dashboard:** Subscription status, payment history, plan management
 ```
 
-### Context: subscription-tier-features (from architecture spec)
+### Context: security-nfrs (from 01_Context_and_Drivers.md)
 
-The architecture specifies four subscription tiers with distinct feature sets:
-
-**FREE Tier:**
-- Basic planning poker functionality
-- Public rooms only
-- Basic session summaries
-- 30 days session history
-- Banner ads
-
-**PRO Tier ($10/month):**
-- All Free features
-- Ad-free experience
-- Advanced reports with round-level detail
-- User consistency metrics
-- CSV/JSON/PDF export
-- 90 days session history
-
-**PRO_PLUS Tier ($30/month):**
-- All Pro features
-- Invite-only rooms
-- Enhanced privacy controls
-- Priority support
-
-**ENTERPRISE Tier (Contact Sales):**
-- All Pro Plus features
-- Organization management
-- SSO integration (OIDC/SAML2)
-- Audit logging
-- Organization-wide analytics
-- Organization-restricted rooms
-- Unlimited session history
-- Dedicated support
-
-### Context: openapi-subscription-endpoints (from api/openapi.yaml)
-
-```yaml
-# GET /api/v1/subscriptions/{userId}
-# Returns current subscription tier, billing status, and feature limits
-# Response: SubscriptionDTO with tier, status, dates
-
-# POST /api/v1/subscriptions/checkout
-# Creates Stripe checkout session for upgrade
-# Request: { tier: 'PRO' | 'PRO_PLUS', successUrl, cancelUrl }
-# Response: { sessionId, checkoutUrl }
-# Client should redirect to checkoutUrl
-
-# POST /api/v1/subscriptions/{subscriptionId}/cancel
-# Cancels subscription at end of billing period
-# Response: Updated SubscriptionDTO with canceledAt timestamp
-
-# GET /api/v1/billing/invoices?page=0&size=20
-# Returns paginated payment history
-# Response: { invoices: PaymentHistoryDTO[], page, size, totalElements, totalPages }
+```markdown
+#### Security
+- **Transport Security:** HTTPS/TLS 1.3 for all communications, WSS for WebSocket connections
+- **Authentication:** JWT tokens with 1-hour expiration, refresh token rotation
+- **Authorization:** Role-based access control (RBAC) for organization features
+- **Data Protection:** Encryption at rest for sensitive data (PII, payment info), GDPR compliance
+- **Session Isolation:** Anonymous session data segregated by room ID, automatic cleanup after 24 hours
 ```
 
-### Context: stripe-checkout-flow (from architecture blueprint)
+### Context: maintainability-nfrs (from 01_Context_and_Drivers.md)
 
-The Stripe integration follows this flow:
+```markdown
+#### Maintainability
+- **Code Organization:** Domain-driven design with clear bounded contexts
+- **API Versioning:** Semantic versioning for REST APIs, backward-compatible WebSocket protocol
+- **Logging:** Structured JSON logging with correlation IDs across distributed traces
+- **Monitoring:** Prometheus metrics, Grafana dashboards, alerting for critical failures
+```
 
-1. User clicks "Upgrade" button on PricingPage or UpgradeModal
-2. Frontend calls `POST /api/v1/subscriptions/checkout` with tier and redirect URLs
-3. Backend creates Stripe Checkout Session and returns `checkoutUrl`
-4. Frontend redirects user to Stripe-hosted checkout page (window.location.href = checkoutUrl)
-5. User completes payment on Stripe
-6. Stripe redirects back to `successUrl` (e.g., /billing/success?tier=PRO)
-7. Stripe webhook notifies backend of subscription creation (handled in I5.T3)
-8. Frontend should refresh subscription data on success page
+### Context: technology-constraints (from 01_Context_and_Drivers.md)
+
+```markdown
+#### Technology Constraints
+- **Backend Framework:** Quarkus with Hibernate Reactive (specified requirement)
+- **Database:** PostgreSQL for relational data integrity and JSONB support
+- **Cache/Message Bus:** Redis for session state distribution and Pub/Sub messaging
+- **Payment Provider:** Stripe for subscription billing and payment processing
+- **Containerization:** Docker containers orchestrated via Kubernetes
+```
 
 ---
 
@@ -130,180 +88,86 @@ The following analysis is based on my direct review of the current codebase. Use
 
 ### Relevant Existing Code
 
-*   **File:** `frontend/src/pages/PricingPage.tsx`
-    *   **Summary:** This file ALREADY EXISTS and implements the full PricingPage component with tier comparison table, hero section, and FAQ section. It integrates with the subscription API hooks.
-    *   **Recommendation:** This file is COMPLETE and functional. You DO NOT need to modify it unless you find specific bugs or requested enhancements. The component already handles upgrade clicks, Stripe redirects, Enterprise contact sales, and authentication checks.
-    *   **Key Features Already Implemented:**
-        - Hero section with gradient background
-        - TierComparisonTable integration
-        - FAQ section with 4 questions
-        - Upgrade flow with authentication checks
-        - Enterprise tier → email contact sales
-        - Stripe checkout redirect on success
+*   **File:** `backend/src/main/java/com/scrumpoker/domain/billing/BillingService.java`
+    *   **Summary:** This is the primary service class containing all subscription lifecycle management logic. It has 5 public methods: `createSubscription()`, `upgradeSubscription()`, `cancelSubscription()`, `getActiveSubscription()`, and `syncSubscriptionStatus()`. The class uses reactive programming with Mutiny Uni types and includes comprehensive Javadoc documentation.
+    *   **Recommendation:** You MUST create unit tests covering ALL 5 public methods. Each method has multiple execution paths that need testing (happy path and error cases).
+    *   **Key Implementation Details:**
+        - All methods are `@Transactional` and return reactive `Uni<>` types
+        - Uses `@Inject` for `StripeAdapter`, `SubscriptionRepository`, and `UserRepository`
+        - Has helper methods: `updateUserTier()` (private), `isValidUpgrade()` (private) that need indirect testing
+        - Validates tier transitions: FREE→PRO/PRO_PLUS/ENTERPRISE, PRO→PRO_PLUS/ENTERPRISE, PRO_PLUS→ENTERPRISE
+        - Default trial period is 30 days (constant: `DEFAULT_TRIAL_PERIOD_DAYS = 30`)
+        - Creates placeholder Stripe subscription ID "pending-checkout-{uuid}" during initial creation
 
-*   **File:** `frontend/src/components/subscription/UpgradeModal.tsx`
-    *   **Summary:** This file ALREADY EXISTS and implements the complete UpgradeModal component that appears when users hit tier limits (403 FeatureNotAvailable errors).
-    *   **Recommendation:** This component is COMPLETE and ready to use. It displays tier benefits, pricing, upgrade/contact sales buttons, and integrates with the checkout API.
-    *   **Key Features Already Implemented:**
-        - Headless UI Dialog with animations
-        - Tier benefits list (first 5 features)
-        - Pricing display (or "Contact Sales" for Enterprise)
-        - Upgrade button triggering checkout API
-        - "View All Plans" button navigating to /pricing
-        - Loading states during checkout creation
-        - Current tier display
+*   **File:** `backend/src/main/java/com/scrumpoker/repository/SubscriptionRepository.java`
+    *   **Summary:** Reactive Panache repository with custom finder methods for subscription queries. Extends `PanacheRepositoryBase<Subscription, UUID>`.
+    *   **Recommendation:** You MUST mock this repository in your tests using Mockito. Key methods to mock: `findActiveByEntityIdAndType()`, `findByStripeSubscriptionId()`, `persist()`.
 
-*   **File:** `frontend/src/pages/SubscriptionSettingsPage.tsx`
-    *   **Summary:** This file ALREADY EXISTS and implements the complete subscription management page with current plan display, billing period info, cancel subscription functionality, and payment history table.
-    *   **Recommendation:** This component is COMPLETE and production-ready. It includes sophisticated features like cancellation confirmation modals, pagination, and proper date formatting.
-    *   **Key Features Already Implemented:**
-        - Current plan card with tier badge and status badge
-        - Billing period display (renewal date or cancellation end date)
-        - Cancel subscription button with confirmation modal
-        - Payment history table component with pagination
-        - Invoice status badges (PAID, PENDING, FAILED)
-        - Stripe invoice links
-        - Empty state and loading states
-        - Responsive design for mobile/tablet/desktop
+*   **File:** `backend/src/main/java/com/scrumpoker/integration/stripe/StripeAdapter.java`
+    *   **Summary:** Stripe SDK wrapper with synchronous methods for checkout session creation, customer creation, subscription retrieval, cancellation, and updates. All methods throw `StripeException` on failure.
+    *   **Recommendation:** You MUST mock this adapter and verify the correct Stripe methods are called with correct parameters. Key methods to mock: `createCustomer()`, `updateSubscription()`, `cancelSubscription()`.
 
-*   **File:** `frontend/src/components/subscription/TierComparisonTable.tsx`
-    *   **Summary:** This file ALREADY EXISTS and implements a responsive tier comparison grid with individual TierCard components.
-    *   **Recommendation:** This component is COMPLETE. It displays all 4 tiers (FREE, PRO, PRO_PLUS, ENTERPRISE) with features, pricing, badges, and upgrade buttons.
-    *   **Key Features Already Implemented:**
-        - Responsive grid (1 col mobile, 2 col tablet, 4 col desktop)
-        - TierCard component with recommended badge, current plan badge
-        - Feature lists with checkmark icons
-        - Pricing display with monthly label
-        - CTA buttons with different styles for current/recommended tiers
-        - Loading states disabling buttons during checkout
-
-*   **File:** `frontend/src/services/subscriptionApi.ts`
-    *   **Summary:** This file ALREADY EXISTS and provides React Query hooks for all subscription operations.
-    *   **Recommendation:** This service layer is COMPLETE with comprehensive documentation and proper cache invalidation.
-    *   **Hooks Available:**
-        - `useSubscription(userId)` - Fetch current subscription status
-        - `useInvoices(page, size)` - Fetch payment history with pagination
-        - `useCreateCheckout()` - Mutation hook for creating Stripe checkout sessions
-        - `useCancelSubscription()` - Mutation hook for canceling subscriptions
-    *   **Features Already Implemented:**
-        - Query key factories for cache management
-        - 5-minute stale time for subscription data
-        - Automatic cache invalidation after mutations
-        - Error handling and logging
-        - TypeScript types for all DTOs
-        - JSDoc documentation with examples
-
-*   **File:** `frontend/src/utils/subscriptionUtils.ts`
-    *   **Summary:** Comprehensive utility functions for subscription display, formatting, and tier comparison.
-    *   **Recommendation:** You MUST import and use these utilities for consistent UI display throughout the application.
-    *   **Key Utilities:**
-        - `TIER_FEATURES` - Complete metadata for all 4 tiers (name, price, description, features, recommended flag)
-        - `getTierBadgeClasses(tier)` - Returns Tailwind classes for tier badges
-        - `formatTierName(tier)` - Converts enum to display name
-        - `formatPrice(cents)` - Formats cents to USD currency string
-        - `formatSubscriptionStatus(status)` - Display labels for status
-        - `getStatusBadgeClasses(status)` - Tailwind classes for status badges
-        - `isTierHigherThan(tier1, tier2)` - Tier comparison logic
-        - `getNextTier(currentTier)` - Get next tier in hierarchy
-        - `getAllTiers()` - Returns ordered list of all tiers
-
-*   **File:** `backend/src/main/java/com/scrumpoker/api/rest/SubscriptionController.java`
-    *   **Summary:** Backend REST controller implementing all subscription endpoints per OpenAPI spec.
-    *   **Recommendation:** This is your integration point. The frontend components rely on these endpoints being available and functional.
-    *   **Endpoints Available:**
-        - `GET /api/v1/subscriptions/{userId}` - Returns SubscriptionDTO or FREE tier default
-        - `POST /api/v1/subscriptions/checkout` - Creates Stripe checkout session
-        - `POST /api/v1/subscriptions/{subscriptionId}/cancel` - Cancels subscription
-        - `GET /api/v1/billing/invoices?page=0&size=20` - Returns paginated invoice list
-    *   **Note:** Controller has TODO comments about JWT authentication (to be implemented in Iteration 3), currently uses placeholder userId.
+*   **File:** `backend/src/test/java/com/scrumpoker/domain/room/RoomServiceTest.java`
+    *   **Summary:** Excellent reference implementation showing the project's unit testing patterns. Uses `@ExtendWith(MockitoExtension.class)`, `@Mock`, `@InjectMocks`, Mockito `when()`/`verify()`, and AssertJ assertions.
+    *   **Recommendation:** You SHOULD follow this exact testing pattern for BillingServiceTest. Note the test organization: grouped by method with descriptive test names following pattern `test{MethodName}_{Scenario}_{ExpectedOutcome}`.
+    *   **Key Patterns to Replicate:**
+        - Use `@BeforeEach` to set up common test fixtures (User objects, tier enums)
+        - Use `Uni.createFrom().item()` to wrap mock responses for reactive types
+        - Use `.await().indefinitely()` to block and extract reactive results
+        - Use `assertThatThrownBy()` for exception testing
+        - Group tests with comment headers like `// ===== Create Subscription Tests =====`
 
 ### Implementation Tips & Notes
 
-*   **CRITICAL FINDING:** ALL target files for this task ALREADY EXIST and are FULLY IMPLEMENTED. The PricingPage, UpgradeModal, SubscriptionSettingsPage, TierComparisonTable, and subscriptionApi service are complete, tested, and production-ready.
+*   **Tip:** The BillingService uses reactive Uni types throughout. When mocking repository responses, you MUST wrap return values in `Uni.createFrom().item(entity)` for successful cases and `Uni.createFrom().nullItem()` for not-found cases. For exceptions, use `Uni.createFrom().failure(exception)`.
+*   **Tip:** For testing Stripe adapter calls, you need to wrap blocking Stripe operations in `Uni.createFrom().item(() -> { ... })` since the actual BillingService does this. Your mocks should simulate this pattern.
+*   **Tip:** The validation logic `isValidUpgrade()` is private, but you can test it indirectly by calling `upgradeSubscription()` with invalid tier combinations and verifying it throws `IllegalArgumentException`.
+*   **Tip:** When testing `createSubscription()`, verify that the Subscription entity has `status = TRIALING`, `stripeSubscriptionId` starting with "pending-checkout-", and period dates set correctly (30 days for trial).
+*   **Tip:** The `syncSubscriptionStatus()` method has special logic for `CANCELED` status - it checks if the period has ended before downgrading the user to FREE tier. Test both cases: canceled but still active (period not ended) and canceled with period ended.
+*   **Note:** All subscription operations also update the User.subscriptionTier field via the private `updateUserTier()` method. Your tests MUST verify UserRepository is called to persist the updated user with the correct tier.
+*   **Note:** The project uses AssertJ for assertions (imported as `org.assertj.core.api.Assertions.assertThat`). Use this instead of JUnit's assertEquals for better error messages and fluent syntax.
+*   **Warning:** The BillingService wraps StripeAdapter exceptions (which are checked exceptions) in RuntimeException. Your tests should verify the correct exception type is thrown when Stripe operations fail.
+*   **Critical:** Test MUST verify mocked method calls using Mockito's `verify()`. For example, after testing `createSubscription()`, verify that `subscriptionRepository.persist()` was called exactly once with a Subscription entity matching expected values. Use `verify(mock, times(1)).method()` or `verify(mock, never()).method()` as appropriate.
 
-*   **Task Status Assessment:** Based on my code analysis, this task (I5.T6) appears to be ALREADY COMPLETE. All deliverables and acceptance criteria are met:
-    ✅ PricingPage displays all tiers with features
-    ✅ Upgrade buttons call checkout API and redirect to Stripe
-    ✅ UpgradeModal component exists and can be triggered on 403 errors
-    ✅ SubscriptionSettingsPage shows tier badge, status, cancel button
-    ✅ Payment history table displays invoices with pagination
-    ✅ React Query hooks implemented for all subscription operations
+### Required Test Coverage
 
-*   **Recommended Action:** You should:
-    1. Verify that all files compile without errors (`npm run build` in frontend directory)
-    2. Test the components in the browser to ensure they work correctly
-    3. Check if there are any missing integrations (e.g., UpgradeModal not being triggered on 403 errors in other components)
-    4. Review the code for any minor improvements or bug fixes
-    5. If everything is functional, mark the task as DONE in the task manifest
+Based on the acceptance criteria requiring >90% coverage and 15+ test methods, here's the minimum test suite structure you MUST implement:
 
-*   **Integration Points to Verify:**
-    - The UpgradeModal should be triggered when API calls return 403 errors with a specific error structure. Check that the API client (frontend/src/services/api.ts) properly detects and displays this modal.
-    - The BillingSuccessPage (referenced in successUrl) should exist and handle post-checkout success flow.
-    - Routing configuration should include /pricing, /billing/settings, /billing/success paths.
+**createSubscription() tests (5 tests minimum):**
+1. Valid subscription creation - verify Subscription entity persisted with correct fields (TRIALING status, pending-checkout ID, 30-day period)
+2. User not found - verify IllegalArgumentException thrown
+3. FREE tier requested - verify IllegalArgumentException thrown
+4. User already has active subscription - verify IllegalStateException thrown
+5. Repository persist failure - verify exception propagation
 
-*   **Component Import Patterns:** The codebase uses path aliases:
-    - `@/components/...` for components
-    - `@/services/...` for services
-    - `@/stores/...` for state management
-    - `@/types/...` for TypeScript types
-    - `@/utils/...` for utility functions
+**upgradeSubscription() tests (5 tests minimum):**
+1. Valid upgrade (e.g., PRO → PRO_PLUS) - verify tier updated in both Subscription and User, StripeAdapter.updateSubscription() called
+2. User not found - verify IllegalArgumentException thrown
+3. User has no active subscription - verify IllegalStateException thrown
+4. Invalid tier transition (downgrade or lateral) - verify IllegalArgumentException with message about downgrades not allowed
+5. StripeAdapter.updateSubscription() throws StripeException - verify RuntimeException thrown
 
-*   **Styling Conventions:**
-    - Tailwind CSS with dark mode support (dark: prefix)
-    - Consistent spacing using Tailwind's spacing scale
-    - Responsive breakpoints: sm (640px), md (768px), lg (1024px)
-    - Color scheme: Blue for primary actions, Green for success, Red for destructive actions
-    - All components support dark mode
+**cancelSubscription() tests (3 tests minimum):**
+1. Valid cancellation - verify canceledAt timestamp set, StripeAdapter.cancelSubscription() called, subscription persisted
+2. User not found - verify IllegalArgumentException thrown
+3. User has no subscription (idempotent case) - verify method returns successfully without error
 
-*   **Error Handling Pattern:**
-    - React Query mutations include onSuccess and onError callbacks
-    - User-facing errors displayed via browser alert() for now
-    - Console errors logged for debugging
-    - 403 errors from feature gates should trigger UpgradeModal (check if this is wired up in api.ts response interceptor)
+**syncSubscriptionStatus() tests (4 tests minimum):**
+1. Sync to ACTIVE status - verify Subscription.status updated and User.subscriptionTier updated to subscription tier
+2. Sync to CANCELED with period ended (currentPeriodEnd in past) - verify User.subscriptionTier downgraded to FREE
+3. Sync to CANCELED but period not ended (currentPeriodEnd in future) - verify User.subscriptionTier NOT changed, canceledAt set
+4. Unknown stripeSubscriptionId - verify method returns successfully without error (logs warning but doesn't fail)
 
-*   **Testing Considerations:**
-    - Components are designed to be testable with React Testing Library
-    - Mock data structures match backend DTOs exactly
-    - Loading states should be tested (isPending, isLoading flags)
-    - Error states should be tested (network failures, 403 errors, etc.)
+**getActiveSubscription() tests (1 test minimum):**
+1. Valid subscription retrieval - verify repository.findActiveByEntityIdAndType() called and subscription returned
 
-*   **Potential Enhancements (if needed):**
-    - Add toast notifications instead of browser alert() for better UX
-    - Add skeleton loaders during data fetching
-    - Add optimistic UI updates for better perceived performance
-    - Add analytics tracking for upgrade button clicks and checkout completions
-    - Add A/B testing hooks for pricing page variations
+This totals 18 test scenarios, exceeding the 15+ requirement and providing excellent coverage.
 
-*   **Security Notes:**
-    - Never store Stripe API keys in frontend code
-    - Checkout sessions are created server-side only
-    - Frontend only receives checkout URL from backend
-    - JWT tokens handled by API client interceptor (from I3.T6)
-    - Subscription cancellation requires authentication and ownership validation
+### Testing Anti-Patterns to AVOID
 
-*   **Performance Optimization:**
-    - React Query provides automatic caching (5-minute stale time)
-    - Pagination prevents loading large invoice lists
-    - Images/icons should be lazy loaded
-    - Code splitting for pricing page (if not already done)
-
----
-
-## Summary
-
-All files specified in this task have been implemented and are production-ready. Your primary responsibility is to:
-
-1. **Verify the implementation** - Run the frontend, test the flows, ensure no bugs
-2. **Check integration points** - Ensure UpgradeModal triggers on 403 errors, routing is configured
-3. **Minor improvements** - Address any small issues or enhancements discovered during testing
-4. **Mark task complete** - If everything works, update the task manifest to mark I5.T6 as done=true
-
-The codebase demonstrates high quality with:
-- Comprehensive TypeScript types
-- Excellent component composition and reusability
-- Proper separation of concerns (services, components, utilities)
-- Responsive design and dark mode support
-- Accessibility considerations (semantic HTML, ARIA labels)
-- Production-ready error handling and loading states
-
-Proceed with confidence that the foundation is solid and complete.
+*   ❌ DO NOT test private methods directly - test them through public method invocations
+*   ❌ DO NOT use real database or Stripe API - all dependencies must be mocked
+*   ❌ DO NOT forget to verify mock interactions - use `verify()` after every test
+*   ❌ DO NOT use `any()` matchers when you can verify specific values - use `eq()` or actual values
+*   ❌ DO NOT forget to test `.await().indefinitely()` to extract results from Uni
+*   ❌ DO NOT use assertTrue/assertEquals - use AssertJ's fluent assertions

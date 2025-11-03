@@ -102,7 +102,7 @@
     "acceptance_criteria": "`mvn test` runs billing service tests successfully, Test coverage >90% for BillingService, Subscription creation test verifies Stripe customer created, Tier upgrade test verifies Stripe subscription updated, Cancel test verifies `canceled_at` timestamp set, Invalid transition test throws exception",
     "dependencies": ["I5.T2"],
     "parallelizable": true,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I5.T8",
