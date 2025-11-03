@@ -10,24 +10,24 @@ This is the full specification of the task you must complete.
 
 ```json
 {
-  "task_id": "I6.T1",
+  "task_id": "I6.T2",
   "iteration_id": "I6",
   "iteration_goal": "Implement session history tracking, tier-based reporting (basic summaries for Free, detailed analytics for Pro/Enterprise), export functionality (CSV/PDF), and frontend reporting UI.",
-  "description": "Extend `VotingService` to persist session summary data. When round completes (reveal called), update SessionHistory record with round count, participants JSONB array, summary stats (total votes, consensus rate). Create `SessionHistoryService` for querying past sessions: `getUserSessions(userId, from, to)` (date range), `getSessionById(sessionId)`, `getRoomSessions(roomId)`. Aggregate statistics: total rounds, average consensus rate, most active participants. Use `SessionHistoryRepository`. Handle partitioned table queries (specify partition key in WHERE clause).",
+  "description": "Create `ReportingService` implementing tier-gated analytics. Methods: `getBasicSessionSummary(sessionId)` (Free tier: story count, consensus rate, average vote), `getDetailedSessionReport(sessionId)` (Pro tier: round-by-round breakdown, individual votes, user consistency metrics), `generateExport(sessionId, format)` (Pro tier: enqueue export job for CSV/PDF generation). Inject `FeatureGate` to enforce tier requirements. Query SessionHistory and Round/Vote entities. Calculate user consistency (standard deviation of user's votes across rounds). Return tier-appropriate DTOs.",
   "agent_type_hint": "BackendAgent",
-  "inputs": "SessionHistory entity from I1, Voting flow completion points, Partitioning strategy (monthly partitions)",
+  "inputs": "Reporting tier matrix from product spec (Free vs. Pro features), SessionHistoryService from I6.T1, FeatureGate from I5.T4",
   "input_files": [
-    "backend/src/main/java/com/scrumpoker/domain/room/SessionHistory.java",
-    "backend/src/main/java/com/scrumpoker/repository/SessionHistoryRepository.java",
-    "backend/src/main/java/com/scrumpoker/domain/room/VotingService.java"
+    "backend/src/main/java/com/scrumpoker/domain/reporting/SessionHistoryService.java",
+    "backend/src/main/java/com/scrumpoker/security/FeatureGate.java"
   ],
   "target_files": [
-    "backend/src/main/java/com/scrumpoker/domain/reporting/SessionHistoryService.java",
-    "backend/src/main/java/com/scrumpoker/domain/room/VotingService.java"
+    "backend/src/main/java/com/scrumpoker/domain/reporting/ReportingService.java",
+    "backend/src/main/java/com/scrumpoker/domain/reporting/SessionSummaryDTO.java",
+    "backend/src/main/java/com/scrumpoker/domain/reporting/DetailedSessionReportDTO.java"
   ],
-  "deliverables": "SessionHistoryService with query methods (getUserSessions, getSessionById, getRoomSessions), VotingService.revealRound extended to update SessionHistory summary, Session summary statistics (total rounds, consensus rate, participants), Partitioned table query optimization (partition pruning)",
-  "acceptance_criteria": "Completing round updates SessionHistory record with round count, getUserSessions returns user's past sessions within date range, Session statistics correctly aggregated (consensus rate calculation), Queries use partition pruning (verify EXPLAIN plan), SessionHistory JSONB fields (participants, summary_stats) populated correctly",
-  "dependencies": ["I4.T3"],
+  "deliverables": "ReportingService with tier-gated methods, Basic summary for Free tier (limited fields), Detailed report for Pro tier (round breakdown, individual votes), User consistency metrics (vote variance calculation), Export job enqueuing (Redis Stream message), FeatureGate enforcement (403 if Free tier requests detailed report)",
+  "acceptance_criteria": "getBasicSessionSummary returns story count, consensus rate, Free tier user cannot access detailed report (403 error), Pro tier user gets detailed report with round-by-round data, User consistency calculated correctly (standard deviation of votes), Export job enqueued to Redis Stream, Tier enforcement integrated via FeatureGate",
+  "dependencies": ["I6.T1", "I5.T4"],
   "parallelizable": false,
   "done": false
 }
@@ -39,56 +39,64 @@ This is the full specification of the task you must complete.
 
 The following are the relevant sections from the architecture and plan documents, which I found by analyzing the task description.
 
-### Context: data-model-overview-erd (from 03_System_Structure_and_Data.md)
-
-The data model follows a relational schema leveraging PostgreSQL's ACID properties for transactional consistency and JSONB columns for flexible configuration storage (room settings, deck definitions). The model is optimized for both transactional writes (vote casting, room creation) and analytical reads (session history, organizational reporting).
-
-**Design Principles:**
-1. **Normalized Core Entities:** Users, Rooms, Organizations follow 3NF to prevent update anomalies
-2. **Denormalized Read Models:** SessionSummary and VoteStatistics tables precompute aggregations for reporting performance
-3. **JSONB for Flexibility:** RoomConfig, DeckDefinition, UserPreferences stored as JSONB to support customization without schema migrations
-4. **Soft Deletes:** Critical entities (Users, Rooms) use `deleted_at` timestamp for audit trail and GDPR compliance
-5. **Partitioning Strategy:** SessionHistory and AuditLog partitioned by month for query performance and data lifecycle management
-
-**Key Entity: SessionHistory**
-
-| Entity | Purpose | Key Attributes |
-|--------|---------|----------------|
-| **SessionHistory** | Completed session record | `session_id` (PK), `room_id` (FK), `started_at` (PARTITION KEY), `ended_at`, `total_rounds`, `total_stories`, `participants` (JSONB array), `summary_stats` (JSONB) |
-
-**Database Indexing Strategy - High-Priority Indexes:**
-- `SessionHistory(started_at)` - Partition pruning for date-range queries
-- Composite indexes for efficient filtering
-
-**Partitioning:**
-- `SessionHistory` partitioned by `started_at` (monthly range partitions)
-- Automated partition creation via scheduled job or pg_partman extension
-
 ### Context: reporting-requirements (from 01_Context_and_Drivers.md)
 
-**Reporting Requirements**
+```markdown
+<!-- anchor: reporting-requirements -->
+#### Reporting Requirements
 - **Free Tier:** Basic session summaries (story count, consensus rate, average vote)
 - **Pro Tier:** Round-level detail, user consistency metrics, CSV/JSON/PDF export
 - **Enterprise Tier:** Organizational dashboards, team trends, SSO-filtered reports, audit logs
+```
 
-### Context: task-i6-t1 (from 02_Iteration_I6.md)
+### Context: performance-nfrs (from 01_Context_and_Drivers.md)
 
-**Task 6.1: Implement Session History Tracking**
+```markdown
+<!-- anchor: performance-nfrs -->
+#### Performance
+- **Latency:** <200ms round-trip time for WebSocket messages within region
+- **Throughput:** Support 500 concurrent sessions with 6,000 active WebSocket connections
+- **Response Time:** REST API endpoints respond within <500ms for p95
+- **Real-time Updates:** State synchronization across clients within 100ms
+```
 
-**Description:** Extend `VotingService` to persist session summary data. When round completes (reveal called), update SessionHistory record with round count, participants JSONB array, summary stats (total votes, consensus rate). Create `SessionHistoryService` for querying past sessions: `getUserSessions(userId, from, to)` (date range), `getSessionById(sessionId)`, `getRoomSessions(roomId)`. Aggregate statistics: total rounds, average consensus rate, most active participants. Use `SessionHistoryRepository`. Handle partitioned table queries (specify partition key in WHERE clause).
+### Context: task-i6-t2 (from 02_Iteration_I6.md)
 
-**Deliverables:**
-- SessionHistoryService with query methods (getUserSessions, getSessionById, getRoomSessions)
-- VotingService.revealRound extended to update SessionHistory summary
-- Session summary statistics (total rounds, consensus rate, participants)
-- Partitioned table query optimization (partition pruning)
-
-**Acceptance Criteria:**
-- Completing round updates SessionHistory record with round count
-- getUserSessions returns user's past sessions within date range
-- Session statistics correctly aggregated (consensus rate calculation)
-- Queries use partition pruning (verify EXPLAIN plan)
-- SessionHistory JSONB fields (participants, summary_stats) populated correctly
+```markdown
+<!-- anchor: task-i6-t2 -->
+*   **Task 6.2: Implement Reporting Service (Tier-Based Access)**
+    *   **Task ID:** `I6.T2`
+    *   **Description:** Create `ReportingService` implementing tier-gated analytics. Methods: `getBasicSessionSummary(sessionId)` (Free tier: story count, consensus rate, average vote), `getDetailedSessionReport(sessionId)` (Pro tier: round-by-round breakdown, individual votes, user consistency metrics), `generateExport(sessionId, format)` (Pro tier: enqueue export job for CSV/PDF generation). Inject `FeatureGate` to enforce tier requirements. Query SessionHistory and Round/Vote entities. Calculate user consistency (standard deviation of user's votes across rounds). Return tier-appropriate DTOs.
+    *   **Agent Type Hint:** `BackendAgent`
+    *   **Inputs:**
+        *   Reporting tier matrix from product spec (Free vs. Pro features)
+        *   SessionHistoryService from I6.T1
+        *   FeatureGate from I5.T4
+    *   **Input Files:**
+        *   Product specification (reporting feature comparison)
+        *   `backend/src/main/java/com/scrumpoker/domain/reporting/SessionHistoryService.java`
+        *   `backend/src/main/java/com/scrumpoker/security/FeatureGate.java`
+    *   **Target Files:**
+        *   `backend/src/main/java/com/scrumpoker/domain/reporting/ReportingService.java`
+        *   `backend/src/main/java/com/scrumpoker/domain/reporting/SessionSummaryDTO.java`
+        *   `backend/src/main/java/com/scrumpoker/domain/reporting/DetailedSessionReportDTO.java`
+    *   **Deliverables:**
+        *   ReportingService with tier-gated methods
+        *   Basic summary for Free tier (limited fields)
+        *   Detailed report for Pro tier (round breakdown, individual votes)
+        *   User consistency metrics (vote variance calculation)
+        *   Export job enqueuing (Redis Stream message)
+        *   FeatureGate enforcement (403 if Free tier requests detailed report)
+    *   **Acceptance Criteria:**
+        *   getBasicSessionSummary returns story count, consensus rate
+        *   Free tier user cannot access detailed report (403 error)
+        *   Pro tier user gets detailed report with round-by-round data
+        *   User consistency calculated correctly (standard deviation of votes)
+        *   Export job enqueued to Redis Stream
+        *   Tier enforcement integrated via FeatureGate
+    *   **Dependencies:** [I6.T1, I5.T4]
+    *   **Parallelizable:** No (depends on SessionHistoryService, FeatureGate)
+```
 
 ---
 
@@ -96,133 +104,219 @@ The data model follows a relational schema leveraging PostgreSQL's ACID properti
 
 The following analysis is based on my direct review of the current codebase. Use these notes and tips to guide your implementation.
 
-### ✅ CRITICAL FINDING: Task I6.T1 is ALREADY COMPLETE!
-
-**IMPORTANT:** After thorough investigation of the codebase, I have discovered that Task I6.T1 has **already been fully implemented**. Here's what exists:
-
 ### Relevant Existing Code
 
-#### ✅ VotingService - Session History Tracking ALREADY IMPLEMENTED
-
-*   **File:** `backend/src/main/java/com/scrumpoker/domain/room/VotingService.java`
-*   **Summary:** The VotingService already contains complete session history tracking implementation in the `revealRound` method (lines 170-413).
-*   **Implementation Details:**
-    *   Line 199: The `revealRound` method calls `updateSessionHistory(roomId, updatedRound, votes)` after persisting round statistics
-    *   Lines 378-413: The `updateSessionHistory` method implements the complete logic:
-        - Fetches all revealed rounds for the room
-        - Determines session boundaries (first revealed round's start time)
-        - Creates NEW SessionHistory record if none exists
-        - Updates EXISTING SessionHistory record for subsequent rounds
-        - Calculates participant summaries using `buildParticipantSummaries(allVotes)`
-        - Calculates summary statistics using `buildSummaryStats(allRevealedRounds, allVotes)`
-        - Serializes data to JSONB format using Jackson ObjectMapper
-    *   Lines 423-467: `createNewSessionHistory` - Creates new session with complete JSONB serialization
-    *   Lines 477-507: `updateExistingSessionHistory` - Updates session with recalculated statistics
-    *   Lines 541-562: `buildParticipantSummaries` - Aggregates vote counts per participant
-    *   Lines 571-601: `buildSummaryStats` - Calculates consensus rate, average estimation time, total votes
-*   **Recommendation:** **DO NOT MODIFY** VotingService unless there are bugs or missing features. The implementation is complete and production-ready.
-
-#### ✅ SessionHistoryService - ALREADY FULLY IMPLEMENTED
-
 *   **File:** `backend/src/main/java/com/scrumpoker/domain/reporting/SessionHistoryService.java`
-*   **Summary:** This service is ALREADY COMPLETE with all required query methods and aggregate statistics.
-*   **Implementation Details:**
-    *   Lines 64-85: `getUserSessions(userId, from, to)` - Queries user sessions with partition pruning (includes `id.startedAt` in WHERE clause)
-    *   Lines 98-108: `getSessionById(sessionId)` - Fetches session by ID (may scan multiple partitions)
-    *   Lines 121-132: `getSessionByIdAndDate(sessionId, startedAt)` - Most efficient query using composite key
-    *   Lines 142-151: `getRoomSessions(roomId)` - Fetches all sessions for a room
-    *   Lines 162-183: `getRoomSessionsByDateRange` - Partition-optimized room sessions query
-    *   Lines 201-290: `getUserStatistics` - Calculates aggregate statistics:
-        - Total sessions and rounds
-        - Average consensus rate (weighted)
-        - Most active participants (top 5)
-    *   Lines 298-352: `getRoomStatistics` - Calculates room-level aggregate statistics
-*   **Recommendation:** **This service is COMPLETE.** All deliverables are already implemented.
+    *   **Summary:** This service provides reactive methods for querying SessionHistory records. It already implements `getSessionById(UUID)`, `getSessionByIdAndDate(UUID, Instant)`, and `getUserSessions()`. It uses `ObjectMapper` to deserialize JSONB fields (participants, summaryStats) from SessionHistory entities.
+    *   **Recommendation:** You MUST import and inject this service into your ReportingService. Use `getSessionById(sessionId)` to retrieve the SessionHistory record needed for both basic and detailed reports. The service already handles partition-optimized queries and JSONB deserialization.
 
-#### ✅ SessionHistoryRepository - ALREADY COMPLETE
+*   **File:** `backend/src/main/java/com/scrumpoker/security/FeatureGate.java`
+    *   **Summary:** This service implements tier-based feature access control using a hierarchical tier system (FREE < PRO < PRO_PLUS < ENTERPRISE). It provides both boolean checks (`canAccessAdvancedReports(User)`) and imperative enforcement methods (`requireCanAccessAdvancedReports(User)`).
+    *   **Recommendation:** You MUST inject this service and use `featureGate.requireCanAccessAdvancedReports(user)` in your `getDetailedSessionReport()` method. This will throw a `FeatureNotAvailableException` automatically if a Free tier user attempts to access detailed reports, ensuring 403 enforcement. Also use `featureGate.canAccessAdvancedReports(user)` for the export job generation method.
 
-*   **File:** `backend/src/main/java/com/scrumpoker/repository/SessionHistoryRepository.java`
-*   **Summary:** Reactive Panache repository with all required query methods.
-*   **Implementation Details:**
-    *   Lines 27-29: `findByRoomId` - Finds all sessions for a room
-    *   Lines 39-42: `findByDateRange` - Partition-optimized date range query
-    *   Lines 50-52: `findBySessionId` - Finds by session UUID
-    *   Lines 61-64: `findRecentByRoomId` - Recent sessions with date threshold
-    *   Lines 72-74: `countByRoomId` - Counts total sessions for room
-    *   Lines 83-85: `findByMinRounds` - Analytics query for long sessions
-*   **Recommendation:** **This repository is COMPLETE.** No changes needed.
+*   **File:** `backend/src/main/java/com/scrumpoker/domain/room/Round.java`
+    *   **Summary:** This entity represents individual estimation rounds with fields: `roundId`, `room`, `roundNumber`, `storyTitle`, `startedAt`, `revealedAt`, `average`, `median`, `consensusReached`. The average is stored as `BigDecimal` with precision 5, scale 2. The median is stored as `String` (VARCHAR) to support non-numeric cards like "?", "∞", "☕".
+    *   **Recommendation:** You MUST query Round entities for the detailed report. Use `RoundRepository.findByRoomId(roomId)` to get all rounds for a session. Include these fields in your `DetailedSessionReportDTO`: roundNumber, storyTitle, average, median, consensusReached.
 
-#### ✅ Supporting POJOs - ALREADY COMPLETE
+*   **File:** `backend/src/main/java/com/scrumpoker/domain/room/Vote.java`
+    *   **Summary:** This entity stores individual votes with fields: `voteId`, `round`, `participant`, `cardValue`, `votedAt`. The `cardValue` is stored as a String to support non-numeric values. Votes are immutable after creation.
+    *   **Recommendation:** You MUST query Vote entities for detailed reports and user consistency calculations. Use `VoteRepository.findByRoundId(roundId)` to get all votes for each round. For user consistency metrics, you need to calculate the standard deviation of a participant's votes across all rounds in the session.
+
+*   **File:** `backend/src/main/java/com/scrumpoker/repository/RoundRepository.java`
+    *   **Summary:** Provides reactive Panache repository methods including `findByRoomId(roomId)`, `findRevealedByRoomId(roomId)`, `findConsensusRoundsByRoomId(roomId)`, `countByRoomId(roomId)`.
+    *   **Recommendation:** You SHOULD inject this repository and use `findByRoomId(roomId)` to retrieve all rounds for a given room (identified by the SessionHistory.room.roomId). This will give you the round-by-round data needed for detailed reports.
+
+*   **File:** `backend/src/main/java/com/scrumpoker/repository/VoteRepository.java`
+    *   **Summary:** Provides reactive methods including `findByRoundId(roundId)`, `findByParticipantId(participantId)`, `countByRoundId(roundId)`.
+    *   **Recommendation:** You MUST inject this repository and use `findByRoundId(roundId)` for each round to retrieve individual votes. This is essential for the detailed report's round-by-round breakdown and for calculating user consistency metrics.
+
+*   **File:** `backend/src/main/java/com/scrumpoker/event/RoomEventPublisher.java`
+    *   **Summary:** This service publishes events to Redis Pub/Sub channels using the pattern `room:{roomId}`. It uses `ReactiveRedisDataSource` and `ReactivePubSubCommands<String>` for publishing JSON-serialized events.
+    *   **Recommendation:** For export job enqueuing, you will need to use Redis Streams (NOT Pub/Sub). You should inject `ReactiveRedisDataSource` and use the `.stream()` method to get `ReactiveStreamCommands`, then use `.xadd()` to add messages to the `jobs:reports` stream. Pattern: `redisDataSource.stream(String.class).xadd(streamKey, Map.of(...))`
 
 *   **File:** `backend/src/main/java/com/scrumpoker/domain/reporting/SessionSummaryStats.java`
-    *   POJO for JSONB summary statistics
-    *   Fields: totalVotes, consensusRate, avgEstimationTimeSeconds, roundsWithConsensus
-    *   Properly annotated with Jackson @JsonProperty
+    *   **Summary:** This POJO is used for deserializing the JSONB `summary_stats` field from SessionHistory. It contains: `totalVotes`, `consensusRate`, `avgEstimationTimeSeconds`, `roundsWithConsensus`. Uses Jackson annotations like `@JsonProperty`.
+    *   **Recommendation:** You SHOULD reuse this class when deserializing SessionHistory.summaryStats in your basic summary report. The SessionHistoryService already shows how to deserialize this using `objectMapper.readValue(session.summaryStats, SessionSummaryStats.class)`.
+
 *   **File:** `backend/src/main/java/com/scrumpoker/domain/reporting/ParticipantSummary.java`
-    *   POJO for JSONB participant data
-    *   Fields: participantId, displayName, role, voteCount, isAuthenticated
-    *   Properly annotated with Jackson @JsonProperty
-
-#### ✅ Database Schema - Partitioned Table COMPLETE
-
-*   **File:** `backend/src/main/resources/db/migration/V2__create_partitions.sql`
-*   **Summary:** SessionHistory table is correctly configured with monthly range partitions.
-*   **Implementation Details:**
-    *   Lines 12-27: Creates 4 monthly partitions (Oct 2025 - Jan 2026)
-    *   Partitions on `started_at` column for optimal query performance
-    *   Includes comments and partition management notes
-    *   Provides examples for automated partition creation (pg_partman, scheduled jobs)
-*   **Recommendation:** Monitor partition creation for future months to avoid insert failures.
+    *   **Summary:** This POJO is used for deserializing the JSONB `participants` array field from SessionHistory. It likely contains participant metadata including vote counts.
+    *   **Recommendation:** You will need this class when deserializing SessionHistory.participants for both basic and detailed reports. Use it to extract participant information for the detailed report's round-by-round breakdown.
 
 ### Implementation Tips & Notes
 
-*   **CRITICAL:** Task I6.T1 deliverables are **100% COMPLETE**. All acceptance criteria are met:
-    1. ✅ Completing round updates SessionHistory record with round count - Implemented in VotingService.revealRound → updateSessionHistory
-    2. ✅ getUserSessions returns user's past sessions within date range - Implemented in SessionHistoryService.getUserSessions
-    3. ✅ Session statistics correctly aggregated - Implemented in buildSummaryStats (consensus rate, avg time, vote counts)
-    4. ✅ Partition pruning used - All queries include `id.startedAt` in WHERE clause for partition pruning
-    5. ✅ JSONB fields populated correctly - Both `participants` and `summary_stats` serialized using Jackson ObjectMapper
+*   **Tip: User Consistency Calculation** - The task requires calculating "user consistency (standard deviation of user's votes across rounds)". To implement this:
+    1. For each participant in the session, collect all their numeric votes across all rounds.
+    2. Filter out non-numeric votes (?, ∞, ☕) as they cannot be used in standard deviation calculation.
+    3. Parse the numeric card values to Double (e.g., "1" → 1.0, "13" → 13.0).
+    4. Calculate the standard deviation using the formula: σ = sqrt(Σ(xi - μ)² / n) where μ is the mean.
+    5. Return a Map or DTO with participantId/displayName → standard deviation.
+    6. Consider edge cases: participants who voted only once (σ = 0), participants who only voted non-numeric values (exclude or return null).
 
-*   **Partition Pruning Verification:** You can verify partition pruning by running EXPLAIN queries:
-    ```sql
-    EXPLAIN SELECT * FROM session_history
-    WHERE room_owner_id = ?
-      AND id.started_at >= '2025-11-01'
-      AND id.started_at <= '2025-11-30';
-    ```
-    You should see only the November partition scanned, not all partitions.
+*   **Tip: Redis Streams for Export Jobs** - The task specifies enqueuing export jobs to a Redis Stream named `jobs:reports`. The project currently uses Redis Pub/Sub (see RoomEventPublisher), but Streams are different. You need to:
+    1. Inject `@Inject ReactiveRedisDataSource redisDataSource;`
+    2. Get stream commands: `ReactiveStreamCommands<String> streamCommands = redisDataSource.stream(String.class);`
+    3. Create a message payload Map with fields like: `sessionId`, `format` (CSV or PDF), `userId`, `requestedAt`.
+    4. Use `streamCommands.xadd("jobs:reports", Map.of("sessionId", sessionId.toString(), "format", format, ...))` to enqueue.
+    5. Return the generated job ID (Redis Streams returns a message ID like "1234567890-0").
 
-*   **JSONB Serialization Pattern:** The codebase uses Jackson ObjectMapper for JSONB:
-    ```java
-    String participantsJson = objectMapper.writeValueAsString(participantSummaries);
-    List<ParticipantSummary> parts = objectMapper.readValue(
-        session.participants,
-        objectMapper.getTypeFactory().constructCollectionType(List.class, ParticipantSummary.class)
-    );
-    ```
+*   **Note: DTO Design Patterns** - Looking at existing DTOs in the project (e.g., `RoomDTO`, `SubscriptionDTO`), the codebase uses simple POJOs with public fields, Jackson annotations, and no-arg constructors. Your DTOs should follow this pattern:
+    - Use `@JsonProperty` annotations for field name mapping.
+    - Provide both a no-arg constructor (for Jackson) and an all-args constructor.
+    - Use immutable fields where possible (final if not requiring setter).
+    - For the detailed report, create nested DTOs or inner classes for round details (e.g., `RoundDetailDTO` containing roundNumber, storyTitle, votes list).
 
-*   **Session Boundary Detection:** VotingService uses the **first revealed round's start time** as the session start. This means a "session" is defined as continuous estimation activity in a room, tracked from the first reveal to the most recent reveal.
+*   **Note: Reactive Patterns** - All existing services in the project return `Uni<>` or `Multi<>` types from SmallRye Mutiny. Your ReportingService methods MUST return:
+    - `Uni<SessionSummaryDTO>` for `getBasicSessionSummary()`
+    - `Uni<DetailedSessionReportDTO>` for `getDetailedSessionReport()`
+    - `Uni<String>` for `generateExport()` (return job ID as String)
+    - Chain operations using `.onItem().transformToUni()` when you need to perform additional async queries.
 
-*   **Reactive Patterns:** All repository methods return `Uni<>` (single result) or `Multi<>` (stream). The codebase uses Mutiny for reactive programming. Always chain operations with `.onItem().transformToUni()` or `.onItem().call()`.
+*   **Warning: BigDecimal vs Double for Standard Deviation** - The Round entity uses `BigDecimal` for the average. However, for standard deviation calculations in Java, it's much easier to work with `double` or `Double`. You can convert card values to `Double` for the calculation, then wrap the result in `BigDecimal` for consistency with the rest of the codebase. Use `BigDecimal.valueOf(double)` for the conversion.
 
-*   **Error Handling:** VotingService catches and logs JSONB serialization errors gracefully, allowing the round reveal to succeed even if session history update fails.
+*   **Warning: Handle Non-Numeric Votes** - The codebase supports special card values like "?" (unknown), "∞" (infinity), "☕" (coffee break). When calculating numeric statistics (average, standard deviation):
+    1. Check if the card value is numeric using a try-catch with `Double.parseDouble(cardValue)`.
+    2. Skip non-numeric values in calculations.
+    3. Document this behavior in JavaDoc.
+    4. Consider adding a count of non-numeric votes to the detailed report for transparency.
 
-### Next Steps
+*   **Best Practice: Follow Existing Test Patterns** - I reviewed `BillingServiceTest.java` which shows the project's testing conventions:
+    - Use JUnit 5 with `@ExtendWith(MockitoExtension.class)`
+    - Mock dependencies with `@Mock` annotation
+    - Use `@InjectMocks` for the service under test
+    - Set up test data in `@BeforeEach` method
+    - Use AssertJ for assertions: `assertThat(...).isEqualTo(...)`
+    - Mock reactive returns with `Uni.createFrom().item(...)` or `Uni.createFrom().nullItem()`
+    - Use `when(...).thenReturn(...)` for stubbing
+    - Test both happy paths and exception scenarios (e.g., Free tier accessing Pro features)
 
-**RECOMMENDATION:** Mark task I6.T1 as COMPLETE in the task data. The implementation is production-ready and meets all acceptance criteria.
+*   **Critical: Tier Enforcement Exception Handling** - When `FeatureGate.requireCanAccessAdvancedReports(user)` throws `FeatureNotAvailableException`, this exception should propagate up to the REST controller layer where it will be caught by `FeatureNotAvailableExceptionMapper` (which I can see exists in the project). This mapper will convert it to a 403 HTTP response. DO NOT catch this exception in the service layer; let it bubble up.
 
-If you need to proceed to the next task (I6.T2), you should:
-1. Update the task JSON to mark I6.T1 as `"done": true`
-2. Review the next task requirements (I6.T2: Implement Reporting Service with tier-based access)
-3. Leverage the existing SessionHistoryService as the foundation for tier-gated reporting
+*   **Critical: Session vs Room Relationship** - The SessionHistory entity has a `room` field (ManyToOne relationship). To get rounds and votes for a session:
+    1. Retrieve the SessionHistory by sessionId using SessionHistoryService.
+    2. Get the roomId from `sessionHistory.room.roomId` (6-character nanoid).
+    3. Query rounds using `roundRepository.findByRoomId(roomId)`.
+    4. Note: This will return ALL rounds for that room, not just the ones in this specific session. You may need to filter by timestamp (rounds where `startedAt` is between `sessionHistory.id.startedAt` and `sessionHistory.endedAt` or the latest round timestamp).
 
-### Code Quality Notes
+*   **Performance Consideration:** The detailed report may require multiple database queries (SessionHistory, Rounds, Votes for each round, RoomParticipants). Use reactive composition with `Uni.combine()` or `Multi.toUni()` to execute queries efficiently. Avoid blocking operations or sequential queries where parallel queries are possible.
 
-*   The VotingService implementation follows defensive coding practices:
-    - Null checks on inputs
-    - Try-catch blocks around JSONB serialization
-    - Logging of errors without failing the main transaction
-    - Transaction boundaries with @WithTransaction
-*   The SessionHistoryService uses BigDecimal for precise decimal calculations with proper rounding modes
-*   All services are properly annotated with @ApplicationScoped for CDI injection
-*   Code includes comprehensive JavaDoc comments explaining business logic and implementation details
+---
+
+## 4. Export Job Data Structure Recommendation
+
+Based on the analysis, here's the recommended structure for the Redis Stream message:
+
+```java
+Map<String, String> jobData = Map.of(
+    "jobId", UUID.randomUUID().toString(),  // Unique job ID
+    "sessionId", sessionId.toString(),
+    "format", format,  // "CSV" or "PDF"
+    "userId", user.userId.toString(),
+    "requestedAt", Instant.now().toString()
+);
+```
+
+The worker (to be implemented in I6.T3) will consume from this stream using `XREAD` or `XREADGROUP` commands.
+
+---
+
+## 5. User Consistency Metric Formula
+
+Standard deviation calculation for user's votes:
+
+```
+For each participant P:
+1. Collect all numeric votes V = {v1, v2, ..., vn} from all rounds
+2. Calculate mean: μ = (v1 + v2 + ... + vn) / n
+3. Calculate variance: σ² = Σ((vi - μ)²) / n
+4. Calculate standard deviation: σ = sqrt(σ²)
+
+Lower σ indicates higher consistency (user votes similarly across rounds).
+Higher σ indicates lower consistency (user's votes vary widely).
+```
+
+A participant who always votes "5" would have σ = 0 (perfect consistency).
+A participant who votes {1, 3, 8, 13} would have σ ≈ 4.74 (low consistency).
+
+---
+
+## 6. DTO Structure Recommendations
+
+### SessionSummaryDTO (Free Tier)
+```java
+public class SessionSummaryDTO {
+    @JsonProperty("session_id")
+    private UUID sessionId;
+
+    @JsonProperty("room_title")
+    private String roomTitle;
+
+    @JsonProperty("started_at")
+    private Instant startedAt;
+
+    @JsonProperty("total_stories")
+    private Integer totalStories;
+
+    @JsonProperty("total_rounds")
+    private Integer totalRounds;
+
+    @JsonProperty("consensus_rate")
+    private BigDecimal consensusRate;  // 0.0 to 1.0
+
+    @JsonProperty("average_vote")
+    private BigDecimal averageVote;
+
+    @JsonProperty("participant_count")
+    private Integer participantCount;
+}
+```
+
+### DetailedSessionReportDTO (Pro Tier)
+```java
+public class DetailedSessionReportDTO {
+    // All fields from SessionSummaryDTO
+    @JsonProperty("session_id")
+    private UUID sessionId;
+
+    // ... other basic fields ...
+
+    // Detailed additions
+    @JsonProperty("rounds")
+    private List<RoundDetailDTO> rounds;
+
+    @JsonProperty("user_consistency")
+    private Map<String, BigDecimal> userConsistency;  // displayName -> std dev
+
+    public static class RoundDetailDTO {
+        @JsonProperty("round_number")
+        private Integer roundNumber;
+
+        @JsonProperty("story_title")
+        private String storyTitle;
+
+        @JsonProperty("votes")
+        private List<VoteDetailDTO> votes;
+
+        @JsonProperty("average")
+        private BigDecimal average;
+
+        @JsonProperty("median")
+        private String median;
+
+        @JsonProperty("consensus_reached")
+        private Boolean consensusReached;
+    }
+
+    public static class VoteDetailDTO {
+        @JsonProperty("participant_name")
+        private String participantName;
+
+        @JsonProperty("card_value")
+        private String cardValue;
+
+        @JsonProperty("voted_at")
+        private Instant votedAt;
+    }
+}
+```
+
+This structure provides a complete guide for implementing the ReportingService with tier-based access control, detailed analytics, and export job enqueuing capabilities.

@@ -27,7 +27,7 @@
     "acceptance_criteria": "getBasicSessionSummary returns story count, consensus rate, Free tier user cannot access detailed report (403 error), Pro tier user gets detailed report with round-by-round data, User consistency calculated correctly (standard deviation of votes), Export job enqueued to Redis Stream, Tier enforcement integrated via FeatureGate",
     "dependencies": ["I6.T1", "I5.T4"],
     "parallelizable": false,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I6.T3",
