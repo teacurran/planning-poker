@@ -3,23 +3,33 @@ package com.scrumpoker.api.rest;
 import com.scrumpoker.api.rest.dto.ErrorResponse;
 import com.scrumpoker.api.rest.dto.OAuthCallbackRequest;
 import com.scrumpoker.api.rest.dto.RefreshTokenRequest;
+import com.scrumpoker.api.rest.dto.SsoCallbackRequest;
 import com.scrumpoker.api.rest.dto.TokenResponse;
 import com.scrumpoker.api.rest.dto.UserDTO;
 import com.scrumpoker.api.rest.mapper.UserMapper;
+import com.scrumpoker.domain.organization.AuditLogService;
+import com.scrumpoker.domain.organization.Organization;
+import com.scrumpoker.domain.organization.OrgRole;
+import com.scrumpoker.domain.organization.OrganizationService;
 import com.scrumpoker.domain.user.User;
 import com.scrumpoker.domain.user.UserService;
 import com.scrumpoker.integration.oauth.OAuth2Adapter;
 import com.scrumpoker.integration.oauth.OAuthUserInfo;
+import com.scrumpoker.integration.sso.SsoAdapter;
+import com.scrumpoker.integration.sso.SsoUserInfo;
+import com.scrumpoker.repository.OrganizationRepository;
 import com.scrumpoker.security.JwtTokenService;
 import com.scrumpoker.security.TokenPair;
 import io.smallrye.mutiny.Uni;
 import jakarta.annotation.security.PermitAll;
 import jakarta.inject.Inject;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.core.Context;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import org.eclipse.microprofile.openapi.annotations.Operation;
@@ -49,6 +59,9 @@ public class AuthController {
     OAuth2Adapter oauth2Adapter;
 
     @Inject
+    SsoAdapter ssoAdapter;
+
+    @Inject
     UserService userService;
 
     @Inject
@@ -56,6 +69,15 @@ public class AuthController {
 
     @Inject
     UserMapper userMapper;
+
+    @Inject
+    OrganizationRepository organizationRepository;
+
+    @Inject
+    OrganizationService organizationService;
+
+    @Inject
+    AuditLogService auditLogService;
 
     /**
      * POST /api/v1/auth/oauth/callback - Exchange OAuth2 code for JWT tokens.
@@ -320,6 +342,236 @@ public class AuthController {
             LOG.errorf(e, "Unexpected error during logout");
             return createInternalServerErrorResponse();
         }
+    }
+
+    /**
+     * POST /api/v1/auth/sso/callback - Handle SSO authentication callback.
+     * <p>
+     * Flow:
+     * <ol>
+     *   <li>Extract email from SSO callback data to determine organization</li>
+     *   <li>Look up organization by email domain</li>
+     *   <li>Call SsoAdapter to authenticate with organization's SSO config</li>
+     *   <li>Find or create user in database (JIT provisioning)</li>
+     *   <li>Auto-assign user to organization with MEMBER role if not already member</li>
+     *   <li>Generate JWT access token and refresh token</li>
+     *   <li>Log SSO login event to audit log</li>
+     *   <li>Return TokenResponse with tokens and user profile</li>
+     * </ol>
+     * </p>
+     * <p>
+     * Security: Public endpoint (no authentication required).
+     * Domain verification ensures users can only join organizations matching their email domain.
+     * </p>
+     *
+     * @param request SSO callback request with code, protocol, redirectUri, codeVerifier
+     * @param httpRequest HTTP servlet request for extracting IP and user agent
+     * @return 200 OK with TokenResponse (access token, refresh token, user profile)
+     *         or 400 Bad Request if validation fails
+     *         or 401 Unauthorized if SSO authentication fails or domain mismatch
+     *         or 500 Internal Server Error on unexpected errors
+     */
+    @POST
+    @Path("/sso/callback")
+    @PermitAll
+    @Operation(summary = "Handle SSO authentication callback",
+            description = "Exchanges SSO authorization code/response from IdP "
+                    + "(OIDC/SAML2) for access and refresh tokens. "
+                    + "Supports JIT user provisioning and automatic organization assignment "
+                    + "based on email domain matching.")
+    @APIResponse(responseCode = "200", description = "Successfully authenticated",
+            content = @Content(schema = @Schema(implementation = TokenResponse.class)))
+    @APIResponse(responseCode = "400", description = "Invalid request parameters",
+            content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+    @APIResponse(responseCode = "401", description = "SSO authentication failed or domain mismatch",
+            content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+    @APIResponse(responseCode = "500", description = "Internal server error",
+            content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+    public Uni<Response> ssoCallback(@Valid final SsoCallbackRequest request,
+                                      @Context final HttpServletRequest httpRequest) {
+        LOG.infof("Processing SSO callback for protocol: %s", request.protocol);
+
+        // Validate inputs (additional layer beyond bean validation)
+        if (request.code == null || request.code.trim().isEmpty()) {
+            return createBadRequestResponse("INVALID_CODE",
+                    "Authentication code/response is required");
+        }
+        if (request.protocol == null || request.protocol.trim().isEmpty()) {
+            return createBadRequestResponse("INVALID_PROTOCOL",
+                    "Protocol is required");
+        }
+
+        // Extract IP address and user agent for audit logging
+        final String ipAddress = AuditLogService.extractIpAddress(
+                httpRequest.getHeader("X-Forwarded-For"),
+                httpRequest.getHeader("X-Real-IP"),
+                httpRequest.getRemoteAddr()
+        );
+        final String userAgent = httpRequest.getHeader("User-Agent");
+
+        // OIDC requires redirectUri and codeVerifier
+        if ("oidc".equalsIgnoreCase(request.protocol)) {
+            if (request.redirectUri == null || request.redirectUri.trim().isEmpty()) {
+                return createBadRequestResponse("INVALID_REDIRECT_URI",
+                        "Redirect URI is required for OIDC");
+            }
+            if (request.codeVerifier == null || request.codeVerifier.trim().isEmpty()) {
+                return createBadRequestResponse("INVALID_CODE_VERIFIER",
+                        "Code verifier is required for OIDC");
+            }
+        }
+
+        // Validate email is present
+        if (request.email == null || request.email.trim().isEmpty()) {
+            return createBadRequestResponse("INVALID_EMAIL",
+                    "Email is required for domain-based organization lookup");
+        }
+
+        try {
+            // Step 1: Extract email domain from user email
+            final String emailDomain = extractDomainFromEmail(request.email);
+
+            // Step 2: Look up organization by email domain
+            return organizationRepository.findByDomain(emailDomain)
+                    .onItem().ifNull().failWith(() ->
+                            new IllegalArgumentException(
+                                    "No organization found for email domain: " + emailDomain)
+                    )
+                    .flatMap(organization -> {
+                        LOG.infof("Found organization %s for domain: %s",
+                                organization.orgId, emailDomain);
+
+                        // Validate organization has SSO configured
+                        if (organization.ssoConfig == null
+                                || organization.ssoConfig.trim().isEmpty()) {
+                            return createUnauthorizedResponse("SSO_NOT_CONFIGURED",
+                                    "SSO is not configured for this organization");
+                        }
+
+                        // Step 3: Build SsoAuthParams for OIDC
+                        final SsoAdapter.SsoAuthParams ssoAuthParams;
+                        if ("oidc".equalsIgnoreCase(request.protocol)) {
+                            ssoAuthParams = new SsoAdapter.SsoAuthParams(
+                                    request.codeVerifier,
+                                    request.redirectUri
+                            );
+                        } else {
+                            // SAML2 doesn't require these parameters
+                            ssoAuthParams = new SsoAdapter.SsoAuthParams();
+                        }
+
+                        // Step 4: Authenticate with SsoAdapter
+                        return ssoAdapter.authenticate(
+                                organization.ssoConfig,
+                                request.code,
+                                ssoAuthParams,
+                                organization.orgId
+                        )
+                        .flatMap(ssoUserInfo -> {
+                            LOG.infof("SSO authentication successful for user: %s",
+                                    ssoUserInfo.getEmail());
+
+                            // Step 5: Verify email domain matches organization domain
+                            final String userDomain = ssoUserInfo.getEmailDomain();
+                            if (!userDomain.equalsIgnoreCase(emailDomain)) {
+                                LOG.warnf("Domain mismatch: user domain %s != org domain %s",
+                                        userDomain, emailDomain);
+                                return createUnauthorizedResponse("DOMAIN_MISMATCH",
+                                        "Email domain does not match organization domain");
+                            }
+
+                            // Step 6: Find or create user (JIT provisioning)
+                            final String ssoProvider = "sso_" + ssoUserInfo.getProtocol();
+                            return userService.findOrCreateUser(
+                                    ssoProvider,
+                                    ssoUserInfo.getSubject(),
+                                    ssoUserInfo.getEmail(),
+                                    ssoUserInfo.getName(),
+                                    null  // SSO users typically don't have avatar URLs
+                            )
+                            .flatMap(user -> {
+                                LOG.infof("User provisioned: userId=%s, email=%s",
+                                        user.userId, user.email);
+
+                                // Step 7: Check if user is already a member of the organization
+                                // If not, add them with MEMBER role
+                                return organizationService.addMember(
+                                        organization.orgId,
+                                        user.userId,
+                                        OrgRole.MEMBER
+                                )
+                                .onFailure(IllegalStateException.class)
+                                .recoverWithItem(throwable -> {
+                                    // User is already a member - this is expected for returning users
+                                    LOG.debugf("User %s already member of org %s - skipping member creation",
+                                            user.userId, organization.orgId);
+                                    return null;  // Continue with token generation
+                                })
+                                .flatMap(ignored -> {
+                                    LOG.infof("User %s added to organization %s as MEMBER",
+                                            user.userId, organization.orgId);
+
+                                    // Step 8: Generate JWT tokens
+                                    return jwtTokenService.generateTokens(user)
+                                            .map(tokenPair -> {
+                                                // Step 9: Build TokenResponse
+                                                final TokenResponse response =
+                                                        buildTokenResponse(tokenPair, user);
+
+                                                // Step 10: Log SSO login to audit log (fire-and-forget)
+                                                auditLogService.logSsoLogin(
+                                                        organization.orgId,
+                                                        user.userId,
+                                                        ipAddress,
+                                                        userAgent
+                                                );
+
+                                                LOG.infof("SSO authentication successful for user: %s",
+                                                        user.userId);
+
+                                                return Response.ok(response).build();
+                                            });
+                                });
+                            });
+                        });
+                    })
+                    .onFailure().recoverWithItem(throwable -> {
+                        LOG.errorf(throwable, "SSO callback failed for protocol: %s",
+                                request.protocol);
+
+                        if (throwable instanceof IllegalArgumentException) {
+                            final ErrorResponse error = new ErrorResponse(
+                                    "INVALID_REQUEST", throwable.getMessage());
+                            return Response.status(Response.Status.UNAUTHORIZED)
+                                    .entity(error)
+                                    .build();
+                        }
+
+                        return createErrorResponse(throwable);
+                    });
+
+        } catch (IllegalArgumentException e) {
+            LOG.warnf("Invalid SSO callback request: %s", e.getMessage());
+            return createBadRequestResponse("INVALID_REQUEST", e.getMessage());
+        } catch (Exception e) {
+            LOG.errorf(e, "Unexpected error during SSO callback");
+            return createInternalServerErrorResponse();
+        }
+    }
+
+    /**
+     * Extracts the domain from an email address.
+     *
+     * @param email The email address
+     * @return The domain portion (e.g., "company.com" from "user@company.com")
+     * @throws IllegalArgumentException if email format is invalid
+     */
+    private String extractDomainFromEmail(final String email) {
+        if (email == null || !email.contains("@")) {
+            throw new IllegalArgumentException("Invalid email format: " + email);
+        }
+        final int atIndex = email.lastIndexOf('@');
+        return email.substring(atIndex + 1).toLowerCase();
     }
 
     // ===== Private Helper Methods =====
