@@ -219,14 +219,15 @@ public class ExportJobProcessor {
             return;
         }
 
-        // Read messages from stream
+        // Read messages from stream (using ">" to read only new undelivered messages)
         streamCommands.xreadgroup(
                         CONSUMER_GROUP,
                         consumerName,
+                        EXPORT_JOBS_STREAM,
+                        ">",
                         new XReadGroupArgs()
                                 .count(BATCH_SIZE)
-                                .block(BLOCK_DURATION),
-                        StreamOffset.lastConsumed(EXPORT_JOBS_STREAM)
+                                .block(BLOCK_DURATION)
                 )
                 .onItem().transformToUni(messages -> {
                     if (messages.isEmpty()) {

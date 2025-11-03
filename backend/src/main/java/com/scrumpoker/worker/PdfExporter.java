@@ -14,7 +14,6 @@ import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.apache.pdfbox.pdmodel.font.PDType1Font;
-import org.apache.pdfbox.pdmodel.font.Standard14Fonts;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -235,7 +234,7 @@ public class PdfExporter {
                              float yPosition) throws IOException {
 
         contentStream.beginText();
-        contentStream.setFont(new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD), 18);
+        contentStream.setFont(PDType1Font.HELVETICA_BOLD, 18);
         contentStream.newLineAtOffset(MARGIN_LEFT, yPosition);
         contentStream.showText("Session Report");
         contentStream.endText();
@@ -243,7 +242,7 @@ public class PdfExporter {
         yPosition -= 25;
 
         contentStream.beginText();
-        contentStream.setFont(new PDType1Font(Standard14Fonts.FontName.HELVETICA), 12);
+        contentStream.setFont(PDType1Font.HELVETICA, 12);
         contentStream.newLineAtOffset(MARGIN_LEFT, yPosition);
         contentStream.showText("Room: " + session.room.title);
         contentStream.endText();
@@ -251,7 +250,7 @@ public class PdfExporter {
         yPosition -= 18;
 
         contentStream.beginText();
-        contentStream.setFont(new PDType1Font(Standard14Fonts.FontName.HELVETICA), 12);
+        contentStream.setFont(PDType1Font.HELVETICA, 12);
         contentStream.newLineAtOffset(MARGIN_LEFT, yPosition);
         contentStream.showText("Session: " + formatTimestamp(session.id.startedAt)
                 + " - " + (session.endedAt != null
@@ -286,7 +285,7 @@ public class PdfExporter {
                                     float yPosition) throws IOException {
 
         contentStream.beginText();
-        contentStream.setFont(new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD), 14);
+        contentStream.setFont(PDType1Font.HELVETICA_BOLD, 14);
         contentStream.newLineAtOffset(MARGIN_LEFT, yPosition);
         contentStream.showText("Summary Statistics");
         contentStream.endText();
@@ -320,7 +319,7 @@ public class PdfExporter {
                 "Average Vote: " + avgVote
         };
 
-        contentStream.setFont(new PDType1Font(Standard14Fonts.FontName.HELVETICA), 12);
+        contentStream.setFont(PDType1Font.HELVETICA, 12);
         for (final String stat : stats) {
             contentStream.beginText();
             contentStream.newLineAtOffset(MARGIN_LEFT + 10, yPosition);
@@ -360,7 +359,7 @@ public class PdfExporter {
                                     float yPosition) throws IOException {
 
         contentStream.beginText();
-        contentStream.setFont(new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD), 14);
+        contentStream.setFont(PDType1Font.HELVETICA_BOLD, 14);
         contentStream.newLineAtOffset(MARGIN_LEFT, yPosition);
         contentStream.showText("Round Details");
         contentStream.endText();
@@ -369,7 +368,7 @@ public class PdfExporter {
 
         if (rounds.isEmpty()) {
             contentStream.beginText();
-            contentStream.setFont(new PDType1Font(Standard14Fonts.FontName.HELVETICA_OBLIQUE), 12);
+            contentStream.setFont(PDType1Font.HELVETICA_OBLIQUE, 12);
             contentStream.newLineAtOffset(MARGIN_LEFT + 10, yPosition);
             contentStream.showText("No rounds found for this session");
             contentStream.endText();
@@ -411,7 +410,7 @@ public class PdfExporter {
 
         // Round title
         contentStream.beginText();
-        contentStream.setFont(new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD), 12);
+        contentStream.setFont(PDType1Font.HELVETICA_BOLD, 12);
         contentStream.newLineAtOffset(MARGIN_LEFT, yPosition);
         contentStream.showText("Round " + round.roundNumber + ": "
                 + (round.storyTitle != null ? round.storyTitle : "Untitled"));
@@ -426,7 +425,7 @@ public class PdfExporter {
                     .collect(Collectors.joining(", "));
 
             contentStream.beginText();
-            contentStream.setFont(new PDType1Font(Standard14Fonts.FontName.HELVETICA), 10);
+            contentStream.setFont(PDType1Font.HELVETICA, 10);
             contentStream.newLineAtOffset(MARGIN_LEFT + 10, yPosition);
             contentStream.showText("Votes: " + votesSummary);
             contentStream.endText();
@@ -441,7 +440,7 @@ public class PdfExporter {
                 round.consensusReached != null && round.consensusReached ? "Yes" : "No");
 
         contentStream.beginText();
-        contentStream.setFont(new PDType1Font(Standard14Fonts.FontName.HELVETICA), 10);
+        contentStream.setFont(PDType1Font.HELVETICA, 10);
         contentStream.newLineAtOffset(MARGIN_LEFT + 10, yPosition);
         contentStream.showText(stats);
         contentStream.endText();
@@ -454,7 +453,7 @@ public class PdfExporter {
                 round.revealedAt != null ? formatTimestamp(round.revealedAt) : "Ongoing");
 
         contentStream.beginText();
-        contentStream.setFont(new PDType1Font(Standard14Fonts.FontName.HELVETICA), 10);
+        contentStream.setFont(PDType1Font.HELVETICA, 10);
         contentStream.newLineAtOffset(MARGIN_LEFT + 10, yPosition);
         contentStream.showText(time);
         contentStream.endText();

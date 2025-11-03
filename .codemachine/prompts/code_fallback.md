@@ -12,30 +12,78 @@ Create background worker consuming export jobs from Redis Stream. `ExportJobProc
 
 ## Issues Detected
 
-*   **Compilation Error:** The file `backend/src/main/java/com/scrumpoker/worker/PdfExporter.java` has a compilation error on line 17. The class `org.apache.pdfbox.pdmodel.font.Standard14Fonts` is not public in PDFBox 2.0.30 and cannot be accessed from outside the package.
-*   **API Incompatibility:** The code is using an incorrect API for PDFBox 2.0.30. The `Standard14Fonts` class is internal in PDFBox 2.x and should not be used directly.
+*   **Missing Dependency:** The AWS S3 SDK requires an HTTP client implementation. Tests are failing with error: `Missing 'software.amazon.awssdk:url-connection-client' dependency on the classpath`. This is a required dependency for the Quarkus Amazon S3 extension to function properly.
+
+*   **Deprecation Warnings:** The code uses deprecated `combinedWith()` method in both `CsvExporter.java` (line 137) and `PdfExporter.java` (line 168). While this still works, it should be updated to use the non-deprecated API for future compatibility.
 
 ---
 
 ## Best Approach to Fix
 
-You MUST modify the `PdfExporter.java` file at `backend/src/main/java/com/scrumpoker/worker/PdfExporter.java`.
+### 1. Add Missing AWS SDK HTTP Client Dependency
 
-**Fix the PDFBox font usage:**
+You MUST add the AWS SDK URL Connection HTTP client dependency to `backend/pom.xml`. Add this dependency in the dependencies section, right after the existing `quarkus-amazon-s3` dependency (around line 169):
 
-1. Replace all instances of `new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD)` with `PDType1Font.HELVETICA_BOLD` (PDType1Font constants are directly accessible in PDFBox 2.x)
-2. Replace all instances of `new PDType1Font(Standard14Fonts.FontName.HELVETICA)` with `PDType1Font.HELVETICA`
-3. Replace all instances of `new PDType1Font(Standard14Fonts.FontName.HELVETICA_OBLIQUE)` with `PDType1Font.HELVETICA_OBLIQUE`
-4. Remove the import statement: `import org.apache.pdfbox.pdmodel.font.Standard14Fonts;`
-
-**The correct PDFBox 2.x API for standard fonts is:**
-```java
-import org.apache.pdfbox.pdmodel.font.PDType1Font;
-
-// Then use directly:
-PDType1Font.HELVETICA_BOLD
-PDType1Font.HELVETICA
-PDType1Font.HELVETICA_OBLIQUE
+```xml
+<!-- AWS SDK URL Connection HTTP Client (required by quarkus-amazon-s3) -->
+<dependency>
+    <groupId>software.amazon.awssdk</groupId>
+    <artifactId>url-connection-client</artifactId>
+</dependency>
 ```
 
-This is the standard way to use built-in fonts in PDFBox 2.0.x. The `Standard14Fonts` class was made internal because the font constants are already available directly on `PDType1Font`.
+### 2. Fix Deprecation Warnings (Optional but Recommended)
+
+Replace the deprecated `combinedWith()` method calls with the recommended `with()` method:
+
+**In `CsvExporter.java` (line 136-139):**
+
+Change FROM:
+```java
+return Uni.combine().all().unis(voteFetches)
+        .combinedWith(results -> results.stream()
+                .map(obj -> (Map.Entry<UUID, List<Vote>>) obj)
+                .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue)));
+```
+
+TO:
+```java
+return Uni.combine().all().unis(voteFetches)
+        .with(results -> results.stream()
+                .map(obj -> (Map.Entry<UUID, List<Vote>>) obj)
+                .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue)));
+```
+
+**In `PdfExporter.java` (line 167-170):**
+
+Change FROM:
+```java
+return Uni.combine().all().unis(voteFetches)
+        .combinedWith(results -> results.stream()
+                .map(obj -> (Map.Entry<UUID, List<Vote>>) obj)
+                .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue)));
+```
+
+TO:
+```java
+return Uni.combine().all().unis(voteFetches)
+        .with(results -> results.stream()
+                .map(obj -> (Map.Entry<UUID, List<Vote>>) obj)
+                .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue)));
+```
+
+### 3. Verify the Fix
+
+After making these changes:
+
+1. **Compile the project:** Run `mvn clean compile` to ensure no compilation errors
+2. **Run tests:** Run `mvn test` to verify all tests pass
+3. **Verify S3 integration:** Ensure the S3Adapter can be initialized without the missing dependency error
+
+---
+
+## Critical Notes
+
+- The **missing AWS SDK HTTP client dependency is the BLOCKER** preventing tests from running. This MUST be fixed first.
+- The deprecation warnings are less critical but should be addressed for code quality and future compatibility.
+- All other code (ExportJobProcessor, CsvExporter, PdfExporter, ExportJob entity, JobStatus enum, S3Adapter) is complete and correct.
