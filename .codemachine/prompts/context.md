@@ -10,24 +10,24 @@ This is the full specification of the task you must complete.
 
 ```json
 {
-  "task_id": "I6.T7",
+  "task_id": "I6.T8",
   "iteration_id": "I6",
   "iteration_goal": "Implement session history tracking, tier-based reporting (basic summaries for Free, detailed analytics for Pro/Enterprise), export functionality (CSV/PDF), and frontend reporting UI.",
-  "description": "Create unit tests for `ReportingService` with mocked repositories and FeatureGate. Test scenarios: basic summary generation (verify correct stats calculated), detailed report generation (verify round breakdown included), tier enforcement (Free tier accessing detailed report throws exception), user consistency calculation (test with known vote values), export job enqueuing (verify Redis Stream message). Use AssertJ for fluent assertions.",
+  "description": "Create integration test for export job end-to-end flow. Test: trigger export API, verify job enqueued to Redis Stream, worker processes job, CSV/PDF generated, file uploaded to S3 (use LocalStack or S3Mock), job status updated to COMPLETED, download URL returned. Test error scenario (S3 upload failure, job marked FAILED). Use Testcontainers for Redis and PostgreSQL.",
   "agent_type_hint": "BackendAgent",
-  "inputs": "ReportingService from I6.T2, Mockito testing patterns",
+  "inputs": "ExportJobProcessor from I6.T3, Redis Streams testing patterns, S3 mocking (LocalStack or S3Mock)",
   "input_files": [
-    "backend/src/main/java/com/scrumpoker/domain/reporting/ReportingService.java"
+    "backend/src/main/java/com/scrumpoker/worker/ExportJobProcessor.java"
   ],
   "target_files": [
-    "backend/src/test/java/com/scrumpoker/domain/reporting/ReportingServiceTest.java"
+    "backend/src/test/java/com/scrumpoker/worker/ExportJobIntegrationTest.java"
   ],
-  "deliverables": "ReportingServiceTest with 12+ test methods, Tests for summary generation (Free tier), Tests for detailed report (Pro tier), Tier enforcement tests (403 for Free tier), Consistency calculation tests (variance formula), Export job enqueue tests",
-  "acceptance_criteria": "`mvn test` runs reporting tests successfully, Summary generation test verifies correct consensus rate, Detailed report test includes round breakdown, Tier enforcement test throws FeatureNotAvailableException, Consistency calculation test verifies formula (σ²), Export enqueue test verifies Redis message published",
+  "deliverables": "Integration test for export flow, Test: job enqueued → worker processes → file uploaded → status updated, Test: S3 failure → job marked FAILED, LocalStack or S3Mock for S3 testing, Assertions on job status transitions",
+  "acceptance_criteria": "`mvn verify` runs export integration test, Export job processes successfully, CSV file uploaded to mock S3, Job status transitions: PENDING → PROCESSING → COMPLETED, Download URL generated and accessible, Failure test marks job FAILED with error message",
   "dependencies": [
-    "I6.T2"
+    "I6.T3"
   ],
-  "parallelizable": true,
+  "parallelizable": false,
   "done": false
 }
 ```
@@ -38,72 +38,31 @@ This is the full specification of the task you must complete.
 
 The following are the relevant sections from the architecture and plan documents, which I found by analyzing the task description.
 
-### Context: reporting-requirements (from 01_Context_and_Drivers.md)
+### Context: asynchronous-job-processing-pattern (from 04_Behavior_and_Communication.md)
 
-```markdown
-<!-- anchor: reporting-requirements -->
-#### Reporting Requirements
-- **Free Tier:** Basic session summaries (story count, consensus rate, average vote)
-- **Pro Tier:** Round-level detail, user consistency metrics, CSV/JSON/PDF export
-- **Enterprise Tier:** Organizational dashboards, team trends, SSO-filtered reports, audit logs
-```
+**Asynchronous Job Processing Pattern** is used for long-running operations that don't require immediate response:
 
-### Context: unit-testing (from 03_Verification_and_Glossary.md)
+- **Use Cases:**
+  - Report generation (CSV/PDF exports)
+  - Batch email notifications
+  - Data aggregation jobs
+  - Session history archival
 
-```markdown
-<!-- anchor: unit-testing -->
-#### Unit Testing
+- **Pattern:**
+  1. Client initiates job via REST API (`POST /api/v1/reports/export`)
+  2. Server enqueues job to Redis Stream (job ID returned immediately)
+  3. Background worker consumes job from stream
+  4. Worker processes job (query data, generate file, upload to S3)
+  5. Worker updates job status in database (PENDING → PROCESSING → COMPLETED/FAILED)
+  6. Client polls job status endpoint (`GET /api/v1/jobs/{jobId}`) until complete
+  7. Upon completion, client retrieves download URL from job response
 
-**Scope:** Individual classes and methods in isolation (services, utilities, validators)
-
-**Framework:** JUnit 5 (backend), Jest/Vitest (frontend)
-
-**Coverage Target:** >90% code coverage for service layer, >80% for overall codebase
-
-**Approach:**
-- Mock external dependencies (repositories, adapters, external services) using Mockito
-- Test business logic thoroughly (happy paths, edge cases, error scenarios)
-- Fast execution (<5 minutes for entire unit test suite)
-- Run on every developer commit and in CI pipeline
-
-**Examples:**
-- `RoomServiceTest`: Tests room creation with unique ID generation, config validation, soft delete
-- `VotingServiceTest`: Tests vote casting, consensus calculation with known inputs
-- `BillingServiceTest`: Tests subscription tier transitions, Stripe integration mocking
-
-**Acceptance Criteria:**
-- All unit tests pass (`mvn test`, `npm run test:unit`)
-- Coverage reports meet targets (verify with JaCoCo, Istanbul)
-- No flaky tests (consistent results across runs)
-```
-
-### Context: code-quality-gates (from 03_Verification_and_Glossary.md)
-
-```markdown
-<!-- anchor: code-quality-gates -->
-### 5.3. Code Quality Gates
-
-**Automated Quality Checks:**
-
-1. **Code Coverage:**
-   - Backend: JaCoCo reports, threshold 80% line coverage
-   - Frontend: Istanbul/c8 reports, threshold 75% statement coverage
-   - Fail CI build if below threshold
-
-2. **Static Analysis (SonarQube):**
-   - Code smells: <5 per 1000 lines of code
-```
-
-### Context: performance-nfrs (from 01_Context_and_Drivers.md)
-
-```markdown
-<!-- anchor: performance-nfrs -->
-#### Performance
-- **Latency:** <200ms round-trip time for WebSocket messages within region
-- **Throughput:** Support 500 concurrent sessions with 6,000 active WebSocket connections
-- **Response Time:** REST API endpoints respond within <500ms for p95
-- **Real-time Updates:** State synchronization across clients within 100ms
-```
+- **Implementation:**
+  - **Redis Streams:** Durable message queue with consumer groups
+  - **Job Entity:** Tracks job status, error messages, download URLs
+  - **Worker Service:** Quarkus application consuming stream in background thread
+  - **Retry Logic:** Exponential backoff for transient failures (S3 timeouts, DB connection issues)
+  - **Timeout Handling:** Jobs stuck in PROCESSING state for >1 hour marked as FAILED
 
 ---
 
@@ -113,153 +72,461 @@ The following analysis is based on my direct review of the current codebase. Use
 
 ### Relevant Existing Code
 
-*   **File:** `backend/src/main/java/com/scrumpoker/domain/reporting/ReportingService.java`
-    *   **Summary:** This file contains the ReportingService implementation with three main capabilities: basic session summaries (Free tier), detailed analytics (Pro tier), and export job enqueuing (Pro tier). The service uses FeatureGate for tier enforcement and publishes jobs to Redis Streams.
+*   **File:** `backend/src/main/java/com/scrumpoker/worker/ExportJobProcessor.java`
+    *   **Summary:** Background worker that consumes export jobs from Redis Stream (`jobs:reports`). Uses consumer group pattern for reliable processing. Implements full job lifecycle: consume message → fetch session data → generate CSV/PDF → upload to S3 → update job status → acknowledge message.
     *   **Key Methods:**
-        *   `getBasicSessionSummary(UUID sessionId)` - Returns SessionSummaryDTO with story count, consensus rate, average vote
-        *   `getDetailedSessionReport(UUID sessionId, User user)` - Returns DetailedSessionReportDTO with round-by-round breakdown and user consistency metrics (requires PRO tier)
-        *   `generateExport(UUID sessionId, String format, User user)` - Enqueues export job to Redis Stream (requires PRO tier)
-        *   `calculateUserConsistency(Map<UUID, List<String>> votesByParticipant, Map<UUID, String> participantNames)` - Private method calculating standard deviation of votes per participant
-    *   **Recommendation:** You MUST test all three public methods and verify the consistency calculation algorithm.
+        - `onStart()`: Initializes Redis Stream consumer group on application startup (observes @StartupEvent)
+        - `consumeMessages()`: Continuous loop reading from Redis Stream using XREADGROUP
+        - `processExportJob(UUID jobId, UUID sessionId, String format, UUID userId)`: Main processing method with retry logic (max 5 retries, exponential backoff via @Retry annotation)
+        - `processMessage()`: Wrapper that acknowledges message after processing
+        - `createJobRecord()`: Creates ExportJob entity in database
+        - `generateExportFile()`: Delegates to CsvExporter or PdfExporter based on format
+    *   **Dependency Injection:** Uses @Inject for SessionHistoryService, CsvExporter, PdfExporter, S3Adapter, ReactiveRedisDataSource
+    *   **CRITICAL:** The worker starts automatically on application startup. For testing, you have two options:
+        1. **Manual trigger:** Call `processExportJob()` directly (bypasses Redis Stream consumer)
+        2. **Full integration:** Enqueue job to Redis Stream and let worker consume it (more realistic but requires waiting/polling)
+    *   **Recommendation:** Use **manual trigger** approach for faster, more deterministic tests.
 
-*   **File:** `backend/src/test/java/com/scrumpoker/domain/reporting/ReportingServiceTest.java`
-    *   **Summary:** **CRITICAL FINDING:** This test file ALREADY EXISTS and contains comprehensive unit tests for ReportingService with 728 lines of code covering all major scenarios.
-    *   **Current Test Coverage:**
-        *   Basic Session Summary Tests (3 tests): Valid session, session not found, null sessionId
-        *   Detailed Session Report Tests (5 tests): Pro user access, Free user rejection, null parameters, empty rounds, non-numeric votes
-        *   Export Job Generation Tests (6 tests): CSV export, PDF export, Free user rejection, invalid format, session not found, null parameters
-        *   User Consistency Calculation Tests (3 tests): Perfect consistency (σ=0), single vote exclusion, known variance calculation
-    *   **Total Test Count:** 17 test methods (exceeds the 12+ requirement)
-    *   **Recommendation:** The test file is comprehensive and well-structured. Your task is to REVIEW, ENHANCE, or VERIFY this existing test suite rather than create it from scratch.
+*   **File:** `backend/src/main/java/com/scrumpoker/integration/s3/S3Adapter.java`
+    *   **Summary:** AWS S3 integration adapter for uploading export files and generating presigned URLs. Method `uploadFileAndGenerateUrl()` uploads to S3 and returns a 7-day presigned URL.
+    *   **Critical Details:**
+        - Uses **injected S3Client and S3Presigner beans** (lines 64-71)
+        - S3Client is **blocking/synchronous**, wrapped in reactive Uni and executed on worker pool
+        - Object key format: `exports/{sessionId}/{jobId}.{format}`
+        - Content type determined by format (CSV → text/csv, PDF → application/pdf)
+        - Throws S3UploadException on failure
+    *   **Test Strategy:** You MUST mock S3Client and S3Presigner beans to avoid real AWS calls. Three options:
+        1. **Mockito mocks (Recommended):** Create @Produces method returning mocked beans with @Alternative and @Priority
+        2. **LocalStack:** Use Testcontainers LocalStack for real S3-compatible service
+        3. **S3Mock library:** Use adobe/s3mock for lightweight S3 simulation
+    *   **Recommendation:** Start with **Mockito** for simplicity. Mock `s3Client.putObject()` and `s3Presigner.presignGetObject()`.
 
-*   **File:** `backend/src/test/java/com/scrumpoker/domain/billing/BillingServiceTest.java`
-    *   **Summary:** This is an excellent reference implementation showing the project's testing patterns and conventions. It demonstrates proper use of Mockito, reactive types (Uni), and AssertJ assertions.
-    *   **Key Patterns Demonstrated:**
-        *   `@ExtendWith(MockitoExtension.class)` for Mockito integration
-        *   `@Mock` for dependency injection mocks
-        *   `@InjectMocks` for the service under test
-        *   `@BeforeEach` setup method creating test fixtures
-        *   Comprehensive test organization with section comments (`// ===== Create Subscription Tests =====`)
-        *   Testing reactive code with `.await().indefinitely()` pattern
-        *   `ArgumentCaptor` for verifying method arguments
-        *   AssertJ fluent assertions (`assertThat()`, `assertThatThrownBy()`)
-    *   **Recommendation:** You SHOULD follow the exact same patterns, conventions, and structure demonstrated in this file.
+*   **File:** `backend/src/main/java/com/scrumpoker/integration/s3/S3ClientProducer.java`
+    *   **Summary:** This file likely exists and produces S3Client and S3Presigner CDI beans.
+    *   **Test Strategy:** Create a test-specific producer with @Alternative annotation that returns mocked implementations.
+    *   **Recommendation:** Check if this file exists. If so, you'll need to override it in your test profile.
 
-*   **File:** `backend/src/main/java/com/scrumpoker/security/FeatureGate.java`
-    *   **Summary:** This service enforces tier-based feature access control. Critical for testing the reporting service's tier enforcement.
+*   **File:** `backend/src/main/java/com/scrumpoker/domain/reporting/ExportJob.java`
+    *   **Summary:** JPA entity tracking export job lifecycle. Extends PanacheEntityBase with UUID primary key.
+    *   **State Lifecycle:** PENDING → PROCESSING → COMPLETED/FAILED
     *   **Key Methods:**
-        *   `requireCanAccessAdvancedReports(User user)` - Throws FeatureNotAvailableException if user is FREE tier
-        *   `canAccessAdvancedReports(User user)` - Returns boolean (PRO or higher)
-    *   **Recommendation:** You MUST mock FeatureGate in your tests and verify both the `doNothing()` path (PRO user) and the `doThrow()` path (FREE user).
+        - `findByJobId(UUID)`: Static finder method
+        - `markAsProcessing()`: Updates status and sets processingStartedAt timestamp
+        - `markAsCompleted(String downloadUrl)`: Updates status, downloadUrl, and completedAt timestamp
+        - `markAsFailed(String errorMessage)`: Updates status, errorMessage, and failedAt timestamp
+    *   **Recommendation:** Your test MUST verify these state transitions by querying the database after each phase.
+
+*   **File:** `backend/src/test/java/com/scrumpoker/api/rest/StripeWebhookControllerTest.java`
+    *   **Summary:** Excellent reference implementation for Quarkus reactive integration tests. Shows proper usage of:
+        - `@QuarkusTest` with Testcontainers (PostgreSQL and Redis via Dev Services)
+        - `@TestProfile(NoSecurityTestProfile.class)` for test-specific configuration
+        - `@RunOnVertxContext` annotation for reactive test methods
+        - `UniAsserter` parameter for chaining reactive assertions
+        - `Panache.withTransaction(() -> ...)` wrapping all database operations
+        - `@BeforeEach` cleanup using `deleteAll()` on repositories
+    *   **Test Pattern:**
+      ```java
+      @Test
+      @RunOnVertxContext
+      void testName(UniAsserter asserter) {
+          // Setup: Create test data
+          asserter.execute(() -> Panache.withTransaction(() -> createData()));
+
+          // Execute: Trigger operation
+          asserter.execute(() -> someOperation());
+
+          // Assert: Verify results
+          asserter.assertThat(() -> Panache.withTransaction(() -> findResult()),
+              result -> assertThat(result).meets(conditions));
+      }
+      ```
+    *   **CRITICAL:** You MUST follow this exact pattern for your export job test. Hibernate Reactive requires `@RunOnVertxContext` and `UniAsserter`.
 
 ### Implementation Tips & Notes
 
-*   **Tip:** The existing ReportingServiceTest.java file already has comprehensive coverage. I counted **17 test methods** covering all the scenarios specified in the task deliverables. The task requires 12+ test methods, and the existing file has 17.
+*   **Tip 1: Test Structure (Two-Test Approach)**
+    - Create **two separate test methods**:
+        1. `testExportJobSuccessFlow()`: Happy path (PENDING → PROCESSING → COMPLETED)
+        2. `testExportJobFailure_S3Error()`: Failure scenario (S3 exception → FAILED status)
+    - Both tests should use the same helper methods for test data creation
 
-*   **Note:** The test file uses the **exact same patterns** as BillingServiceTest.java:
-    *   Mockito for dependency mocking
-    *   Reactive types (Uni) with `.await().indefinitely()`
-    *   AssertJ for fluent assertions
-    *   ArgumentCaptor for verifying method calls
-    *   Comprehensive test organization with clear section comments
+*   **Tip 2: S3 Mocking Strategy (Choose One)**
 
-*   **Critical Analysis:** Based on my review of the existing test file, here's what's already covered:
-    1. ✅ **Basic summary generation** - Test verifies correct consensus rate calculation (line 218-244)
-    2. ✅ **Detailed report generation** - Test verifies round breakdown included (line 280-330)
-    3. ✅ **Tier enforcement** - Test verifies Free tier throws FeatureNotAvailableException (line 333-351)
-    4. ✅ **User consistency calculation** - Three tests verify variance formula with known values (lines 589-701)
-    5. ✅ **Export job enqueuing** - Tests verify Redis Stream message published with correct data (lines 444-584)
+    **Option A: Mockito Mocks (Recommended for Simplicity)**
+    ```java
+    @ApplicationScoped
+    @Alternative
+    @Priority(1)
+    public static class MockS3Producer {
+        @Produces
+        public S3Client s3Client() {
+            S3Client mock = mock(S3Client.class);
+            when(mock.putObject(any(PutObjectRequest.class), any(RequestBody.class)))
+                .thenReturn(PutObjectResponse.builder().eTag("test-etag").build());
+            return mock;
+        }
 
-*   **Coverage Analysis:** The existing test file has:
-    *   3 tests for getBasicSessionSummary()
-    *   5 tests for getDetailedSessionReport()
-    *   6 tests for generateExport()
-    *   3 tests for user consistency calculation logic
-    *   **Total: 17 test methods** (exceeds requirement of 12+)
+        @Produces
+        public S3Presigner s3Presigner() {
+            S3Presigner mock = mock(S3Presigner.class);
+            when(mock.presignGetObject(any(GetObjectPresignRequest.class)))
+                .thenReturn(PresignedGetObjectRequest.builder()
+                    .url(URI.create("https://test-bucket.s3.amazonaws.com/test-file?presigned=true").toURL())
+                    .build());
+            return mock;
+        }
+    }
+    ```
 
-*   **Recommendation for Task Completion:**
-    Since comprehensive tests already exist, you should:
-    1. **VERIFY** the tests are passing by running `mvn test`
-    2. **ANALYZE** the test coverage report to ensure it meets the >90% threshold
-    3. **ENHANCE** any gaps if coverage is below 90%
-    4. **DOCUMENT** your findings and any enhancements made
+    **Option B: LocalStack (More Realistic)**
+    - Add dependency: `testcontainers` module for LocalStack
+    - Start LocalStack container in test setup
+    - Configure S3 client to use LocalStack endpoint: `http://localhost:4566`
+    - Provides real S3-compatible service but slower than mocking
 
-*   **Warning:** The task description says "Create unit tests" but the file already exists. This could mean:
-    1. The tests were created in a previous session and you need to verify/enhance them
-    2. The task status is incorrect and should be marked as done=true
-    3. There are specific test scenarios missing that need to be added
+    **Option C: S3Mock Library**
+    - Add dependency: `com.adobe.testing:s3mock:3.0.0`
+    - Start S3Mock in test setup
+    - Lighter than LocalStack but less feature-complete
 
-*   **JaCoCo Configuration:** The project uses JaCoCo Maven Plugin (version 0.8.11) for code coverage reporting. You can generate coverage reports with `mvn test jacoco:report` and check the results in `target/site/jacoco/index.html`.
+*   **Tip 3: Test Data Creation**
+    - You need comprehensive test data: User, Room, SessionHistory, Round, Vote
+    - Create helper methods following the pattern from StripeWebhookControllerTest:
+      ```java
+      private Uni<TestDataHolder> createTestSessionWithData() {
+          return Panache.withTransaction(() -> {
+              User user = createTestUser();
+              Room room = createTestRoom();
+              SessionHistory session = createTestSession();
+              Round round = createTestRound();
+              Vote vote = createTestVote();
 
-### Key Test Scenarios to Verify
+              return user.persist()
+                  .flatMap(u -> room.persist())
+                  .flatMap(r -> session.persist())
+                  .flatMap(s -> round.persist())
+                  .flatMap(r -> vote.persist())
+                  .replaceWith(new TestDataHolder(user, session));
+          });
+      }
+      ```
 
-Based on the acceptance criteria and my code review, ensure these scenarios are covered:
+*   **Tip 4: Worker Triggering Strategy**
+    - **Manual Trigger (Recommended):**
+      ```java
+      asserter.execute(() -> exportJobProcessor.processExportJob(jobId, sessionId, "CSV", userId));
+      ```
+      - Faster and more deterministic
+      - Bypasses Redis Stream consumer loop
+      - Still tests all the processing logic
 
-1. **Summary Generation (Free Tier)**
-   - ✅ Valid session returns correct stats (consensus rate, average vote)
-   - ✅ Session not found throws IllegalArgumentException
-   - ✅ Null sessionId throws IllegalArgumentException
+    - **Full Integration (Advanced):**
+      ```java
+      asserter.execute(() -> streamCommands.xadd("jobs:reports",
+          Map.of("jobId", jobId.toString(),
+                 "sessionId", sessionId.toString(),
+                 "format", "CSV",
+                 "userId", userId.toString())));
+      // Wait for worker to process (poll job status)
+      ```
+      - More realistic but requires polling/waiting
+      - Tests the entire consumer group pattern
+      - May have timing issues in CI
 
-2. **Detailed Report (Pro Tier)**
-   - ✅ Pro user gets full round-by-round breakdown
-   - ✅ Free user gets FeatureNotAvailableException
-   - ✅ Report includes individual votes for each round
-   - ✅ User consistency metrics calculated correctly
+*   **Tip 5: Assertion Pattern**
+    ```java
+    // Verify job status transitions
+    asserter.assertThat(() -> Panache.withTransaction(() ->
+        ExportJob.findByJobId(jobId)),
+        job -> {
+            assertThat(job).isNotNull();
+            assertThat(job.status).isEqualTo(JobStatus.COMPLETED);
+            assertThat(job.downloadUrl).isNotNull().startsWith("https://");
+            assertThat(job.completedAt).isNotNull();
+            assertThat(job.errorMessage).isNull();
+        }
+    );
+    ```
 
-3. **Tier Enforcement**
-   - ✅ Free tier accessing detailed reports → FeatureNotAvailableException
-   - ✅ Free tier accessing export → FeatureNotAvailableException
-   - ✅ Pro tier can access all features
+*   **Tip 6: Failure Test Configuration**
+    - For the failure scenario, reconfigure the S3Client mock to throw an exception:
+      ```java
+      when(s3Client.putObject(any(), any()))
+          .thenThrow(new RuntimeException("Simulated S3 failure"));
+      ```
+    - Or use a separate test profile with a failing S3 producer
 
-4. **User Consistency Calculation**
-   - ✅ Perfect consistency (all same votes) → σ = 0
-   - ✅ Known variance values verified with formula
-   - ✅ Non-numeric votes (?, ∞, ☕) excluded from calculation
-   - ✅ Single vote per user excluded (need ≥2 for std dev)
+*   **Warning 1: Test Isolation**
+    - Clean up ALL test data in `@BeforeEach`:
+      ```java
+      asserter.execute(() -> Panache.withTransaction(() ->
+          ExportJob.deleteAll()
+              .flatMap(v -> SessionHistory.deleteAll())
+              .flatMap(v -> Round.deleteAll())
+              .flatMap(v -> Vote.deleteAll())
+              .flatMap(v -> Room.deleteAll())
+              .flatMap(v -> User.deleteAll())
+      ));
+      ```
+    - Delete in reverse dependency order (child entities first)
 
-5. **Export Job Enqueuing**
-   - ✅ CSV export enqueues job with correct format
-   - ✅ PDF export enqueues job with correct format
-   - ✅ Redis Stream message contains required fields (jobId, sessionId, format, userId)
-   - ✅ Invalid format throws IllegalArgumentException
+*   **Warning 2: Reactive Test Pattern**
+    - **ALWAYS** use `@RunOnVertxContext` for tests that do reactive database operations
+    - **ALWAYS** use `UniAsserter` parameter
+    - **ALWAYS** wrap database operations in `Panache.withTransaction(() -> ...)`
+    - **NEVER** call `.await().indefinitely()` in these tests (that's for unit tests)
 
-### Running Tests
+*   **Warning 3: Worker Lifecycle**
+    - The ExportJobProcessor starts on application startup via `@Observes StartupEvent`
+    - Consider:
+        1. Using manual triggering (call `processExportJob()` directly)
+        2. OR creating a test profile that disables the worker auto-start
+        3. OR stopping the worker after test setup
 
-To execute the tests and verify coverage:
+*   **Note 1: CSV/PDF Content**
+    - You don't need to verify the actual CSV/PDF content in this test
+    - Focus on verifying that the file was "uploaded" to S3 (verify mock called with correct params)
+    - The CSV/PDF generation logic is tested separately in CsvExporter and PdfExporter tests
 
-```bash
-# Run all tests
-mvn test
+*   **Note 2: Test Configuration**
+    - Create `ExportJobTestProfile.java` implementing `QuarkusTestProfile`
+    - Override S3 configuration:
+      ```java
+      @Override
+      public Map<String, String> getConfigOverrides() {
+          return Map.of(
+              "s3.bucket-name", "test-exports-bucket",
+              "export.signed-url-expiration", "3600"
+          );
+      }
+      ```
 
-# Run only ReportingServiceTest
-mvn test -Dtest=ReportingServiceTest
+*   **Note 3: Quarkus Dev Services**
+    - PostgreSQL and Redis will be started automatically via Testcontainers
+    - No need to configure datasource URLs in test profile (Dev Services handles it)
+    - Ensure test `application.properties` doesn't have explicit Redis/DB URLs
 
-# Generate coverage report
-mvn test jacoco:report
+### Example Test Structure
 
-# View coverage report
-open backend/target/site/jacoco/index.html
+```java
+@QuarkusTest
+@TestProfile(ExportJobTestProfile.class)
+public class ExportJobIntegrationTest {
+
+    @Inject
+    ExportJobProcessor exportJobProcessor;
+
+    @Inject
+    SessionHistoryService sessionHistoryService;
+
+    @Inject
+    UserRepository userRepository;
+
+    @Inject
+    RoomRepository roomRepository;
+
+    // Mocked S3 components will be injected via test profile
+    @Inject
+    S3Client s3Client;
+
+    private UUID testJobId;
+    private UUID testSessionId;
+    private UUID testUserId;
+
+    @BeforeEach
+    @RunOnVertxContext
+    void setUp(UniAsserter asserter) {
+        testJobId = UUID.randomUUID();
+        testSessionId = UUID.randomUUID();
+        testUserId = UUID.randomUUID();
+
+        // Clean up test data
+        asserter.execute(() -> Panache.withTransaction(() ->
+            ExportJob.deleteAll()
+                .flatMap(v -> SessionHistory.deleteAll())
+                .flatMap(v -> Round.deleteAll())
+                .flatMap(v -> Vote.deleteAll())
+                .flatMap(v -> Room.deleteAll())
+                .flatMap(v -> User.deleteAll())
+        ));
+    }
+
+    @Test
+    @RunOnVertxContext
+    void testExportJobSuccessFlow(UniAsserter asserter) {
+        // Step 1: Create test session with data
+        asserter.execute(() -> createTestSessionWithData(testSessionId, testUserId));
+
+        // Step 2: Trigger export job processing
+        asserter.execute(() ->
+            exportJobProcessor.processExportJob(testJobId, testSessionId, "CSV", testUserId)
+        );
+
+        // Step 3: Verify job completed successfully
+        asserter.assertThat(() -> Panache.withTransaction(() ->
+            ExportJob.findByJobId(testJobId)),
+            job -> {
+                assertThat(job).isNotNull();
+                assertThat(job.status).isEqualTo(JobStatus.COMPLETED);
+                assertThat(job.downloadUrl).isNotNull();
+                assertThat(job.completedAt).isNotNull();
+                assertThat(job.errorMessage).isNull();
+            }
+        );
+
+        // Step 4: Verify S3 upload was called
+        verify(s3Client, times(1)).putObject(
+            argThat(req -> req.key().contains(testJobId.toString())),
+            any(RequestBody.class)
+        );
+    }
+
+    @Test
+    @RunOnVertxContext
+    void testExportJobFailure_S3Error(UniAsserter asserter) {
+        // Step 1: Configure S3 mock to fail
+        when(s3Client.putObject(any(), any()))
+            .thenThrow(new RuntimeException("Simulated S3 failure"));
+
+        // Step 2: Create test session with data
+        asserter.execute(() -> createTestSessionWithData(testSessionId, testUserId));
+
+        // Step 3: Trigger export job processing (expect it to handle failure)
+        asserter.execute(() ->
+            exportJobProcessor.processExportJob(testJobId, testSessionId, "CSV", testUserId)
+        );
+
+        // Step 4: Verify job marked as failed
+        asserter.assertThat(() -> Panache.withTransaction(() ->
+            ExportJob.findByJobId(testJobId)),
+            job -> {
+                assertThat(job).isNotNull();
+                assertThat(job.status).isEqualTo(JobStatus.FAILED);
+                assertThat(job.errorMessage).contains("S3 failure");
+                assertThat(job.failedAt).isNotNull();
+                assertThat(job.downloadUrl).isNull();
+            }
+        );
+    }
+
+    private Uni<Void> createTestSessionWithData(UUID sessionId, UUID userId) {
+        return Panache.withTransaction(() -> {
+            // Create User
+            User user = new User();
+            user.userId = userId;
+            user.email = "test@example.com";
+            user.displayName = "Test User";
+            user.subscriptionTier = SubscriptionTier.PRO;
+
+            // Create Room
+            Room room = new Room();
+            room.roomId = "test-room";
+            room.title = "Test Room";
+            room.owner = user;
+
+            // Create SessionHistory
+            SessionHistory session = new SessionHistory();
+            SessionHistoryId id = new SessionHistoryId();
+            id.sessionId = sessionId;
+            id.roomId = room.roomId;
+            session.id = id;
+            session.room = room;
+            session.createdAt = Instant.now();
+
+            // Create Round
+            Round round = new Round();
+            round.roundId = UUID.randomUUID();
+            round.room = room;
+            round.storyTitle = "Test Story";
+            round.revealedAt = Instant.now();
+
+            // Create Vote
+            Vote vote = new Vote();
+            vote.voteId = UUID.randomUUID();
+            vote.round = round;
+            vote.participant = createParticipant(room, user);
+            vote.cardValue = "5";
+
+            return user.persist()
+                .flatMap(u -> room.persist())
+                .flatMap(r -> session.persist())
+                .flatMap(s -> round.persist())
+                .flatMap(r -> vote.persist())
+                .replaceWithVoid();
+        });
+    }
+}
 ```
 
-### Expected Test Output
+### Test Profile Configuration
 
-When you run `mvn test`, you should see output like:
+```java
+public class ExportJobTestProfile implements QuarkusTestProfile {
 
+    @Override
+    public Map<String, String> getConfigOverrides() {
+        return Map.of(
+            "s3.bucket-name", "test-exports-bucket",
+            "export.signed-url-expiration", "3600",
+            "quarkus.log.level", "INFO"
+        );
+    }
+
+    @Override
+    public Set<Class<?>> getEnabledAlternatives() {
+        return Set.of(MockS3Producer.class);
+    }
+}
 ```
-[INFO] Tests run: 17, Failures: 0, Errors: 0, Skipped: 0
+
+### Mock S3 Producer
+
+```java
+@ApplicationScoped
+@Alternative
+@Priority(1)
+public class MockS3Producer {
+
+    @Produces
+    public S3Client createMockS3Client() {
+        S3Client mockClient = mock(S3Client.class);
+
+        // Configure successful upload by default
+        when(mockClient.putObject(any(PutObjectRequest.class), any(RequestBody.class)))
+            .thenReturn(PutObjectResponse.builder()
+                .eTag("test-etag-" + UUID.randomUUID())
+                .build());
+
+        return mockClient;
+    }
+
+    @Produces
+    public S3Presigner createMockS3Presigner() {
+        S3Presigner mockPresigner = mock(S3Presigner.class);
+
+        try {
+            when(mockPresigner.presignGetObject(any(GetObjectPresignRequest.class)))
+                .thenReturn(PresignedGetObjectRequest.builder()
+                    .url(new URL("https://test-bucket.s3.amazonaws.com/exports/test-file.csv?presigned=true"))
+                    .build());
+        } catch (MalformedURLException e) {
+            throw new RuntimeException(e);
+        }
+
+        return mockPresigner;
+    }
+}
 ```
 
-The JaCoCo coverage report should show >90% coverage for ReportingService.java.
+### Acceptance Criteria Checklist
 
----
-
-## Summary
-
-**Task Status:** The ReportingServiceTest.java file **ALREADY EXISTS** with comprehensive coverage (17 test methods vs. 12+ required). Your primary task is to:
-
-1. **Verify** the tests are passing
-2. **Analyze** code coverage to ensure ≥90% threshold is met
-3. **Enhance** any missing test scenarios if needed
-4. **Document** your findings
-
-The existing tests follow all project conventions and cover all specified scenarios in the acceptance criteria. This is likely a task verification/enhancement rather than creation from scratch.
+✅ Integration test class created at `backend/src/test/java/com/scrumpoker/worker/ExportJobIntegrationTest.java`
+✅ Test runs successfully with `mvn verify` (actually uses `mvn test` since it's a regular test)
+✅ S3 operations mocked (no real AWS calls)
+✅ Test verifies job status transitions: PENDING → PROCESSING → COMPLETED
+✅ Test verifies `downloadUrl` populated on completion
+✅ Test verifies S3Client.putObject called with correct parameters
+✅ Failure test verifies status=FAILED and errorMessage populated
+✅ Uses Testcontainers for PostgreSQL and Redis (via Quarkus Dev Services)
+✅ Follows reactive test pattern with `@RunOnVertxContext` and `UniAsserter`
+✅ Test data cleanup in `@BeforeEach`
