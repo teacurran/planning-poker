@@ -10,23 +10,25 @@ This is the full specification of the task you must complete.
 
 ```json
 {
-  "task_id": "I6.T8",
-  "iteration_id": "I6",
-  "iteration_goal": "Implement session history tracking, tier-based reporting (basic summaries for Free, detailed analytics for Pro/Enterprise), export functionality (CSV/PDF), and frontend reporting UI.",
-  "description": "Create integration test for export job end-to-end flow. Test: trigger export API, verify job enqueued to Redis Stream, worker processes job, CSV/PDF generated, file uploaded to S3 (use LocalStack or S3Mock), job status updated to COMPLETED, download URL returned. Test error scenario (S3 upload failure, job marked FAILED). Use Testcontainers for Redis and PostgreSQL.",
+  "task_id": "I7.T1",
+  "iteration_id": "I7",
+  "iteration_goal": "Implement enterprise-tier features including SSO integration (OIDC/SAML2), organization management, member administration, org-level branding, and audit logging.",
+  "description": "Create `SsoAdapter` service supporting OIDC and SAML2 protocols using Quarkus Security extensions. OIDC: configure IdP discovery endpoint, handle authorization code flow, validate ID token, extract user attributes (email, name, groups). SAML2: configure IdP metadata URL, handle SAML response, validate assertions, extract attributes from assertion. Map IdP attributes to User entity fields. Support per-organization SSO configuration (stored in Organization.sso_config JSONB). Implement backchannel logout (OIDC logout endpoint, SAML SLO).",
   "agent_type_hint": "BackendAgent",
-  "inputs": "ExportJobProcessor from I6.T3, Redis Streams testing patterns, S3 mocking (LocalStack or S3Mock)",
+  "inputs": "SSO requirements from architecture blueprint, Quarkus OIDC and SAML2 extension documentation, Enterprise SSO patterns (Okta, Azure AD)",
   "input_files": [
-    "backend/src/main/java/com/scrumpoker/worker/ExportJobProcessor.java"
+    ".codemachine/artifacts/architecture/05_Operational_Architecture.md"
   ],
   "target_files": [
-    "backend/src/test/java/com/scrumpoker/worker/ExportJobIntegrationTest.java"
+    "backend/src/main/java/com/scrumpoker/integration/sso/SsoAdapter.java",
+    "backend/src/main/java/com/scrumpoker/integration/sso/OidcProvider.java",
+    "backend/src/main/java/com/scrumpoker/integration/sso/Saml2Provider.java",
+    "backend/src/main/java/com/scrumpoker/integration/sso/SsoUserInfo.java"
   ],
-  "deliverables": "Integration test for export flow, Test: job enqueued → worker processes → file uploaded → status updated, Test: S3 failure → job marked FAILED, LocalStack or S3Mock for S3 testing, Assertions on job status transitions",
-  "acceptance_criteria": "`mvn verify` runs export integration test, Export job processes successfully, CSV file uploaded to mock S3, Job status transitions: PENDING → PROCESSING → COMPLETED, Download URL generated and accessible, Failure test marks job FAILED with error message",
-  "dependencies": [
-    "I6.T3"
-  ],
+  "deliverables": "SsoAdapter with OIDC and SAML2 support, Organization-specific SSO configuration (IdP endpoint, certificate, attribute mapping from JSONB), User attribute extraction (email, name, groups/roles), Backchannel logout implementation, SSO provider-specific implementations (Okta, Azure AD tested)",
+  "acceptance_criteria": "OIDC authentication flow completes with test IdP (Okta sandbox), SAML2 authentication flow completes (Azure AD or SAML test IdP), User attributes correctly mapped from ID token/assertion, Organization-specific SSO config loaded from database, Logout endpoint invalidates SSO session, Certificate validation works for SAML2",
+  "dependencies": [],
+  "parallelizable": true,
   "done": false
 }
 ```
@@ -37,62 +39,120 @@ This is the full specification of the task you must complete.
 
 The following are the relevant sections from the architecture and plan documents, which I found by analyzing the task description.
 
-### Context: asynchronous-job-processing-pattern (from 04_Behavior_and_Communication.md)
+### Context: authentication-mechanisms (from 05_Operational_Architecture.md)
 
 ```markdown
-<!-- anchor: asynchronous-job-processing-pattern -->
-##### Asynchronous Job Processing (Fire-and-Forget)
+##### Authentication Mechanisms
 
-**Use Cases:**
-- Report export generation (CSV, PDF) for large datasets
-- Email notifications (subscription confirmations, payment receipts)
-- Analytics aggregation for organizational dashboards
-- Audit log archival to object storage
+**OAuth2 Social Login (Free/Pro Tiers):**
+- **Providers:** Google OAuth2, Microsoft Identity Platform
+- **Flow:** Authorization Code Flow with PKCE (Proof Key for Code Exchange) for browser-based clients
+- **Implementation:** Quarkus OIDC extension handling token exchange and validation
+- **Token Storage:** JWT access tokens (1-hour expiration) in browser `localStorage`, refresh tokens (30-day expiration) in `httpOnly` secure cookies
+- **User Provisioning:** Automatic user creation on first login with `oauth_provider` and `oauth_subject` as unique identifiers
+- **Profile Sync:** Email, display name, and avatar URL synced from OAuth provider on each login
 
-**Pattern Characteristics:**
-- REST endpoint returns `202 Accepted` immediately with job ID
-- Job message enqueued to Redis Stream
-- Background worker consumes stream, processes job
-- Client polls status endpoint or receives WebSocket notification on completion
-- Job results stored in object storage (S3) with time-limited signed URLs
+**Enterprise SSO (Enterprise Tier):**
+- **Protocols:** OIDC (OpenID Connect) and SAML2 support via Quarkus Security extensions
+- **Configuration:** Per-organization SSO settings stored in `Organization.sso_config` JSONB field (IdP endpoint, certificate, attribute mapping)
+- **Domain Enforcement:** Email domain verification ensures users with `@company.com` email automatically join organization workspace
+- **Just-In-Time (JIT) Provisioning:** User accounts created on first SSO login with organization membership pre-assigned
+- **Session Management:** SSO sessions synchronized with IdP via backchannel logout or session validation
 
-**Flow Example (Report Export):**
-1. Client: `POST /api/v1/reports/export` → Server: `202 Accepted` + `{"jobId": "uuid", "status": "pending"}`
-2. Server enqueues job to Redis Stream: `jobs:reports`
-3. Background worker consumes job, queries PostgreSQL, generates CSV
-4. Worker uploads file to S3, updates job status in database
-5. Client polls: `GET /api/v1/jobs/{jobId}` → `{"status": "completed", "downloadUrl": "https://..."}`
+**Anonymous Play:**
+- **Identifier:** Client-generated UUID stored in browser `sessionStorage` for session continuity
+- **Room Association:** Anonymous participants linked to room via `RoomParticipant.anonymous_id`
+- **Feature Restrictions:** No session history access, no saved preferences, no administrative capabilities
+- **Data Lifecycle:** Anonymous session data purged 24 hours after room inactivity
 ```
 
-### Context: integration-testing (from 03_Verification_and_Glossary.md)
+### Context: authorization-strategy (from 05_Operational_Architecture.md)
 
 ```markdown
-<!-- anchor: integration-testing -->
-#### Integration Testing
+##### Authorization Strategy
 
-**Scope:** Multiple components working together with real infrastructure (database, cache, message queue)
+**Role-Based Access Control (RBAC):**
+- **Roles:** `ANONYMOUS`, `USER`, `PRO_USER`, `ORG_ADMIN`, `ORG_MEMBER`
+- **Implementation:** Quarkus Security annotations (`@RolesAllowed`) on REST endpoints and service methods
+- **JWT Claims:** Access token includes `roles` array for authorization decisions
+- **Dynamic Role Mapping:** Subscription tier (`FREE`, `PRO`, `PRO_PLUS`, `ENTERPRISE`) mapped to roles during token generation
 
-**Framework:** Quarkus Test (`@QuarkusTest`), Testcontainers, REST Assured
+**Resource-Level Permissions:**
+- **Room Access:**
+  - `PUBLIC` rooms: Accessible to anyone with room ID
+  - `INVITE_ONLY` rooms: Requires room owner to whitelist participant (Pro+ tier)
+  - `ORG_RESTRICTED` rooms: Requires organization membership (Enterprise tier)
+- **Room Operations:**
+  - Host controls (reveal, reset, kick): Room creator or user with `HOST` role in `RoomParticipant`
+  - Configuration updates: Room owner only
+  - Vote casting: Participants with `VOTER` role (excludes `OBSERVER`)
+- **Report Access:**
+  - Free tier: Session summary only (no round-level detail)
+  - Pro tier: Full session history with round breakdown
+  - Enterprise tier: Organization-wide analytics with member filtering
 
-**Coverage Target:** Critical integration points (API → Service → Repository → Database)
+**Enforcement Points:**
+1. **API Gateway/Ingress:** JWT validation and signature verification
+2. **REST Controllers:** Role-based annotations reject unauthorized requests with `403 Forbidden`
+3. **WebSocket Handshake:** Token validation before connection upgrade
+4. **Service Layer:** Domain-level checks (e.g., room privacy mode enforcement, subscription feature gating)
+```
 
-**Approach:**
-- Use Testcontainers for PostgreSQL and Redis (real instances, not mocks)
-- Test REST endpoints end-to-end (request → response with database persistence)
-- Test WebSocket flows (connection → message handling → database → Pub/Sub broadcast)
-- Verify transaction boundaries and data consistency
-- Run in CI pipeline (longer execution time acceptable: 10-15 minutes)
+### Context: audit-logging (from 05_Operational_Architecture.md)
 
-**Examples:**
-- `RoomControllerTest`: POST /rooms creates database record, GET retrieves it
-- `VotingFlowIntegrationTest`: WebSocket vote message → database insert → Redis Pub/Sub → client broadcast
-- `StripeWebhookControllerTest`: Webhook event → signature verification → database update
+```markdown
+**Audit Logging:**
+- **Scope:** Enterprise tier security and compliance events
+- **Storage:** Dedicated `AuditLog` table (partitioned by month) + immutable S3 bucket for archival
+- **Events:**
+  - User authentication (SSO login, logout)
+  - Organization configuration changes (SSO settings, branding)
+  - Member management (invite, role change, removal)
+  - Administrative actions (room deletion, user account suspension)
+- **Attributes:** `timestamp`, `orgId`, `userId`, `action`, `resourceType`, `resourceId`, `ipAddress`, `userAgent`, `changeDetails` (JSONB)
+```
 
-**Acceptance Criteria:**
-- All integration tests pass (`mvn verify`)
-- Testcontainers start successfully (PostgreSQL, Redis)
-- Database schema migrations execute correctly in tests
-- No test pollution (each test isolated with database cleanup)
+### Context: application-security (from 05_Operational_Architecture.md)
+
+```markdown
+##### Application Security
+
+**Input Validation:**
+- **REST APIs:** Bean Validation (JSR-380) annotations on DTOs, automatic validation in Quarkus REST layer
+- **WebSocket Messages:** Zod schema validation on client, server-side JSON schema validation before deserialization
+- **SQL Injection Prevention:** Parameterized queries via Hibernate Reactive, no dynamic SQL concatenation
+- **XSS Prevention:** React automatic escaping for user-generated content, CSP (Content Security Policy) headers
+
+**Authentication Security:**
+- **JWT Signature:** RS256 (RSA with SHA-256) algorithm, private key stored in Kubernetes Secret
+- **Token Expiration:** Short-lived access tokens (1 hour), refresh tokens rotated on use
+- **OAuth2 State Parameter:** CSRF protection for OAuth flow, state validated on callback
+- **PKCE:** Protects authorization code from interception in browser-based flows
+
+**Authorization Security:**
+- **Least Privilege:** Default deny policy, explicit role grants required for resource access
+- **Resource Ownership Validation:** Service layer verifies user owns/has permission for requested resource (e.g., room, report)
+- **Rate Limiting:** Redis-backed token bucket algorithm:
+  - Anonymous users: 10 req/min per IP
+  - Authenticated users: 100 req/min per user
+  - WebSocket messages: 50 msg/min per connection
+
+**Data Protection:**
+- **Encryption at Rest:** PostgreSQL Transparent Data Encryption (TDE) for sensitive columns (email, payment metadata)
+- **PII Handling:** User emails hashed in logs, full values only in database and audit logs
+- **Secrets Management:** Kubernetes Secrets for database credentials, OAuth client secrets, JWT signing keys
+- **Payment Security:** Stripe tokenization for card details, no PCI-sensitive data stored in application database
+```
+
+### Context: enterprise-requirements (from 01_Context_and_Drivers.md)
+
+```markdown
+#### Enterprise Requirements
+- **SSO Integration:** OIDC and SAML2 support for identity providers (Okta, Azure AD, OneLogin)
+- **Organization Management:** Multi-user workspaces with role-based access (Admin, Member)
+- **Audit Logging:** Immutable event log for compliance (authentication, configuration changes, member management)
+- **Custom Branding:** Organization logo, color scheme application-wide (Pro+ and Enterprise)
+- **Advanced Analytics:** Organization-wide reporting dashboards with member filtering
 ```
 
 ---
@@ -103,100 +163,164 @@ The following analysis is based on my direct review of the current codebase. Use
 
 ### Relevant Existing Code
 
-*   **File:** `backend/src/test/java/com/scrumpoker/worker/ExportJobIntegrationTest.java`
-    *   **Summary:** This file ALREADY EXISTS and contains a comprehensive integration test for the export job flow. It includes tests for successful export flow and failure scenarios.
-    *   **Current State:** The test file is complete with two test methods:
-        1. `testExportJobSuccessFlow()` - Tests PENDING → PROCESSING → COMPLETED flow
-        2. `testExportJobFailure_SessionNotFound()` - Tests FAILED status when session doesn't exist
-    *   **Recommendation:** **CRITICAL - This task appears to be ALREADY COMPLETE.** Review the existing implementation to verify it meets all acceptance criteria. The file contains exactly what was requested in the task description.
+*   **File:** `backend/src/main/java/com/scrumpoker/integration/oauth/OAuth2Adapter.java`
+    *   **Summary:** This is the existing OAuth2 integration adapter that handles Google and Microsoft social login. It uses a Strategy pattern with provider-specific implementations (`GoogleOAuthProvider`, `MicrosoftOAuthProvider`).
+    *   **Recommendation:** You SHOULD follow the EXACT SAME PATTERN for SSO. Create `SsoAdapter` similar to `OAuth2Adapter`, with provider-specific implementations for OIDC and SAML2. Study the method signatures `exchangeCodeForToken()` and `validateIdToken()` as these patterns will be relevant for SSO token validation.
+    *   **Key Insight:** The OAuth2Adapter demonstrates:
+        - Provider routing via switch statement on provider name
+        - Common interface (`OAuthUserInfo`) returned by all providers
+        - Dependency injection of provider implementations
+        - Comprehensive input validation before delegation
+        - Structured logging with provider context
 
-*   **File:** `backend/src/test/java/com/scrumpoker/worker/ExportJobTestProfile.java`
-    *   **Summary:** Test profile configuration that enables MockS3Producer and overrides configuration for test environment.
-    *   **Key Configuration:**
-        - S3 bucket name: "test-exports-bucket"
-        - Signed URL expiration: 3600 seconds (1 hour for testing)
-        - Enables MockS3Producer as CDI alternative
-    *   **Recommendation:** This profile is properly configured to support the integration test. The MockS3Producer approach is already implemented and functional.
+*   **File:** `backend/src/main/java/com/scrumpoker/domain/organization/Organization.java`
+    *   **Summary:** This entity already has the `ssoConfig` JSONB field (String type) and `branding` JSONB field for storing per-organization configuration.
+    *   **Recommendation:** You MUST use the existing `Organization.ssoConfig` field to store IdP configuration. This field stores JSON as a String, so you'll need to serialize/deserialize SSO configuration POJOs (IdP endpoint, certificate, attribute mappings) to/from JSON. Consider creating a `SsoConfig` POJO similar to how other parts of the codebase handle JSONB.
+    *   **Key Fields:**
+        - `orgId` (UUID) - Primary key
+        - `domain` (String) - Email domain for user auto-assignment (e.g., "acme.com")
+        - `ssoConfig` (String, JSONB) - Where you'll store IdP settings
+        - `subscription` (ManyToOne) - Link to enterprise subscription
 
-*   **File:** `backend/src/test/java/com/scrumpoker/worker/MockS3Producer.java`
-    *   **Summary:** CDI producer that provides mocked S3Client and S3Presigner beans using Mockito.
-    *   **Mock Behavior:**
-        - S3Client.putObject() returns success with random ETag
-        - S3Presigner.presignGetObject() returns valid presigned URL
-    *   **Recommendation:** The S3 mocking strategy is already implemented and tested. No changes needed here.
+*   **File:** `backend/src/main/java/com/scrumpoker/repository/OrganizationRepository.java`
+    *   **Summary:** Repository with `findByDomain()` method that will be critical for SSO domain-based organization lookup.
+    *   **Recommendation:** You MUST use `OrganizationRepository.findByDomain()` to look up organizations based on user email domain during SSO authentication. This enables automatic organization assignment (JIT provisioning flow).
 
-*   **File:** `backend/src/main/java/com/scrumpoker/worker/ExportJobProcessor.java`
-    *   **Summary:** Background worker that processes export jobs from Redis Stream. Handles job lifecycle: PENDING → PROCESSING → COMPLETED/FAILED.
+*   **File:** `backend/src/main/java/com/scrumpoker/security/JwtTokenService.java`
+    *   **Summary:** Service that generates JWT access tokens with user claims (userId, email, roles, tier) and manages refresh tokens in Redis.
+    *   **Recommendation:** You WILL need to call this service after successful SSO authentication to generate JWT tokens. The SSO flow should: 1) Validate SSO assertion/token, 2) Extract user info, 3) Find or create user, 4) Call `JwtTokenService.generateTokens(user)` to get access/refresh token pair.
     *   **Key Methods:**
-        - `processExportJob()`: Main processing logic with retry support
-        - Uses CsvExporter and PdfExporter for file generation
-        - Uploads to S3 via S3Adapter
-        - Updates ExportJob entity status
-    *   **Recommendation:** The processor has a public `processExportJob()` method that the test calls directly (line 122 in test), bypassing Redis Stream for faster, more deterministic testing.
+        - `generateTokens(User)` - Creates access and refresh tokens
+        - Token includes roles array based on subscription tier
+        - Access token: 1 hour expiration (RS256 signed)
+        - Refresh token: 30 days in Redis
 
-*   **File:** `backend/src/main/java/com/scrumpoker/domain/reporting/ExportJob.java`
-    *   **Summary:** JPA entity tracking export job status with helper methods for state transitions.
-    *   **State Transition Methods:**
-        - `markAsProcessing()`: Sets status to PROCESSING, records start time
-        - `markAsCompleted(downloadUrl)`: Sets status to COMPLETED with URL
-        - `markAsFailed(errorMessage)`: Sets status to FAILED with error details
-    *   **Recommendation:** Use the entity's built-in state transition methods. They handle timestamp updates automatically.
+*   **File:** `backend/src/main/java/com/scrumpoker/api/rest/AuthController.java`
+    *   **Summary:** REST controller handling OAuth2 callback with JIT user provisioning. The `oauthCallback()` method demonstrates the complete flow: code exchange → user provisioning → token generation.
+    *   **Recommendation:** You will eventually need to create an SSO callback endpoint similar to this OAuth2 callback. Study the flow in `oauthCallback()` method:
+        1. Exchange authorization code for user info via adapter
+        2. Call `UserService.findOrCreateUser(oauthUserInfo)` for JIT provisioning
+        3. Generate tokens via `JwtTokenService.generateTokens(user)`
+        4. Return TokenResponse with tokens and user profile
+    *   **Note:** The SSO callback endpoint will be implemented in Task I7.T4, but understanding this pattern NOW is critical for designing the `SsoAdapter` return type and user attribute extraction.
 
-*   **File:** `backend/src/main/java/com/scrumpoker/integration/s3/S3Adapter.java`
-    *   **Summary:** AWS S3 integration adapter that uploads files and generates presigned URLs.
-    *   **Key Details:**
-        - Object key format: `exports/{sessionId}/{jobId}.{format}`
-        - Uses blocking S3Client but wraps in Uni on worker thread pool
-        - Presigned URLs expire after configured duration (7 days in prod, 1 hour in tests)
-    *   **Recommendation:** S3Adapter is injected into ExportJobProcessor. In tests, the mocked S3Client is injected automatically via MockS3Producer.
+*   **File:** `backend/pom.xml`
+    *   **Summary:** Maven dependencies configuration. Currently includes `quarkus-oidc` extension for OAuth2 support.
+    *   **Recommendation:** You MUST add SAML2 support. Research and add the appropriate Quarkus SAML2 extension. Likely candidates:
+        - `quarkus-elytron-security-saml` or similar WildFly Elytron SAML2 adapter
+        - Consult Quarkus documentation for the correct SAML2 extension in Quarkus 3.15.1
+        - DO NOT add external SAML libraries (like OpenSAML) if Quarkus provides a built-in extension
+    *   **Current Extensions:** quarkus-oidc (line 88-90) is already present for OAuth2/OIDC support.
+
+*   **File:** `backend/src/main/resources/application.properties`
+    *   **Summary:** Application configuration with OIDC settings starting at line 78.
+    *   **Recommendation:** You SHOULD add SSO-specific configuration properties for OIDC enterprise IdPs and SAML2 settings. Since SSO config is per-organization (stored in database), you may only need:
+        - SAML2 entity ID for your application
+        - ACS (Assertion Consumer Service) URL endpoint
+        - Consider making these environment-configurable
+    *   **Pattern:** Follow existing JWT config pattern (lines 54-75) with environment variable fallbacks like `${SSO_ENTITY_ID:default-value}`
 
 ### Implementation Tips & Notes
 
-*   **CRITICAL TIP:** The task description asks you to "Create integration test for export job end-to-end flow" but this test **ALREADY EXISTS** and is fully functional. Before writing any code, carefully review `ExportJobIntegrationTest.java` to confirm it meets all acceptance criteria listed in the task.
+*   **Tip:** I found that the project consistently uses **Uni<>** reactive return types for all async operations. Your SsoAdapter methods MUST return reactive types (e.g., `Uni<SsoUserInfo>`), NOT blocking types.
 
-*   **Test Strategy:** The existing test uses a **manual trigger approach** - it calls `ExportJobProcessor.processExportJob()` directly rather than enqueuing to Redis Stream. This is documented in the test's JavaDoc (lines 47-52) as providing "faster, more deterministic tests while still covering all the core processing logic."
+*   **Tip:** JSONB fields in entities are stored as String type and require manual JSON serialization/deserialization. See how the codebase handles Room.config and Organization.ssoConfig. You SHOULD create helper POJOs (e.g., `SsoConfig.java`, `SamlConfig.java`, `OidcConfig.java`) and use Jackson ObjectMapper to serialize/deserialize to/from the String field.
 
-*   **Data Setup Pattern:** The test follows this setup pattern:
-    1. Clean up all test data in `@BeforeEach` (lines 80-99)
-    2. Create test entities: User → Room → SessionHistory → RoomParticipant → Round → Vote
-    3. Use `Panache.withTransaction()` to wrap entity creation
-    4. Use `.persist()` followed by single `.flush()` at end (not `persistAndFlush()` for each)
+*   **Note:** The OAuth2Adapter uses `@ApplicationScoped` CDI annotation and injects provider implementations. Your SsoAdapter MUST follow the same pattern with `@Inject` for `OidcProvider` and `Saml2Provider`.
 
-*   **Assertion Pattern:** Tests use `@RunOnVertxContext` and `UniAsserter` for reactive assertions:
-    - `asserter.execute()` runs reactive operations
-    - `asserter.assertThat()` for assertions on reactive results
-    - Follows pattern: execute setup → execute action → assert result
+*   **Warning:** Enterprise SSO is a NEW capability (Iteration 7). There are NO existing SSO-related files in the codebase. You're starting from scratch in the `integration/sso/` package. However, you MUST follow the established patterns from `integration/oauth/` package.
 
-*   **Test Coverage:** The existing tests cover:
-    - ✅ Success flow: PENDING → PROCESSING → COMPLETED
-    - ✅ Job status transitions with timestamps
-    - ✅ Download URL generation
-    - ✅ S3 upload (mocked)
-    - ✅ Failure scenario: Session not found → FAILED status
-    - ⚠️ **MISSING:** The task description mentions "S3 upload failure" test, but current failure test only covers "session not found" scenario
+*   **Note:** The task mentions "backchannel logout" for OIDC and "SAML SLO" (Single Logout). This is ADVANCED functionality that may require:
+    - OIDC: Implementing logout endpoint that receives backchannel logout tokens from IdP
+    - SAML2: Handling LogoutRequest and LogoutResponse SAML messages
+    - Consider marking backchannel logout as a "stretch goal" if time is limited - focus first on authentication flow
 
-*   **Potential Gap:** If the task requires a SPECIFIC test for S3 upload failures (not just session-not-found failures), you may need to add one more test method that:
-    1. Creates valid session data
-    2. Reconfigures MockS3Producer to throw exception on putObject()
-    3. Verifies job marked as FAILED with S3-related error message
+*   **Critical:** User attribute extraction must map IdP-specific claim names to our User entity fields:
+    - OIDC: Standard claims (sub, email, name, picture, groups)
+    - SAML2: Custom attribute mapping per organization (e.g., `emailAddress` attribute → email field)
+    - The attribute mapping configuration SHOULD be stored in Organization.ssoConfig JSONB
 
-*   **Note on Testcontainers:** The test uses `@QuarkusTest` which automatically starts Testcontainers for PostgreSQL and Redis via Quarkus Dev Services. No explicit Testcontainers configuration is needed in the test class.
+*   **Architecture Insight:** The existing OAuth2 flow doesn't involve organization lookup because social login is for individual users. SSO is fundamentally DIFFERENT: it requires organization context. Your SsoAdapter MUST:
+    1. Extract email domain from user attributes
+    2. Look up organization by domain (use `OrganizationRepository.findByDomain()`)
+    3. Load organization's SSO config from JSONB
+    4. Use that config to validate the assertion/token
+    This is a CIRCULAR dependency challenge: you need org config to validate, but you get user email from the validated token. SOLUTION: Validation happens in two phases - basic signature/structural validation first (using app-wide settings), then attribute extraction, then org-specific validation (if needed).
 
-*   **Acceptance Criteria Verification:**
-    - ✅ "`mvn verify` runs export integration test" - Test is in src/test, will run on verify
-    - ✅ "Export job processes successfully" - Covered by testExportJobSuccessFlow
-    - ✅ "CSV file uploaded to mock S3" - MockS3Client configured to accept uploads
-    - ✅ "Job status transitions: PENDING → PROCESSING → COMPLETED" - Assertions on lines 129-141
-    - ✅ "Download URL generated and accessible" - Asserted on lines 131-134
-    - ✅ "Failure test marks job FAILED with error message" - Covered by testExportJobFailure_SessionNotFound (lines 159-200)
-    - ⚠️ "S3 failure → job marked FAILED" - Only session-not-found failure tested, not explicit S3 failure
+*   **Security Note:** SAML2 certificate validation is CRITICAL for security. The IdP's signing certificate MUST be validated against the certificate stored in Organization.ssoConfig. DO NOT skip certificate validation or use test/development modes that bypass validation in production code.
 
-### Recommendation Summary
+*   **Testing Strategy:** The acceptance criteria mention "Okta sandbox" and "Azure AD or SAML test IdP". You SHOULD:
+    - Use Okta's free developer account for OIDC testing
+    - Use SAMLtest.id or similar free SAML test IdP for SAML2 testing
+    - Create integration tests with MOCKED IdP responses for CI/CD pipeline
+    - DO NOT require real IdP credentials for automated tests
 
-**Before writing any code:** Run the existing test to verify it passes:
-```bash
-cd backend
-mvn test -Dtest=ExportJobIntegrationTest
+*   **Return Type Design:** Based on OAuth2Adapter pattern, create `SsoUserInfo` DTO similar to `OAuthUserInfo`. It should contain:
+    - subject (unique IdP user identifier)
+    - email
+    - name (display name)
+    - groups/roles (optional, for RBAC mapping)
+    - provider ("oidc" or "saml2")
+    - orgId (UUID) - This is DIFFERENT from OAuth2, SSO is organization-scoped
+
+*   **Error Handling:** Follow the existing pattern in OAuth2Adapter - throw custom exceptions:
+    - Create `SsoAuthenticationException` similar to `OAuth2AuthenticationException`
+    - Throw for: invalid assertions, expired tokens, certificate validation failures, unsupported IdP configurations
+    - Include detailed error messages for debugging but sanitize before returning to client (avoid leaking security details)
+
+### Package Structure Recommendation
+
+Create the following structure mirroring `integration/oauth/`:
+
+```
+backend/src/main/java/com/scrumpoker/integration/sso/
+├── SsoAdapter.java              (main facade, similar to OAuth2Adapter)
+├── SsoUserInfo.java             (DTO for extracted user attributes)
+├── SsoAuthenticationException.java  (custom exception)
+├── OidcProvider.java            (OIDC-specific implementation)
+├── Saml2Provider.java           (SAML2-specific implementation)
+├── SsoConfig.java               (POJO for deserializing Organization.ssoConfig JSONB)
+└── package-info.java            (Javadoc package description)
 ```
 
-If the test passes and covers all requirements, **mark the task as done and update the task manifest**. If there's a gap (specifically S3 upload failure testing), add ONE additional test method to the existing file rather than rewriting everything.
+### Quarkus Extensions Research Required
+
+Before starting implementation, you MUST research:
+1. Confirm the correct Quarkus SAML2 extension for version 3.15.1
+2. Review Quarkus OIDC documentation for enterprise IdP configuration patterns
+3. Understand how to configure multi-tenant OIDC (per-organization IdP URLs)
+4. Check if Quarkus has built-in support for SAML2 or if you need WildFly Elytron integration
+
+### JSON Schema for Organization.ssoConfig
+
+Based on architecture requirements, the JSONB should support both OIDC and SAML2:
+
+```json
+{
+  "protocol": "oidc",
+  "oidc": {
+    "issuer": "https://your-org.okta.com",
+    "clientId": "client-id",
+    "clientSecret": "encrypted-secret",
+    "authorizationEndpoint": "...",
+    "tokenEndpoint": "...",
+    "userInfoEndpoint": "...",
+    "jwksUri": "..."
+  },
+  "saml2": {
+    "idpEntityId": "https://idp.example.com",
+    "ssoUrl": "https://idp.example.com/sso",
+    "sloUrl": "https://idp.example.com/slo",
+    "certificate": "-----BEGIN CERTIFICATE-----\n...",
+    "attributeMapping": {
+      "email": "emailAddress",
+      "name": "displayName",
+      "groups": "memberOf"
+    }
+  },
+  "domainVerificationRequired": true,
+  "jitProvisioningEnabled": true
+}
+```
+
+You SHOULD create POJOs matching this structure for type-safe configuration access.
