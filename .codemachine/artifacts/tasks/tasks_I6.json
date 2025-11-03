@@ -102,7 +102,7 @@
     "acceptance_criteria": "`mvn test` runs reporting tests successfully, Summary generation test verifies correct consensus rate, Detailed report test includes round breakdown, Tier enforcement test throws FeatureNotAvailableException, Consistency calculation test verifies formula (σ²), Export enqueue test verifies Redis message published",
     "dependencies": ["I6.T2"],
     "parallelizable": true,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I6.T8",
