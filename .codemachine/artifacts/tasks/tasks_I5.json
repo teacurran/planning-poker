@@ -72,7 +72,7 @@
     "acceptance_criteria": "GET /subscriptions/{userId} returns current subscription status, POST /subscriptions/checkout returns Stripe checkout session URL, Redirecting to session URL displays Stripe payment page, POST /cancel marks subscription as canceled, GET /invoices returns user's payment history, Unauthorized access returns 403",
     "dependencies": ["I5.T2"],
     "parallelizable": false,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I5.T6",

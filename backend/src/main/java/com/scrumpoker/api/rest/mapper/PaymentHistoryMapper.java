@@ -12,12 +12,12 @@ import jakarta.enterprise.context.ApplicationScoped;
 public class PaymentHistoryMapper {
 
     /**
-     * Converts a PaymentHistory entity to PaymentHistoryDTO for REST API responses.
+     * Converts PaymentHistory entity to PaymentHistoryDTO.
      *
      * @param paymentHistory The payment history entity
      * @return PaymentHistoryDTO with all fields mapped
      */
-    public PaymentHistoryDTO toDTO(PaymentHistory paymentHistory) {
+    public PaymentHistoryDTO toDTO(final PaymentHistory paymentHistory) {
         if (paymentHistory == null) {
             return null;
         }

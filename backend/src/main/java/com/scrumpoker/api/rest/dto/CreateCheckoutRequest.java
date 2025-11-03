@@ -7,6 +7,7 @@ import jakarta.validation.constraints.NotNull;
  * Request DTO for creating a Stripe checkout session.
  * Maps to OpenAPI CheckoutRequest schema.
  */
+// CHECKSTYLE:OFF VisibilityModifier - DTOs use public fields for Jackson
 public class CreateCheckoutRequest {
 
     /**
@@ -27,3 +28,4 @@ public class CreateCheckoutRequest {
     @NotNull
     public String cancelUrl;
 }
+// CHECKSTYLE:ON VisibilityModifier

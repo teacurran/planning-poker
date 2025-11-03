@@ -6,6 +6,7 @@ import java.util.List;
  * Response DTO for paginated invoice list.
  * Maps to OpenAPI InvoiceListResponse schema.
  */
+// CHECKSTYLE:OFF VisibilityModifier|HiddenField - DTO pattern
 public class InvoiceListResponse {
 
     /**
@@ -48,8 +49,11 @@ public class InvoiceListResponse {
      * @param totalElements Total elements
      * @param totalPages Total pages
      */
-    public InvoiceListResponse(List<PaymentHistoryDTO> invoices, int page, int size,
-                                long totalElements, int totalPages) {
+    public InvoiceListResponse(final List<PaymentHistoryDTO> invoices,
+                                final int page,
+                                final int size,
+                                final long totalElements,
+                                final int totalPages) {
         this.invoices = invoices;
         this.page = page;
         this.size = size;
@@ -57,3 +61,4 @@ public class InvoiceListResponse {
         this.totalPages = totalPages;
     }
 }
+// CHECKSTYLE:ON VisibilityModifier|HiddenField

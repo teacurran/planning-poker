@@ -9,6 +9,7 @@ import java.util.UUID;
  * DTO representing a payment history record for REST API responses.
  * Maps to the PaymentHistory entity and OpenAPI PaymentHistoryDTO schema.
  */
+// CHECKSTYLE:OFF VisibilityModifier - DTOs use public fields for Jackson
 public class PaymentHistoryDTO {
 
     /**
@@ -46,3 +47,4 @@ public class PaymentHistoryDTO {
      */
     public Instant paidAt;
 }
+// CHECKSTYLE:ON VisibilityModifier

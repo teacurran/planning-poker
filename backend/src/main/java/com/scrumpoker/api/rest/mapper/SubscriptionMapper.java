@@ -17,13 +17,16 @@ import java.util.UUID;
 @ApplicationScoped
 public class SubscriptionMapper {
 
+    /** Period in days for FREE tier subscription validity. */
+    private static final int FREE_TIER_PERIOD_DAYS = 365;
+
     /**
-     * Converts a Subscription entity to SubscriptionDTO for REST API responses.
+     * Converts Subscription entity to SubscriptionDTO.
      *
      * @param subscription The subscription entity
      * @return SubscriptionDTO with all fields mapped
      */
-    public SubscriptionDTO toDTO(Subscription subscription) {
+    public SubscriptionDTO toDTO(final Subscription subscription) {
         if (subscription == null) {
             return null;
         }
@@ -45,13 +48,13 @@ public class SubscriptionMapper {
     }
 
     /**
-     * Creates a default SubscriptionDTO for FREE tier users (no subscription).
+     * Creates default SubscriptionDTO for FREE tier users.
      * Used when a user has no active subscription record.
      *
      * @param userId The user ID
      * @return SubscriptionDTO with FREE tier defaults
      */
-    public SubscriptionDTO createFreeTierDTO(UUID userId) {
+    public SubscriptionDTO createFreeTierDTO(final UUID userId) {
         SubscriptionDTO dto = new SubscriptionDTO();
         dto.subscriptionId = null;
         dto.stripeSubscriptionId = null;
@@ -60,7 +63,9 @@ public class SubscriptionMapper {
         dto.tier = SubscriptionTier.FREE;
         dto.status = SubscriptionStatus.ACTIVE;
         dto.currentPeriodStart = Instant.now();
-        dto.currentPeriodEnd = Instant.now().plus(365, java.time.temporal.ChronoUnit.DAYS);
+        dto.currentPeriodEnd = Instant.now().plus(
+            FREE_TIER_PERIOD_DAYS,
+            java.time.temporal.ChronoUnit.DAYS);
         dto.canceledAt = null;
         dto.createdAt = Instant.now();
 

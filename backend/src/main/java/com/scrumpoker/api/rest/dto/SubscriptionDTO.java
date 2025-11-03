@@ -11,6 +11,7 @@ import java.util.UUID;
  * DTO representing a subscription for REST API responses.
  * Maps to the Subscription entity and OpenAPI SubscriptionDTO schema.
  */
+@SuppressWarnings({"checkstyle:visibilitymodifier", "PMD"})
 public class SubscriptionDTO {
 
     /**

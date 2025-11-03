@@ -4,6 +4,7 @@ package com.scrumpoker.api.rest.dto;
  * Response DTO containing Stripe checkout session information.
  * Maps to OpenAPI CheckoutResponse schema.
  */
+// CHECKSTYLE:OFF VisibilityModifier|HiddenField - DTO pattern
 public class CheckoutSessionResponse {
 
     /**
@@ -28,8 +29,10 @@ public class CheckoutSessionResponse {
      * @param sessionId Stripe session ID
      * @param checkoutUrl Stripe checkout URL
      */
-    public CheckoutSessionResponse(String sessionId, String checkoutUrl) {
+    public CheckoutSessionResponse(final String sessionId,
+                                     final String checkoutUrl) {
         this.sessionId = sessionId;
         this.checkoutUrl = checkoutUrl;
     }
 }
+// CHECKSTYLE:ON VisibilityModifier|HiddenField

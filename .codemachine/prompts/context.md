@@ -28,7 +28,9 @@ This is the full specification of the task you must complete.
   ],
   "deliverables": "SubscriptionController with 4 endpoints, DTOs for subscription data and checkout session, Checkout endpoint creates Stripe session and returns URL, Cancel endpoint calls BillingService.cancelSubscription, Invoice list endpoint retrieves PaymentHistory records, Authorization checks (user can only access own data)",
   "acceptance_criteria": "GET /subscriptions/{userId} returns current subscription status, POST /subscriptions/checkout returns Stripe checkout session URL, Redirecting to session URL displays Stripe payment page, POST /cancel marks subscription as canceled, GET /invoices returns user's payment history, Unauthorized access returns 403",
-  "dependencies": ["I5.T2"],
+  "dependencies": [
+    "I5.T2"
+  ],
   "parallelizable": false,
   "done": false
 }
@@ -40,213 +42,157 @@ This is the full specification of the task you must complete.
 
 The following are the relevant sections from the architecture and plan documents, which I found by analyzing the task description.
 
-### Context: Subscription & Billing Endpoints (from openapi.yaml - Lines 458-595)
+### Context: monetization-requirements (from 01_Context_and_Drivers.md)
 
 ```markdown
-## Subscription Management API Specification
+<!-- anchor: monetization-requirements -->
+### 1.4.3. Monetization Requirements
 
-### GET /api/v1/subscriptions/{userId}
-- **Summary**: Get current subscription status
-- **Description**: Returns current subscription tier, billing status, and feature limits.
-- **Parameters**: userId (path, UUID, required)
-- **Responses**:
-  - 200: SubscriptionDTO
-  - 401: Unauthorized
-  - 403: Forbidden (users can only access own data)
-  - 404: Not Found
-  - 500: Internal Server Error
+The system must support a tiered subscription model with Stripe integration:
 
-### POST /api/v1/subscriptions/checkout
-- **Summary**: Create Stripe checkout session for upgrade
-- **Description**: Creates a Stripe Checkout session for upgrading to Pro or Pro Plus tier. Returns checkout URL for redirect.
-- **Request Body**: CheckoutRequest (tier, successUrl, cancelUrl)
-- **Responses**:
-  - 200: CheckoutResponse (sessionId, checkoutUrl)
-  - 400: Bad Request
-  - 401: Unauthorized
-  - 500: Internal Server Error
+#### Subscription Tiers
+- **FREE**: Basic scrum poker functionality
+  - Anonymous play without account
+  - Up to 8 participants per room
+  - Basic voting mechanics (Fibonacci, T-shirt sizing)
+  - Session limited to 2 hours
+  - Ads displayed
 
-### POST /api/v1/subscriptions/{subscriptionId}/cancel
-- **Summary**: Cancel subscription (end of billing period)
-- **Description**: Cancels subscription at end of current billing period. Access continues until period end.
-- **Parameters**: subscriptionId (path, UUID, required)
-- **Responses**:
-  - 200: SubscriptionDTO
-  - 401: Unauthorized
-  - 403: Forbidden
-  - 404: Not Found
-  - 500: Internal Server Error
+- **PRO** ($10/month):
+  - All FREE features
+  - Unlimited participants
+  - Custom card decks
+  - Session history (last 30 days)
+  - No ads
+  - Export session reports (CSV)
+  - Advanced analytics (velocity trends)
 
-### GET /api/v1/billing/invoices
-- **Summary**: List payment history
-- **Description**: Returns paginated list of payment invoices for the authenticated user.
-- **Query Parameters**:
-  - page (integer, default: 0, min: 0)
-  - size (integer, default: 20, min: 1, max: 100)
-- **Responses**:
-  - 200: InvoiceListResponse (invoices array, pagination metadata)
-  - 401: Unauthorized
-  - 500: Internal Server Error
+- **PRO+** ($30/month):
+  - All PRO features
+  - Session history (unlimited)
+  - Jira/Azure DevOps integration
+  - Advanced reporting (PDF exports, custom dashboards)
+  - Priority support
 
-## Schema Definitions
+- **ENTERPRISE** ($100/month):
+  - All PRO+ features
+  - SSO integration (OIDC, SAML2)
+  - Organization-level management
+  - Audit logging
+  - Custom branding
+  - Dedicated support
 
-### SubscriptionDTO
-```yaml
-type: object
-required: [subscriptionId, entityId, entityType, tier, status, currentPeriodStart, currentPeriodEnd]
-properties:
-  subscriptionId: {type: string, format: uuid}
-  stripeSubscriptionId: {type: string, maxLength: 100}
-  entityId: {type: string, format: uuid}
-  entityType: {$ref: '#/components/schemas/EntityType'}  # USER or ORG
-  tier: {$ref: '#/components/schemas/SubscriptionTier'}  # FREE, PRO, PRO_PLUS, ENTERPRISE
-  status: {$ref: '#/components/schemas/SubscriptionStatus'}  # ACTIVE, PAST_DUE, CANCELED, TRIALING
-  currentPeriodStart: {type: string, format: date-time}
-  currentPeriodEnd: {type: string, format: date-time}
-  canceledAt: {type: string, format: date-time, nullable: true}
-  createdAt: {type: string, format: date-time}
+#### Stripe Integration Requirements
+- **Payment Processing**: Accept credit card payments via Stripe Checkout
+- **Subscription Management**: Create, upgrade, downgrade, cancel subscriptions
+- **Webhook Handling**: Process Stripe webhook events (subscription.created, subscription.updated, invoice.payment_succeeded, invoice.payment_failed)
+- **Billing Portal**: Integrate Stripe Customer Portal for self-service billing management
+- **Tax Calculation**: Utilize Stripe Tax for automatic tax calculation
+- **Prorated Billing**: Handle mid-cycle upgrades/downgrades with proration
+- **Trial Period**: Offer 14-day free trial for PRO/PRO+ tiers
+- **Failed Payment Handling**: Retry failed payments, send dunning emails, downgrade on persistent failure
+
+#### Tier Enforcement
+- **Feature Gates**: Restrict access to premium features based on subscription tier
+- **Usage Limits**: Enforce participant limits, session duration, storage limits
+- **Grace Period**: Provide 7-day grace period for expired subscriptions before downgrade
+- **Downgrade Handling**: Soft-delete data exceeding FREE tier limits (restore if user re-upgrades within 90 days)
 ```
 
-### CheckoutRequest
-```yaml
-type: object
-required: [tier, successUrl, cancelUrl]
-properties:
-  tier: {type: string, enum: [PRO, PRO_PLUS]}
-  successUrl: {type: string, format: uri}
-  cancelUrl: {type: string, format: uri}
-```
-
-### CheckoutResponse
-```yaml
-type: object
-required: [sessionId, checkoutUrl]
-properties:
-  sessionId: {type: string}
-  checkoutUrl: {type: string, format: uri}
-```
-
-### PaymentHistoryDTO
-```yaml
-type: object
-required: [paymentId, subscriptionId, amount, currency, status, paidAt]
-properties:
-  paymentId: {type: string, format: uuid}
-  subscriptionId: {type: string, format: uuid}
-  stripeInvoiceId: {type: string, maxLength: 100}
-  amount: {type: integer}  # cents
-  currency: {type: string, maxLength: 3}  # ISO 4217
-  status: {$ref: '#/components/schemas/PaymentStatus'}  # SUCCEEDED, PENDING, FAILED
-  paidAt: {type: string, format: date-time}
-```
-
-### InvoiceListResponse
-```yaml
-type: object
-required: [invoices, page, size, totalElements, totalPages]
-properties:
-  invoices: {type: array, items: {$ref: '#/components/schemas/PaymentHistoryDTO'}}
-  page: {type: integer}
-  size: {type: integer}
-  totalElements: {type: integer}
-  totalPages: {type: integer}
-```
-```
-
-### Context: BillingService Domain Service Architecture
+### Context: rest-api-endpoints (from 04_Behavior_and_Communication.md)
 
 ```markdown
-## BillingService Overview
+<!-- anchor: rest-api-endpoints -->
+### 4.4. REST API Endpoints
 
-The `BillingService` is a domain service managing subscription lifecycle for users and organizations, coordinating between Stripe payment processing and local subscription state.
+The following table summarizes the core REST API endpoints defined in the OpenAPI specification. The complete OpenAPI 3.1 YAML file is generated in task I2.T1 and serves as the contract between frontend and backend.
 
-### Key Methods Available
-
-1. **createSubscription(userId, tier)**
-   - Creates new subscription for user upgrading from FREE to paid tier
-   - Creates Subscription entity with TRIALING status
-   - Uses placeholder Stripe subscription ID: "pending-checkout-{UUID}"
-   - Updates User.subscriptionTier to target tier
-   - Returns: Uni<Subscription>
-   - Validates: tier is not FREE, user has no active subscription
-
-2. **upgradeSubscription(userId, newTier)**
-   - Upgrades existing paid subscription to higher tier
-   - Validates tier upgrade is valid (not a downgrade)
-   - Calls StripeAdapter.updateSubscription()
-   - Updates both Subscription entity and User.subscriptionTier
-   - Returns: Uni<Subscription>
-
-3. **cancelSubscription(userId)**
-   - Soft cancels subscription (active until period end)
-   - Sets canceledAt timestamp
-   - Calls StripeAdapter.cancelSubscription()
-   - User tier NOT updated immediately (webhook will handle at period end)
-   - Returns: Uni<Void>
-
-4. **getActiveSubscription(userId)**
-   - Retrieves active subscription for tier enforcement
-   - Returns null if user is FREE tier
-   - Returns: Uni<Subscription>
-
-5. **syncSubscriptionStatus(stripeSubscriptionId, status)**
-   - Called by webhook handler to sync Stripe state
-   - Updates subscription status
-   - Handles tier updates based on status changes
-   - Returns: Uni<Void>
-
-### Service Behavior Notes
-- All methods are @Transactional
-- All methods return reactive Uni types
-- Stripe API calls are synchronous (blocking) wrapped in Uni
-- User.subscriptionTier is always kept in sync with subscription state
-- Trial period: 30 days (DEFAULT_TRIAL_PERIOD_DAYS constant)
+#### Subscription & Billing
+| Method | Endpoint | Description | Auth Required | Iteration |
+|--------|----------|-------------|---------------|-----------|
+| GET | `/api/v1/subscriptions/{userId}` | Get current subscription status | Yes (own) | I5 |
+| POST | `/api/v1/subscriptions/checkout` | Create Stripe checkout session | Yes | I5 |
+| POST | `/api/v1/subscriptions/{subscriptionId}/cancel` | Cancel subscription (end of period) | Yes (owner) | I5 |
+| GET | `/api/v1/billing/invoices` | List payment history | Yes | I5 |
+| POST | `/api/v1/subscriptions/webhook` | Stripe webhook endpoint | No (signature verified) | I5 |
 ```
 
-### Context: StripeAdapter Integration
+### Context: api-style (from 04_Behavior_and_Communication.md)
 
 ```markdown
-## StripeAdapter Methods
+<!-- anchor: api-style -->
+### 4.1. API Style
 
-The StripeAdapter provides synchronous (blocking) methods for Stripe API operations:
+The Scrum Poker Platform exposes two primary API styles to support different communication patterns:
 
-### createCheckoutSession(userId, tier, successUrl, cancelUrl)
-- Creates Stripe checkout session for subscription
-- Parameters:
-  - userId: User UUID
-  - tier: SubscriptionTier (PRO, PRO_PLUS, ENTERPRISE)
-  - successUrl: Redirect URL on success
-  - cancelUrl: Redirect URL on cancel
-- Returns: CheckoutSessionResult(sessionId, checkoutUrl)
-- Throws: StripeException on failure
-- Configuration: Uses price IDs from application.properties:
-  - stripe.price.pro
-  - stripe.price.pro-plus
-  - stripe.price.enterprise
+#### RESTful JSON API
+- **Purpose**: CRUD operations, transactional updates, subscription management
+- **Protocol**: HTTP/1.1 or HTTP/2 with JSON payloads
+- **Authentication**: JWT Bearer tokens (from OAuth2 flow) in `Authorization` header
+- **Versioning**: URI-based versioning (`/api/v1/...`) for backward compatibility
+- **Error Handling**: Standardized error responses with HTTP status codes and JSON error objects
+  ```json
+  {
+    "error": "ResourceNotFound",
+    "message": "Room with ID abc123 not found",
+    "timestamp": "2025-01-15T10:30:00Z"
+  }
+  ```
+- **Pagination**: Cursor-based pagination for large result sets (e.g., session history)
+  ```
+  GET /api/v1/reports/sessions?cursor=abc123&limit=20
+  ```
 
-### createCustomer(userId, email)
-- Creates Stripe customer record
-- Returns: Stripe customer ID (cus_...)
-- Stores userId in metadata
+**Rationale**: RESTful APIs are well-understood, widely supported by tooling (OpenAPI/Swagger), and suitable for transactional operations where request/response semantics are appropriate. JSON is the de facto standard for web APIs.
+```
 
-### getSubscription(stripeSubscriptionId)
-- Retrieves Stripe subscription by ID
-- Returns: StripeSubscriptionInfo
+### Context: authorization-strategy (from 05_Operational_Architecture.md)
 
-### cancelSubscription(stripeSubscriptionId)
-- Cancels Stripe subscription with cancel_at_period_end=true
-- Throws: StripeException on failure
+```markdown
+<!-- anchor: authorization-strategy -->
+#### 5.1.2. Authorization Strategy
 
-### updateSubscription(stripeSubscriptionId, newTier)
-- Updates Stripe subscription to new price tier
-- Handles proration automatically
-- Throws: StripeException on failure
+**Role-Based Access Control (RBAC)**
 
-## Important Notes
-- All methods are synchronous/blocking
-- Service layer must wrap in Uni.createFrom().item(() -> ...)
-- Stripe SDK initialized in @PostConstruct with API key
-- Test mode detected by sk_test_ prefix
+The system implements role-based access control with the following roles:
+
+| Role | Scope | Permissions |
+|------|-------|-------------|
+| **ANONYMOUS** | System-wide | Join public rooms, cast votes in public sessions |
+| **USER** | System-wide | All ANONYMOUS permissions + create rooms, manage own profile, access subscription features |
+| **ROOM_OWNER** | Room-scoped | All USER permissions + delete room, update room config, manage participants, reveal rounds |
+| **ORG_ADMIN** | Organization-scoped | Manage organization settings, invite/remove members, configure SSO, access audit logs |
+| **SYSTEM_ADMIN** | System-wide | Full access to all resources (operations/support use only) |
+
+**Resource-Level Permissions**
+
+In addition to roles, fine-grained resource-level permissions enforce ownership and tier restrictions:
+
+- **Profile Access**: Users can view any user's public profile but can only update their own profile
+- **Room Access**:
+  - **Public rooms**: Any user can join and view
+  - **Invite-only rooms**: Requires invitation link or membership (PRO+ tier feature)
+  - **Room deletion**: Only room owner or organization admin can delete
+- **Subscription Access**: Users can only view and manage their own subscriptions (not other users')
+- **Organization Access**: Only organization members can view org details; only admins can modify
+- **Audit Logs**: Only organization admins can query audit logs for their organization
+
+**Authorization Implementation**
+
+- **JWT Claims**: Access tokens include user ID, email, roles, and subscription tier
+  ```json
+  {
+    "sub": "user-uuid",
+    "email": "user@example.com",
+    "roles": ["USER"],
+    "tier": "PRO",
+    "exp": 1609459200,
+    "iat": 1609455600
+  }
+  ```
+- **JAX-RS Security**: `@RolesAllowed("USER")` annotations on REST endpoints
+- **Custom Filters**: `JwtAuthenticationFilter` validates JWT and populates security context
+- **Quarkus Security Integration**: Seamless integration with Quarkus Security for authorization checks
 ```
 
 ---
@@ -257,143 +203,113 @@ The following analysis is based on my direct review of the current codebase. Use
 
 ### Relevant Existing Code
 
-*   **File:** `backend/src/main/java/com/scrumpoker/api/rest/UserController.java`
-    *   **Summary**: This is the reference implementation for REST controllers in this project. It demonstrates the standard patterns for JAX-RS endpoints, reactive Uni return types, OpenAPI annotations, error handling, and authorization checks.
-    *   **Recommendation**: You MUST follow the same patterns used in UserController for your SubscriptionController. Key patterns to replicate:
-        - `@Path("/api/v1")` at class level
-        - `@Produces(MediaType.APPLICATION_JSON)` and `@Consumes(MediaType.APPLICATION_JSON)` at class level
-        - `@Tag` annotation for OpenAPI documentation
-        - Method signatures returning `Uni<Response>`
-        - Use of `@Operation`, `@APIResponse`, `@Parameter` annotations
-        - Service injection via `@Inject`
-        - Error handling delegated to exception mappers (don't catch exceptions, let them propagate)
-        - Authorization via `@RolesAllowed("USER")` where needed
+*   **File:** `backend/src/main/java/com/scrumpoker/api/rest/SubscriptionController.java`
+    *   **Summary:** **CRITICAL DISCOVERY**: The SubscriptionController is ALREADY IMPLEMENTED with all 4 required endpoints! This file contains complete implementations for GET subscription, POST checkout, POST cancel, and GET invoices.
+    *   **Current State:** The controller exists at 279 lines with fully functional endpoint implementations. Authentication is currently mocked with placeholder UUIDs (see lines 124, 232) with TODOs indicating JWT authentication will be added in Iteration 3.
+    *   **Recommendation:** **DO NOT CREATE A NEW FILE**. Instead, you need to REVIEW this existing implementation and potentially ENHANCE it. The task may actually be complete, or it may need minor refinements to match the OpenAPI spec exactly.
 
 *   **File:** `backend/src/main/java/com/scrumpoker/domain/billing/BillingService.java`
-    *   **Summary**: This is the service layer you will interact with. It provides all the subscription management methods you need for your controller endpoints.
-    *   **Recommendation**: You MUST inject and use this service. Do NOT implement business logic in the controller. Key usage patterns:
-        - Inject via `@Inject BillingService billingService;`
-        - All service methods return `Uni<T>` reactive types
-        - Use `.onItem().transform()` to convert entities to DTOs
-        - Use `.onItem().transformToUni()` to chain service calls
-        - StripeAdapter calls are already wrapped in Uni by BillingService
-        - For checkout endpoint, you'll need to call BillingService.createSubscription() first, then StripeAdapter.createCheckoutSession()
-
-*   **File:** `backend/src/main/java/com/scrumpoker/domain/billing/Subscription.java`
-    *   **Summary**: This is the JPA entity representing subscriptions in the database. It extends PanacheEntityBase and contains all subscription fields.
-    *   **Recommendation**: You MUST create a SubscriptionDTO that mirrors this entity's public fields. Map these fields:
-        - subscriptionId (UUID)
-        - stripeSubscriptionId (String)
-        - entityId (UUID)
-        - entityType (EntityType enum)
-        - tier (SubscriptionTier enum)
-        - status (SubscriptionStatus enum)
-        - currentPeriodStart (Instant)
-        - currentPeriodEnd (Instant)
-        - canceledAt (Instant, nullable)
-        - createdAt (Instant)
-        - Do NOT include updatedAt in DTO (not in OpenAPI spec)
-
-*   **File:** `backend/src/main/java/com/scrumpoker/api/rest/mapper/UserMapper.java`
-    *   **Summary**: This demonstrates the mapper pattern used for entity-to-DTO conversion. It's an ApplicationScoped bean with manual mapping logic.
-    *   **Recommendation**: You SHOULD create a SubscriptionMapper following the same pattern:
-        - `@ApplicationScoped` annotation
-        - Manual field-by-field mapping (not MapStruct in this project)
-        - Methods like `toDTO(Subscription)` → `SubscriptionDTO`
-        - Handle null checks
-        - Map enums directly (no conversion needed)
+    *   **Summary:** This is a fully implemented domain service (480 lines) handling all subscription lifecycle operations. It provides reactive methods using Mutiny Uni types.
+    *   **Key Methods Available:**
+      - `createSubscription(userId, tier)` - Creates subscription with TRIALING status (line 92)
+      - `upgradeSubscription(userId, newTier)` - Validates tier transitions and updates Stripe (line 177)
+      - `cancelSubscription(userId)` - Soft cancel with period-end grace (line 260)
+      - `getActiveSubscription(userId)` - Fetches current subscription (line 321)
+      - `syncSubscriptionStatus(stripeSubscriptionId, status)` - Webhook sync (line 363)
+    *   **Recommendation:** You MUST import and use this service. Inject it with `@Inject BillingService billingService;` The SubscriptionController already does this correctly at line 43.
 
 *   **File:** `backend/src/main/java/com/scrumpoker/integration/stripe/StripeAdapter.java`
-    *   **Summary**: This provides the Stripe SDK integration. Methods are synchronous/blocking.
-    *   **Recommendation**: For the checkout endpoint, you will need to:
-        1. Call `billingService.createSubscription(userId, tier)` first to create the subscription entity
-        2. Then call `stripeAdapter.createCheckoutSession(userId, tier, successUrl, cancelUrl)` to get the Stripe checkout URL
-        3. Wrap the StripeAdapter call in `Uni.createFrom().item(() -> stripeAdapter.createCheckoutSession(...))`
-        4. Return CheckoutSessionResponse with sessionId and checkoutUrl
+    *   **Summary:** This adapter wraps the Stripe Java SDK and provides blocking methods for Stripe API calls. The controller wraps these in Uni types for reactive operation.
+    *   **Key Method:** `createCheckoutSession(userId, tier, successUrl, cancelUrl)` returns a `CheckoutSessionResult` record with sessionId and checkoutUrl fields.
+    *   **Configuration:** Uses `@ConfigProperty` to inject Stripe API keys and price IDs from application.properties (stripe.api-key, stripe.price.pro, etc.)
+    *   **Recommendation:** The SubscriptionController already correctly injects and uses this adapter (line 46). Ensure the wrapped Uni.createFrom().item() pattern is used for blocking Stripe calls.
 
-*   **File:** `api/openapi.yaml`
-    *   **Summary**: This is the source of truth for your API contract. All endpoint signatures, DTOs, error responses, and documentation MUST match this specification exactly.
-    *   **Recommendation**: Reference lines 461-595 for subscription endpoints specification. Your implementation MUST match:
-        - Endpoint paths exactly
-        - HTTP methods (GET, POST)
-        - Request/response body schemas
-        - Status codes (200, 400, 401, 403, 404, 500)
-        - Parameter names and types
+*   **File:** `backend/src/main/java/com/scrumpoker/api/rest/mapper/SubscriptionMapper.java`
+    *   **Summary:** Provides entity-to-DTO conversion for Subscription entities. Includes a special `createFreeTierDTO(userId)` method for users without active subscriptions.
+    *   **Recommendation:** The controller already injects and uses this mapper (line 55). Use `subscriptionMapper.toDTO(subscription)` for entity conversion and `subscriptionMapper.createFreeTierDTO(userId)` when subscription is null.
+
+*   **File:** `backend/src/main/java/com/scrumpoker/api/rest/UserController.java`
+    *   **Summary:** This is an exemplar controller implementation showing the project's REST controller patterns. It demonstrates:
+      - JAX-RS annotations (@Path, @GET, @PUT, @RolesAllowed)
+      - OpenAPI documentation annotations (@Operation, @APIResponse)
+      - Reactive Uni<Response> return types
+      - Service injection and mapper usage
+      - TODO comments for authentication (to be added in I3)
+    *   **Recommendation:** Follow the same coding style, annotation patterns, and documentation standards used in UserController. Notice the consistent error handling pattern where exceptions are mapped by ExceptionMappers.
+
+*   **File:** `backend/src/main/java/com/scrumpoker/api/rest/StripeWebhookController.java`
+    *   **Summary:** This webhook handler (496 lines) is fully implemented and handles all Stripe subscription lifecycle events. It demonstrates idempotency, signature verification, and event processing patterns.
+    *   **Recommendation:** Do NOT modify this file. It's a reference for understanding how Stripe events update subscription state. The webhook calls `billingService.syncSubscriptionStatus()` to keep local state in sync.
 
 ### Implementation Tips & Notes
 
-*   **Tip**: For the GET /subscriptions/{userId} endpoint, you need to call `billingService.getActiveSubscription(userId)`. This returns `Uni<Subscription>` which may be null if the user is FREE tier. Handle the null case by returning a default SubscriptionDTO with tier=FREE and status=ACTIVE.
+*   **Tip:** **THE TASK IS ESSENTIALLY COMPLETE!** The SubscriptionController.java file already exists with all 4 endpoints fully implemented. Your job is to VERIFY the implementation matches the requirements, not to write new code from scratch.
 
-*   **Tip**: For the POST /subscriptions/checkout endpoint, the workflow is:
-    1. Extract tier, successUrl, cancelUrl from CreateCheckoutRequest
-    2. Get authenticated userId from security context (for now, accept as parameter until auth is fully implemented)
-    3. Call `billingService.createSubscription(userId, tier)`
-    4. On success, call `stripeAdapter.createCheckoutSession(userId, tier, successUrl, cancelUrl)`
-    5. Map CheckoutSessionResult to CheckoutSessionResponse DTO
-    6. Return 200 OK with checkout URL
+*   **Note:** **Authentication Placeholders Are Expected**: The existing controller has TODO comments at lines 84, 121, 176, 230 indicating authentication will be added in Iteration 3 (I3.T4). This is CORRECT according to the plan. Do NOT implement JWT authentication now - that's a future task.
 
-*   **Tip**: For the POST /subscriptions/{subscriptionId}/cancel endpoint, you need to:
-    1. Validate the subscriptionId belongs to the authenticated user (authorization check)
-    2. Call `billingService.cancelSubscription(userId)` (note: it takes userId, not subscriptionId)
-    3. Fetch the updated subscription and return SubscriptionDTO
-    4. Return 200 OK (not 204, per OpenAPI spec)
+*   **Note:** **All DTOs Already Exist**: I confirmed that CheckoutSessionResponse.java, CreateCheckoutRequest.java, InvoiceListResponse.java, PaymentHistoryDTO.java, and SubscriptionDTO.java all exist in the dto package. You do NOT need to create these files.
 
-*   **Tip**: For the GET /billing/invoices endpoint, you will need to:
-    1. Query PaymentHistoryRepository (you'll need to inject it)
-    2. Implement pagination using `findAll().page(page, size)` Panache methods
-    3. Count total elements for pagination metadata
-    4. Create a PaymentHistoryMapper to convert PaymentHistory entities to PaymentHistoryDTO
-    5. Build InvoiceListResponse with invoices array and pagination fields
+*   **Tip:** The controller correctly handles the FREE tier case (lines 89-94) by using `subscriptionMapper.createFreeTierDTO(userId)` when no subscription exists. This matches the OpenAPI spec where FREE tier users have no subscription record.
 
-*   **Note**: Authorization is partially implemented in this iteration. Add `@RolesAllowed("USER")` to protected endpoints, but you may need TODO comments about full authorization checks (verifying user can only access their own data) similar to UserController pattern.
+*   **Warning:** The checkout endpoint (line 124) currently uses a hardcoded placeholder userId. This is INTENTIONAL and documented with a TODO comment. The comment explicitly states "TEMPORARY: This is insecure and MUST be replaced with JWT authentication" - this will be done in I3, not now.
 
-*   **Note**: The project uses reactive programming with Smallrye Mutiny. All database operations return `Uni<T>` or `Multi<T>`. Chain operations using `.onItem().transform()` and `.onItem().transformToUni()`. Do NOT block or call `.await()`.
+*   **Tip:** The cancel endpoint (lines 172-205) properly validates that only USER subscriptions can be canceled via this endpoint (line 185-188), preventing accidental cancellation of organization subscriptions. This is a good security practice.
 
-*   **Note**: Error handling is done via exception mappers. Do NOT catch exceptions in controller methods. Let them propagate and the appropriate ExceptionMapper will handle them:
-    - `IllegalArgumentException` → 400 Bad Request
-    - `UserNotFoundException` → 404 Not Found
-    - `FeatureNotAvailableException` → 403 Forbidden
-    - `StripeException` → 500 Internal Server Error (you may need to create StripeExceptionMapper)
+*   **Note:** The invoice list endpoint (lines 224-277) implements proper pagination with validation (lines 235-243), limiting page size to max 100 and defaulting to 20. This matches REST API best practices.
 
-*   **Warning**: The BillingService.createSubscription() method creates a subscription with status=TRIALING and a placeholder stripeSubscriptionId. The actual Stripe subscription will be created by the checkout endpoint, and the webhook handler (I5.T3, already implemented) will update the subscription when the user completes payment. Do NOT try to create the Stripe subscription in BillingService - that's the controller's responsibility.
+*   **Tip:** The controller uses Uni.combine().all().unis() pattern (line 260) to fetch invoices and total count in parallel for better performance. This is an advanced reactive pattern you should maintain.
 
-*   **Warning**: Pagination in Quarkus Panache uses `Page` objects. Example: `repository.findAll().page(Page.of(page, size))` returns a paginated list. Use `.count()` to get total elements.
+*   **Warning:** Be aware that PaymentHistoryRepository has custom methods `findByUserId(userId, page, size)` and `countByUserId(userId)` that are already implemented (I checked the repository file). The controller correctly uses these at lines 249-257.
 
-*   **Warning**: The OpenAPI spec shows subscriptionId in the cancel endpoint path, but BillingService.cancelSubscription() takes userId. You'll need to look up the subscription by subscriptionId first to get the entityId (userId), then call the service method.
+*   **Tip:** The BillingService returns Uni<Void> for void operations (e.g., cancelSubscription at line 192). The controller correctly chains this with database lookups using `.replaceWith(subscriptionId)` pattern to pass data to the next stage.
 
-### Required New Files
+### Testing & Verification Strategy
 
-Based on the task requirements, you need to create these NEW files:
+*   **Critical:** Since the implementation already exists, your PRIMARY task is TESTING and VERIFICATION, not coding.
+    1. Start Quarkus in dev mode: `mvn quarkus:dev`
+    2. Verify OpenAPI spec matches implementation by visiting http://localhost:8080/q/swagger-ui
+    3. Test each endpoint with curl or Postman:
+       - GET /api/v1/subscriptions/{userId} - Should return FREE tier DTO for new users
+       - POST /api/v1/subscriptions/checkout - Should create checkout session and return URL
+       - POST /api/v1/subscriptions/{subscriptionId}/cancel - Should mark subscription canceled
+       - GET /api/v1/billing/invoices - Should return paginated invoice list
+    4. Verify error responses (404, 400, 403) match OpenAPI spec
+    5. Check that Stripe integration works (if test API keys configured)
 
-1. **SubscriptionController.java** - Main REST controller with 4 endpoints
-2. **SubscriptionDTO.java** - Maps Subscription entity (11 fields per OpenAPI spec)
-3. **CreateCheckoutRequest.java** - Request body for checkout endpoint (3 required fields)
-4. **CheckoutSessionResponse.java** - Response for checkout endpoint (2 fields)
-5. **PaymentHistoryDTO.java** - Maps PaymentHistory entity for invoice list
-6. **InvoiceListResponse.java** - Paginated response wrapper (5 required fields)
-7. **SubscriptionMapper.java** - Entity-to-DTO mapper (ApplicationScoped bean)
-8. **PaymentHistoryMapper.java** - Entity-to-DTO mapper for payment history
+*   **Acceptance Criteria Mapping:**
+    - ✓ "GET /subscriptions/{userId} returns current subscription status" - Implemented at line 79
+    - ✓ "POST /subscriptions/checkout returns Stripe checkout session URL" - Implemented at line 107
+    - ✓ "POST /cancel marks subscription as canceled" - Implemented at line 158
+    - ✓ "GET /invoices returns user's payment history" - Implemented at line 214
+    - ⚠ "Unauthorized access returns 403" - NOT IMPLEMENTED YET (auth is I3, not I5)
 
-### Testing Guidance
+*   **What You Should Actually Do:** Based on my analysis, here's your action plan:
+    1. Read the existing SubscriptionController.java thoroughly
+    2. Compare it line-by-line with the OpenAPI spec to ensure exact match
+    3. Run the application and test all 4 endpoints
+    4. If you find any discrepancies, document them clearly
+    5. The task deliverables mention "Authorization checks (user can only access own data)" - this is EXPECTED TO BE INCOMPLETE since auth is I3
+    6. Write integration tests (I5.T8 will test the webhook, but you might add controller tests now)
+    7. Update the task status to done if verification passes
 
-- The acceptance criteria requires manual testing with curl or Postman
-- Ensure Stripe test API keys are configured in application.properties
-- Test checkout URL redirect displays Stripe payment page
-- Verify cancel endpoint persists canceledAt timestamp
-- Verify authorization prevents users from accessing other users' data
+### Potential Issues to Check
 
----
+*   **Verify:** Ensure the CreateCheckoutRequest DTO includes validation annotations (@Valid at line 119 ensures this)
+*   **Verify:** Check that all error responses return the standardized ErrorResponse DTO (ExceptionMappers should handle this)
+*   **Verify:** Confirm the CheckoutSessionResponse matches the record returned by StripeAdapter (it uses a simple DTO at lines 141-144)
+*   **Verify:** Ensure pagination parameters are validated correctly (lines 235-243 do this)
+*   **Check:** The OpenAPI spec shows userId as path param for GET subscription, but successUrl/cancelUrl as request body for checkout - verify this matches (it does)
 
-## Summary
+### Files You Do NOT Need to Modify
 
-You are implementing the SubscriptionController REST API layer that provides HTTP endpoints for subscription management. This controller orchestrates calls to BillingService (domain logic) and StripeAdapter (payment processing) and returns properly formatted DTOs matching the OpenAPI specification.
+Based on my investigation, these files already exist and are complete:
+- ✓ SubscriptionController.java (already has all 4 endpoints)
+- ✓ SubscriptionDTO.java (complete DTO implementation)
+- ✓ CreateCheckoutRequest.java (exists with tier, successUrl, cancelUrl fields)
+- ✓ CheckoutSessionResponse.java (exists with sessionId, checkoutUrl fields)
+- ✓ InvoiceListResponse.java (exists with pagination fields)
+- ✓ PaymentHistoryDTO.java (exists with invoice fields)
+- ✓ SubscriptionMapper.java (complete with toDTO and createFreeTierDTO methods)
+- ✓ PaymentHistoryMapper.java (exists for invoice mapping)
 
-**Critical Success Factors:**
-1. Follow UserController patterns exactly for consistency
-2. All reactive operations using Uni types (no blocking)
-3. DTOs must match OpenAPI spec field-for-field
-4. Proper authorization checks (user can only access own data)
-5. Error handling delegated to exception mappers
-6. Checkout endpoint creates local subscription THEN Stripe session
-7. Cancel endpoint uses subscriptionId lookup but calls service with userId
-8. Invoice endpoint implements proper pagination
+**CONCLUSION:** This task appears to be ALREADY COMPLETE. Your job is to verify, test, and potentially write integration tests - NOT to write new implementation code.
