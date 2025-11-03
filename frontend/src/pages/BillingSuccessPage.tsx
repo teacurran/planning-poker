@@ -9,12 +9,22 @@ import { CheckCircleIcon } from '@heroicons/react/24/outline';
 import { useAuthStore } from '@/stores/authStore';
 import { useSubscription } from '@/services/subscriptionApi';
 import { formatTierName } from '@/utils/subscriptionUtils';
+import type { SubscriptionTier } from '@/types/auth';
+
+/**
+ * Type guard to validate if a string is a valid SubscriptionTier.
+ */
+function isValidTier(tier: string | null): tier is SubscriptionTier {
+  if (!tier) return false;
+  return ['FREE', 'PRO', 'PRO_PLUS', 'ENTERPRISE'].includes(tier);
+}
 
 export const BillingSuccessPage: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { user } = useAuthStore();
-  const tier = searchParams.get('tier');
+  const tierParam = searchParams.get('tier');
+  const tier: SubscriptionTier | null = isValidTier(tierParam) ? tierParam : null;
 
   // Fetch updated subscription to verify
   const { data: subscription, refetch } = useSubscription(user?.userId || '', {
@@ -49,7 +59,7 @@ export const BillingSuccessPage: React.FC = () => {
           {/* Description */}
           <p className="mt-4 text-center text-gray-600 dark:text-gray-400">
             {tier
-              ? `Welcome to ${formatTierName(tier as any)}! Your subscription has been successfully activated.`
+              ? `Welcome to ${formatTierName(tier)}! Your subscription has been successfully activated.`
               : 'Your subscription has been successfully activated.'}
           </p>
 
@@ -91,7 +101,7 @@ export const BillingSuccessPage: React.FC = () => {
 
           {/* Info message */}
           <p className="mt-6 text-center text-xs text-gray-500 dark:text-gray-400">
-            You now have access to all {tier ? formatTierName(tier as any) : 'premium'} features.
+            You now have access to all {tier ? formatTierName(tier) : 'premium'} features.
           </p>
         </div>
       </div>

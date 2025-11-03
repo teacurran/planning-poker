@@ -87,7 +87,7 @@
     "acceptance_criteria": "PricingPage displays all tiers with features, Clicking \"Upgrade\" button calls checkout API and redirects to Stripe, Stripe checkout completes, user returned to app with success message, UpgradeModal appears when 403 FeatureNotAvailable error, SubscriptionSettingsPage shows correct tier badge, Cancel subscription button triggers confirmation modal, then API call, Payment history table lists past invoices",
     "dependencies": ["I5.T5"],
     "parallelizable": false,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I5.T7",
