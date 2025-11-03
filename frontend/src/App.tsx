@@ -9,6 +9,7 @@ import OAuthCallbackPage from '@/pages/OAuthCallbackPage';
 import { PricingPage } from '@/pages/PricingPage';
 import { SubscriptionSettingsPage } from '@/pages/SubscriptionSettingsPage';
 import { BillingSuccessPage } from '@/pages/BillingSuccessPage';
+import SessionHistoryPage from '@/pages/SessionHistoryPage';
 import PrivateRoute from '@/components/auth/PrivateRoute';
 import { UpgradeModalProvider } from '@/contexts/UpgradeModalContext';
 
@@ -48,6 +49,14 @@ const App: React.FC = () => {
               element={
                 <PrivateRoute>
                   <SubscriptionSettingsPage />
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/reports/sessions"
+              element={
+                <PrivateRoute>
+                  <SessionHistoryPage />
                 </PrivateRoute>
               }
             />

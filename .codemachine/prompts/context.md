@@ -10,26 +10,25 @@ This is the full specification of the task you must complete.
 
 ```json
 {
-  "task_id": "I6.T4",
+  "task_id": "I6.T5",
   "iteration_id": "I6",
   "iteration_goal": "Implement session history tracking, tier-based reporting (basic summaries for Free, detailed analytics for Pro/Enterprise), export functionality (CSV/PDF), and frontend reporting UI.",
-  "description": "Implement REST endpoints for reporting per OpenAPI spec. Endpoints: `GET /api/v1/reports/sessions` (list user's sessions with pagination), `GET /api/v1/reports/sessions/{sessionId}` (get session report, tier-gated detail level), `POST /api/v1/reports/export` (create export job, returns job ID), `GET /api/v1/jobs/{jobId}` (poll export job status, returns download URL when complete). Use `ReportingService`. Return pagination metadata (total count, page, size). Enforce authorization (user can only access own sessions or rooms they participated in).",
-  "agent_type_hint": "BackendAgent",
-  "inputs": "OpenAPI spec for reporting endpoints from I2.T1, ReportingService from I6.T2",
+  "description": "Implement `SessionHistoryPage` component displaying user's past sessions. List sessions with: date, room title, round count, participants count, consensus rate. Pagination controls (previous/next, page numbers). Click session to navigate to detail page. Filter by date range (date picker). Sort by date (newest/oldest). Use `useSessions` React Query hook for data fetching. Display loading skeleton, empty state (no sessions), error state.",
+  "agent_type_hint": "FrontendAgent",
+  "inputs": "Reporting API endpoints from I6.T4, Session list requirements",
   "input_files": [
-    "api/openapi.yaml",
-    "backend/src/main/java/com/scrumpoker/domain/reporting/ReportingService.java"
+    "api/openapi.yaml"
   ],
   "target_files": [
-    "backend/src/main/java/com/scrumpoker/api/rest/ReportingController.java",
-    "backend/src/main/java/com/scrumpoker/api/rest/dto/SessionListResponse.java",
-    "backend/src/main/java/com/scrumpoker/api/rest/dto/ExportJobResponse.java"
+    "frontend/src/pages/SessionHistoryPage.tsx",
+    "frontend/src/components/reporting/SessionListTable.tsx",
+    "frontend/src/components/reporting/PaginationControls.tsx",
+    "frontend/src/services/reportingApi.ts"
   ],
-  "deliverables": "ReportingController with 4 endpoints, Pagination support (query params: page, size, sort), Session list endpoint with metadata (total, hasNext), Session detail endpoint with tier-based response, Export endpoint enqueuing job and returning job ID, Job status endpoint returning status and download URL",
-  "acceptance_criteria": "GET /reports/sessions returns paginated list (default 20 per page), GET /reports/sessions/{id} returns basic summary for Free tier, Pro tier user gets detailed report with round breakdown, POST /reports/export creates job and returns job ID, GET /jobs/{jobId} returns PENDING while processing, COMPLETED with URL when done, Unauthorized access to other user's sessions returns 403",
+  "deliverables": "SessionHistoryPage with session list table, Pagination controls (previous, next, page numbers), Date range filter (date picker inputs), Sort controls (newest/oldest), Session row click navigates to detail page, Loading, empty, and error states",
+  "acceptance_criteria": "Page loads user's sessions from API, Table displays session metadata (date, room, rounds, participants), Pagination works (clicking next loads next page), Date filter applies (API called with from/to params), Sort changes order (newest first vs. oldest first), Clicking session navigates to /reports/sessions/{sessionId}, Empty state shows \"No sessions found\" message",
   "dependencies": [
-    "I6.T2",
-    "I6.T3"
+    "I6.T4"
   ],
   "parallelizable": false,
   "done": false
@@ -42,214 +41,179 @@ This is the full specification of the task you must complete.
 
 The following are the relevant sections from the architecture and plan documents, which I found by analyzing the task description.
 
-### Context: reporting-requirements (from 01_Context_and_Drivers.md)
+### Context: REST API Endpoints Overview (from 04_Behavior_and_Communication.md)
 
 ```markdown
-#### Reporting Requirements
-- **Free Tier:** Basic session summaries (story count, consensus rate, average vote)
-- **Pro Tier:** Round-level detail, user consistency metrics, CSV/JSON/PDF export
-- **Enterprise Tier:** Organizational dashboards, team trends, SSO-filtered reports, audit logs
+**Reporting & Analytics:**
+- `GET /api/v1/reports/sessions` - List session history (tier-gated pagination, filters)
+- `GET /api/v1/reports/sessions/{sessionId}` - Detailed session report (tier-gated round detail)
+- `POST /api/v1/reports/export` - Generate export job (CSV/PDF), returns job ID
+- `GET /api/v1/jobs/{jobId}` - Poll export job status, retrieve download URL
 ```
 
-### Context: rest-api-endpoints (from 04_Behavior_and_Communication.md - OpenAPI Specification)
+### Context: API Style (from 04_Behavior_and_Communication.md)
 
-**From api/openapi.yaml lines 602-758:**
+```markdown
+**Primary API Style:** **RESTful JSON API (OpenAPI 3.1 Specification)**
+
+**Rationale:**
+- **Simplicity & Familiarity:** REST over HTTPS provides a well-understood contract for CRUD operations on resources (users, rooms, subscriptions)
+- **Tooling Ecosystem:** OpenAPI specification enables automatic client SDK generation (TypeScript for React frontend), API documentation (Swagger UI), and contract testing
+- **Caching Support:** HTTP semantics (ETags, Cache-Control headers) enable browser and CDN caching for read-heavy endpoints (room configurations, user profiles)
+- **Versioning Strategy:** URL-based versioning (`/api/v1/`) for backward compatibility during iterative releases
+```
+
+### Context: Usability NFRs (from 01_Context_and_Drivers.md)
+
+```markdown
+#### Usability
+- **Responsive Design:** Mobile-first Tailwind CSS with breakpoints for tablet/desktop
+- **Accessibility:** WCAG 2.1 Level AA compliance for keyboard navigation and screen readers
+- **Browser Support:** Last 2 versions of Chrome, Firefox, Safari, Edge
+- **Internationalization:** English language in initial release, i18n framework for future localization
+```
+
+### Context: Frontend Technology Stack (from 02_Architecture_Overview.md)
+
+```markdown
+| **Frontend Framework** | **React 18+ with TypeScript** | Strong ecosystem, concurrent rendering for real-time updates, TypeScript for type safety in WebSocket message contracts |
+| **UI Component Library** | **Tailwind CSS + Headless UI** | Utility-first CSS for rapid development, Headless UI for accessible components (modals, dropdowns), minimal bundle size |
+| **State Management** | **Zustand + React Query** | Lightweight state management (Zustand), server state caching and synchronization (React Query), WebSocket integration support |
+
+**Frontend (React):**
+- `@tanstack/react-query` - Server state management and caching
+- `zustand` - Client-side state management (UI, WebSocket connection state)
+- `react-hook-form` - Form validation and submission
+- `zod` - Schema validation for API responses and WebSocket messages
+- `date-fns` - Date/time formatting for session history
+- `recharts` - Charting library for analytics dashboards
+- `@headlessui/react` - Accessible UI components
+- `heroicons` - Icon library
+```
+
+### Context: GET /api/v1/reports/sessions Endpoint (from api/openapi.yaml)
 
 ```yaml
-  /api/v1/reports/sessions:
-    get:
-      tags:
-        - Reports
-      summary: List session history
-      description: |
-        Returns paginated session history with filters.
-        **Tier Requirements:**
-        - Free tier: Last 30 days, max 10 results
-        - Pro tier: Last 90 days, max 100 results
-        - Pro Plus/Enterprise: Unlimited history
-      operationId: listSessions
-      parameters:
-        - name: from
-          in: query
-          schema:
-            type: string
-            format: date
-          description: Start date (ISO 8601 format)
-          example: "2025-01-01"
-        - name: to
-          in: query
-          schema:
-            type: string
-            format: date
-          description: End date (ISO 8601 format)
-          example: "2025-01-31"
-        - name: roomId
-          in: query
-          schema:
-            type: string
-            pattern: '^[a-z0-9]{6}$'
-          description: Filter by room ID
-          example: "abc123"
-        - $ref: '#/components/parameters/PageParam'
-        - $ref: '#/components/parameters/SizeParam'
-      responses:
-        '200':
-          description: Session list retrieved
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SessionListResponse'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          description: Insufficient subscription tier
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
-
-  /api/v1/reports/sessions/{sessionId}:
-    get:
-      tags:
-        - Reports
-      summary: Get detailed session report
-      description: |
-        Returns detailed session report including all rounds and votes.
-        **Tier Requirements:**
-        - Free tier: Summary only (average, median)
-        - Pro tier and above: Full round-by-round detail with individual votes
-      operationId: getSessionReport
-      parameters:
-        - name: sessionId
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-          description: Session ID
-          example: "123e4567-e89b-12d3-a456-426614174000"
-      responses:
-        '200':
-          description: Session report retrieved
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SessionDetailDTO'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          description: Insufficient subscription tier for detailed report
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
-
-  /api/v1/reports/export:
-    post:
-      tags:
-        - Reports
-      summary: Generate export job (CSV/PDF)
-      description: |
-        Creates an asynchronous export job for session data. Returns job ID for polling status.
-        **Tier Requirements:** Pro tier or higher
-      operationId: createExportJob
-      requestBody:
-        required: true
+/api/v1/reports/sessions:
+  get:
+    tags:
+      - Reports
+    summary: List session history
+    description: |
+      Returns paginated session history with filters.
+      **Tier Requirements:**
+      - Free tier: Last 30 days, max 10 results
+      - Pro tier: Last 90 days, max 100 results
+      - Pro Plus/Enterprise: Unlimited history
+    operationId: listSessions
+    parameters:
+      - name: from
+        in: query
+        schema:
+          type: string
+          format: date
+        description: Start date (ISO 8601 format)
+        example: "2025-01-01"
+      - name: to
+        in: query
+        schema:
+          type: string
+          format: date
+        description: End date (ISO 8601 format)
+        example: "2025-01-31"
+      - name: roomId
+        in: query
+        schema:
+          type: string
+          pattern: '^[a-z0-9]{6}$'
+        description: Filter by room ID
+        example: "abc123"
+      - $ref: '#/components/parameters/PageParam'
+      - $ref: '#/components/parameters/SizeParam'
+    responses:
+      '200':
+        description: Session list retrieved
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ExportRequest'
-      responses:
-        '202':
-          description: Export job created
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ExportJobResponse'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          description: Export feature requires Pro tier or higher
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
-
-  /api/v1/jobs/{jobId}:
-    get:
-      tags:
-        - Reports
-      summary: Poll export job status
-      description: |
-        Returns job status (PENDING, PROCESSING, COMPLETED, FAILED). When COMPLETED, includes download URL (expires in 24h).
-      operationId: getJobStatus
-      parameters:
-        - name: jobId
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-          description: Job ID returned from export endpoint
-          example: "123e4567-e89b-12d3-a456-426614174000"
-      responses:
-        '200':
-          description: Job status retrieved
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/JobStatusResponse'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
+              $ref: '#/components/schemas/SessionListResponse'
 ```
 
-### Context: task-i6-t4 (from 02_Iteration_I6.md)
+### Context: SessionListResponse Schema (from api/openapi.yaml)
 
-```markdown
-*   **Task 6.4: Create Reporting REST Controllers**
-    *   **Task ID:** `I6.T4`
-    *   **Description:** Implement REST endpoints for reporting per OpenAPI spec. Endpoints: `GET /api/v1/reports/sessions` (list user's sessions with pagination), `GET /api/v1/reports/sessions/{sessionId}` (get session report, tier-gated detail level), `POST /api/v1/reports/export` (create export job, returns job ID), `GET /api/v1/jobs/{jobId}` (poll export job status, returns download URL when complete). Use `ReportingService`. Return pagination metadata (total count, page, size). Enforce authorization (user can only access own sessions or rooms they participated in).
-    *   **Agent Type Hint:** `BackendAgent`
-    *   **Inputs:**
-        *   OpenAPI spec for reporting endpoints from I2.T1
-        *   ReportingService from I6.T2
-    *   **Input Files:**
-        *   `api/openapi.yaml` (reporting endpoints)
-        *   `backend/src/main/java/com/scrumpoker/domain/reporting/ReportingService.java`
-    *   **Target Files:**
-        *   `backend/src/main/java/com/scrumpoker/api/rest/ReportingController.java`
-        *   `backend/src/main/java/com/scrumpoker/api/rest/dto/SessionListResponse.java`
-        *   `backend/src/main/java/com/scrumpoker/api/rest/dto/ExportJobResponse.java`
-    *   **Deliverables:**
-        *   ReportingController with 4 endpoints
-        *   Pagination support (query params: page, size, sort)
-        *   Session list endpoint with metadata (total, hasNext)
-        *   Session detail endpoint with tier-based response
-        *   Export endpoint enqueuing job and returning job ID
-        *   Job status endpoint returning status and download URL
-    *   **Acceptance Criteria:**
-        *   GET /reports/sessions returns paginated list (default 20 per page)
-        *   GET /reports/sessions/{id} returns basic summary for Free tier
-        *   Pro tier user gets detailed report with round breakdown
-        *   POST /reports/export creates job and returns job ID
-        *   GET /jobs/{jobId} returns PENDING while processing, COMPLETED with URL when done
-        *   Unauthorized access to other user's sessions returns 403
-    *   **Dependencies:** [I6.T2, I6.T3]
-    *   **Parallelizable:** No (depends on services)
+```yaml
+SessionListResponse:
+  type: object
+  required:
+    - sessions
+    - page
+    - size
+    - totalElements
+    - totalPages
+  properties:
+    sessions:
+      type: array
+      items:
+        $ref: '#/components/schemas/SessionSummaryDTO'
+    page:
+      type: integer
+      example: 0
+    size:
+      type: integer
+      example: 20
+    totalElements:
+      type: integer
+      example: 42
+    totalPages:
+      type: integer
+      example: 3
+```
+
+### Context: SessionSummaryDTO Schema (from api/openapi.yaml)
+
+```yaml
+SessionSummaryDTO:
+  type: object
+  required:
+    - sessionId
+    - roomId
+    - startedAt
+    - endedAt
+    - totalRounds
+    - totalStories
+  properties:
+    sessionId:
+      type: string
+      format: uuid
+      description: Session unique identifier
+      example: "123e4567-e89b-12d3-a456-426614174000"
+    roomId:
+      type: string
+      pattern: '^[a-z0-9]{6}$'
+      description: Room identifier
+      example: "abc123"
+    roomTitle:
+      type: string
+      description: Room title at time of session
+      example: "Sprint 42 Planning"
+    startedAt:
+      type: string
+      format: date-time
+      description: Session start timestamp
+      example: "2025-01-15T10:00:00Z"
+    endedAt:
+      type: string
+      format: date-time
+      description: Session end timestamp
+      example: "2025-01-15T12:00:00Z"
+    totalRounds:
+      type: integer
+      description: Number of estimation rounds
+      example: 8
+    totalStories:
+      type: integer
+      description: Number of stories estimated
+      example: 8
 ```
 
 ---
@@ -258,97 +222,67 @@ The following are the relevant sections from the architecture and plan documents
 
 The following analysis is based on my direct review of the current codebase. Use these notes and tips to guide your implementation.
 
-### ⚠️ CRITICAL FINDING: Task Already Complete
+### Relevant Existing Code
 
-**This task (I6.T4) has already been FULLY IMPLEMENTED.** All required files exist and contain complete, production-ready code.
+*   **File:** `frontend/src/services/apiHooks.ts`
+    *   **Summary:** This file provides a well-established pattern for creating React Query hooks for API data fetching. It includes a centralized `queryKeys` factory for cache management, `useQuery` hooks for data fetching (e.g., `useUser`, `useRooms`), and `useMutation` hooks for data modifications (e.g., `useCreateRoom`, `useDeleteRoom`).
+    *   **Recommendation:** You MUST follow this exact pattern when creating the `useSessions` hook in the new `reportingApi.ts` file. Use the same structure: define query keys in the `queryKeys` factory, implement reactive `useQuery` hooks, configure stale time appropriately (2-5 minutes for reporting data), and add comprehensive JSDoc comments.
+    *   **Key Pattern:** All hooks use `apiClient` from `./api.ts` for API calls, extract data with `response.data`, include `enabled` flags where appropriate (e.g., `enabled: !!userId`), and provide custom `UseQueryOptions` for flexibility.
 
-### Existing Code Analysis
+*   **File:** `frontend/src/pages/DashboardPage.tsx`
+    *   **Summary:** This page demonstrates the complete pattern for implementing a page with data fetching, loading states, error states, and responsive UI. It uses `useUser` and `useRooms` hooks, displays a loading skeleton during data fetch, shows an error state with retry button, and renders a responsive grid for data cards.
+    *   **Recommendation:** You SHOULD use this as a template for your `SessionHistoryPage.tsx`. Copy the loading skeleton pattern (lines 45-88), the error state pattern (lines 92-134), and the responsive grid layout (lines 173-181). The page demonstrates how to handle combined loading states, refetch logic, and empty states.
+    *   **Key Patterns:**
+        - Loading skeleton uses `animate-pulse` with gray backgrounds matching light/dark mode
+        - Error state includes an SVG icon, error message, and retry button
+        - Empty state has centered layout with icon, message, and CTA button
+        - Responsive grid: `grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6`
 
-#### File: `backend/src/main/java/com/scrumpoker/api/rest/ReportingController.java`
+*   **File:** `frontend/src/components/dashboard/RoomListCard.tsx`
+    *   **Summary:** This component shows the pattern for creating clickable cards with data display, badges, timestamps, and actions. It uses `date-fns` for timestamp formatting (`formatDistanceToNow`), implements keyboard accessibility (onKeyDown for Enter/Space), and includes hover states.
+    *   **Recommendation:** You SHOULD create a similar `SessionListTable.tsx` component (or individual session row components). Use the same accessibility patterns (role="button", tabIndex, aria-label), timestamp formatting with `date-fns`, and badge styling with Tailwind utility classes for different states.
+    *   **Key Pattern:** The card is clickable via both onClick and keyboard events, uses `truncate` for long text, implements responsive padding and shadows, and includes `flex-shrink-0` for badges to prevent wrapping.
 
-**Summary:** This is a fully-implemented REST controller containing all 4 required endpoints with proper tier enforcement, authorization, and error handling.
+*   **File:** `frontend/src/services/api.ts`
+    *   **Summary:** This file configures the Axios API client with authentication, token refresh, and 403 error handling (FeatureNotAvailable). The apiClient has base URL configuration, request interceptors for Authorization headers, and response interceptors for error handling.
+    *   **Recommendation:** You MUST use this `apiClient` instance for all API calls in your `reportingApi.ts` file. Do NOT create a new Axios instance. The existing client already handles authentication, token refresh, and tier-based access errors (403 FeatureNotAvailable will trigger the UpgradeModal).
 
-**Key Features Implemented:**
-- **GET /api/v1/reports/sessions** (lines 104-239): Complete pagination support with date range and room filtering
-- **GET /api/v1/reports/sessions/{sessionId}** (lines 252-313): Tier-based report detail with authorization checks
-- **POST /api/v1/reports/export** (lines 325-409): Export job creation with database persistence before Redis enqueuing
-- **GET /api/v1/jobs/{jobId}** (lines 421-491): Job status polling with owner verification
+*   **File:** `frontend/src/App.tsx`
+    *   **Summary:** This is the main application router. It shows where to add new routes using React Router v6 patterns. All authenticated routes are wrapped in `<PrivateRoute>`.
+    *   **Recommendation:** You MUST add a new route for the SessionHistoryPage at `/reports/sessions` (or `/sessions` or `/dashboard/sessions` - verify with team preference). Wrap it in `<PrivateRoute>` since only authenticated users can view their session history. Add the route between lines 46-53 in the existing `<Routes>` block.
 
-**Implementation Highlights:**
-1. **Proper Reactive Patterns:** All methods return `Uni<Response>`, using Mutiny reactive types correctly
-2. **Authorization Logic:** Helper method `isUserAuthorizedForSession()` (line 79) checks if user owns the session or participated in it
-3. **Error Handling:** Comprehensive exception recovery with appropriate HTTP status codes (400, 401, 403, 404, 500)
-4. **Pagination:** Full pagination implementation with validation (page >= 0, size 1-100)
-5. **Date Parsing:** ISO 8601 date parsing with timezone handling (ZoneOffset.UTC)
-6. **Job Management:** Creates ExportJob entity FIRST before enqueuing to Redis (lines 362-392) to avoid orphaned jobs
-7. **Security Integration:** Uses `@RolesAllowed("USER")` and SecurityContext for JWT-based authentication
+*   **File:** `backend/src/main/java/com/scrumpoker/api/rest/dto/SessionListResponse.java`
+    *   **Summary:** This DTO defines the actual backend response structure. IMPORTANT: The backend uses `has_next` (boolean) instead of `totalPages` from the OpenAPI spec. The response also has `total` (int) for total count instead of `totalElements`.
+    *   **Recommendation:** You MUST match the TypeScript interface to the actual backend implementation, NOT the OpenAPI spec. Use `has_next: boolean` and `total: number` in your TypeScript types. This discrepancy exists between spec and implementation.
 
-**OpenAPI Documentation:** All endpoints are fully annotated with @Operation, @APIResponse, and @Parameter annotations matching the OpenAPI spec
-
-#### File: `backend/src/main/java/com/scrumpoker/api/rest/dto/SessionListResponse.java`
-
-**Summary:** Complete DTO for paginated session list responses with all required fields and Jackson annotations.
-
-**Fields:**
-- `sessions`: List<SessionSummaryDTO>
-- `page`: int (0-indexed)
-- `size`: int
-- `total`: int
-- `hasNext`: boolean
-
-#### File: `backend/src/main/java/com/scrumpoker/api/rest/dto/ExportJobResponse.java`
-
-**Summary:** Complete DTO for export job creation responses.
-
-**Fields:**
-- `jobId`: UUID with @JsonProperty("job_id") for snake_case serialization
-
-### Integration with Existing Services
-
-#### ReportingService Integration (backend/src/main/java/com/scrumpoker/domain/reporting/ReportingService.java)
-
-The controller correctly integrates with all ReportingService methods:
-
-1. **getBasicSessionSummary()** (line 122 in ReportingService): Used for Free tier and session list display
-2. **getDetailedSessionReport()** (line 160): Used for Pro tier detailed reports with automatic FeatureGate enforcement
-3. **generateExport()** (line 201): Used to enqueue export jobs to Redis Stream
-
-**IMPORTANT NOTE:** The ReportingService automatically enforces tier requirements via injected `FeatureGate`. When a Free tier user calls `getDetailedSessionReport()` or `generateExport()`, the service throws a `FeatureNotAvailableException` which is handled by `FeatureNotAvailableExceptionMapper` to return a proper 403 response.
+*   **File:** `backend/src/main/java/com/scrumpoker/domain/reporting/SessionSummaryDTO.java`
+    *   **Summary:** This shows the actual field names used in the backend response. All fields use snake_case JSON property names (e.g., `session_id`, `room_title`, `started_at`). The backend returns numeric types as strings for precision (BigDecimal → string in JSON).
+    *   **Recommendation:** You MUST use snake_case field names in your TypeScript interfaces to match the backend serialization. For numeric fields like `consensus_rate` and `average_vote`, use `number` type in TypeScript (they'll be parsed from JSON strings automatically). Use ISO 8601 string format for timestamps (startedAt, endedAt).
 
 ### Implementation Tips & Notes
 
-- **Tip:** The controller follows the exact same pattern as other REST controllers in the codebase (RoomController, UserController, SubscriptionController) with consistent error handling and reactive patterns.
+*   **Tip:** The project uses `date-fns` for date formatting. You SHOULD use `format(date, 'MMM dd, yyyy')` for displaying session dates in the table, and `formatDistanceToNow(date, { addSuffix: true })` for relative timestamps like "2 days ago".
 
-- **Note:** The pagination implementation uses in-memory pagination (lines 185-200) which is acceptable for moderate result sets but may need optimization for very large datasets in production. Consider implementing database-level pagination in SessionHistoryService for future iterations.
+*   **Tip:** For the date range filter, you can use native HTML5 `<input type="date">` elements styled with Tailwind, or integrate a library like `react-datepicker` if more advanced features are needed. The HTML5 approach is simpler and requires no additional dependencies.
 
-- **Note:** The authorization logic (line 79-87) currently only checks if the user is the room owner. The TODO comment indicates that future iterations should also check if the user is in the participants list.
+*   **Tip:** Pagination controls should use the `has_next` boolean from the response to determine if the "Next" button should be enabled. Since the backend doesn't return `totalPages`, calculate it client-side if needed: `Math.ceil(total / size)` or just use `has_next` for simpler next/previous controls.
 
-- **Best Practice:** The controller creates the ExportJob database record BEFORE enqueuing to Redis (lines 362-392). This prevents orphaned jobs if the Redis enqueue fails and provides a single source of truth for job status.
+*   **Note:** The project follows a consistent directory structure: pages go in `frontend/src/pages/`, reusable components go in `frontend/src/components/[feature]/`, services go in `frontend/src/services/`, and types go in `frontend/src/types/`. You MUST create `frontend/src/components/reporting/` directory for reporting-specific components.
 
-- **Security:** All endpoints use `@RolesAllowed("USER")` requiring JWT authentication. The SecurityContextImpl extracts the user ID from the JWT token claims.
+*   **Note:** The project uses Tailwind CSS with dark mode support (`dark:` variant). All components MUST include dark mode styles. The pattern is: `bg-white dark:bg-gray-800`, `text-gray-900 dark:text-white`, etc. Check existing components for the correct dark mode color palette.
 
-- **Error Response Format:** All error responses use the standardized `ErrorResponse` DTO with `errorCode` and `message` fields, matching the OpenAPI spec.
+*   **Note:** The backend returns JSON with snake_case field names, but frontend TypeScript typically uses camelCase. The existing code handles this inconsistency by defining types with snake_case to match the API exactly. You SHOULD follow this pattern for reporting types.
 
-### Verification Status
+*   **Warning:** The task specifies creating a `useSessions` hook, but this should be added to a NEW file `frontend/src/services/reportingApi.ts` (not `apiHooks.ts`). The existing `apiHooks.ts` is for core user/room functionality. Create a new file following the same pattern for reporting-specific hooks and import `apiClient` from `./api.ts`.
 
-✅ **All target files exist and are complete**
-✅ **All 4 endpoints implemented per OpenAPI spec**
-✅ **Pagination support with validation**
-✅ **Tier-based access control integrated**
-✅ **Authorization checks for session ownership**
-✅ **Export job persistence before Redis enqueuing**
-✅ **Job status polling with owner verification**
-✅ **Comprehensive error handling with proper status codes**
-✅ **OpenAPI annotations matching specification**
+*   **Warning:** When implementing pagination, be aware that the backend uses 0-indexed page numbers (page 0, 1, 2...). The UI can display 1-indexed page numbers to users (page 1, 2, 3...) but must send 0-indexed values to the API.
 
-### Recommendation
+*   **Tip:** For sort controls (newest/oldest), the backend endpoint likely accepts a `sort` query parameter (verify in ReportingController.java). If not implemented yet, you can implement client-side sorting by reversing the sessions array, or add the sort parameter to the API call for server-side sorting.
 
-**NO ACTION REQUIRED.** This task is complete and ready for testing. Proceed to mark this task as `"done": true` and move on to the next task in the iteration (I6.T5 - Frontend Session History Page).
+*   **Note:** The existing routing pattern in `App.tsx` uses React Router v6. To add the SessionHistoryPage route, use: `<Route path="/reports/sessions" element={<PrivateRoute><SessionHistoryPage /></PrivateRoute>} />`. Make sure to import the new page component at the top of the file.
 
-If you need to verify the implementation, run:
-```bash
-mvn clean compile
-```
+*   **Accessibility Note:** All interactive elements must be keyboard accessible. Use semantic HTML where possible (`<button>`, `<a>`, `<table>`), add `aria-label` attributes for screen readers, and ensure tab order is logical. The existing components demonstrate this pattern - follow their lead.
 
-All files should compile without errors. The integration tests for this controller can be found at:
-- `backend/src/test/java/com/scrumpoker/api/rest/ReportingControllerTest.java` (if it exists, check test coverage)
+---
+
+**End of Task Briefing Package**

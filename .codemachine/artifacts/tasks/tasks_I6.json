@@ -72,7 +72,7 @@
     "acceptance_criteria": "Page loads user's sessions from API, Table displays session metadata (date, room, rounds, participants), Pagination works (clicking next loads next page), Date filter applies (API called with from/to params), Sort changes order (newest first vs. oldest first), Clicking session navigates to /reports/sessions/{sessionId}, Empty state shows \"No sessions found\" message",
     "dependencies": ["I6.T4"],
     "parallelizable": false,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I6.T6",
