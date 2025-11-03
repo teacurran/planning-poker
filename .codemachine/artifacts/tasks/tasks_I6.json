@@ -57,7 +57,7 @@
     "acceptance_criteria": "GET /reports/sessions returns paginated list (default 20 per page), GET /reports/sessions/{id} returns basic summary for Free tier, Pro tier user gets detailed report with round breakdown, POST /reports/export creates job and returns job ID, GET /jobs/{jobId} returns PENDING while processing, COMPLETED with URL when done, Unauthorized access to other user's sessions returns 403",
     "dependencies": ["I6.T2", "I6.T3"],
     "parallelizable": false,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I6.T5",
