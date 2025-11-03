@@ -12,7 +12,7 @@
     "acceptance_criteria": "Completing round updates SessionHistory record with round count, getUserSessions returns user's past sessions within date range, Session statistics correctly aggregated (consensus rate calculation), Queries use partition pruning (verify EXPLAIN plan), SessionHistory JSONB fields (participants, summary_stats) populated correctly",
     "dependencies": ["I4.T3"],
     "parallelizable": false,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I6.T2",

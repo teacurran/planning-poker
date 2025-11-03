@@ -391,10 +391,9 @@ public class VotingService {
                             .orElse(revealedRound.startedAt);
 
                     // Try to find existing session history for this room starting at this time
-                    return sessionHistoryRepository.find(
-                            "room.roomId = ?1 and id.startedAt = ?2",
-                            roomId, sessionStartedAt
-                    ).firstResult()
+                    // Use repository method with native SQL to avoid Hibernate Reactive @EmbeddedId bug
+                    return sessionHistoryRepository.findByRoomIdAndStartedAt(
+                            roomId, sessionStartedAt)
                     .onItem().transformToUni(existingSession -> {
                         if (existingSession != null) {
                             // Update existing session

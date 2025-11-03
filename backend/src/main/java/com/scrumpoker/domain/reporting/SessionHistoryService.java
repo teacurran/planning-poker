@@ -75,13 +75,11 @@ public class SessionHistoryService {
                             "'from' date must be before 'to' date"));
         }
 
-        // Query with partition key (id.startedAt) for partition pruning
-        return sessionHistoryRepository.find(
-                "room.owner.userId = ?1 and id.startedAt >= ?2 "
-                        + "and id.startedAt <= ?3 "
-                        + "order by id.startedAt desc",
-                userId, from, to
-        ).list();
+        // Query with partition key for partition pruning
+        // Use repository method with native SQL to avoid
+        // Hibernate Reactive @EmbeddedId bug
+        return sessionHistoryRepository.findByOwnerAndDateRange(
+                userId, from, to);
     }
 
     /**
@@ -103,8 +101,11 @@ public class SessionHistoryService {
         }
 
         // Query by session ID - may scan multiple partitions
-        return sessionHistoryRepository.find("id.sessionId", sessionId)
-                .firstResult();
+        // Use repository method with native SQL to avoid
+        // Hibernate Reactive @EmbeddedId bug
+        return sessionHistoryRepository.findBySessionId(sessionId)
+                .onItem().transform(sessions ->
+                        sessions.isEmpty() ? null : sessions.get(0));
     }
 
     /**
