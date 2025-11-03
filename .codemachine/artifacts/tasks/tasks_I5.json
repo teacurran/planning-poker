@@ -57,7 +57,7 @@
     "acceptance_criteria": "Free tier user cannot create invite-only room (403 error), Pro tier user can create invite-only room, Free tier user accessing advanced reports returns 403, Interceptor enforces @RequiresTier annotation on endpoints, Exception message includes upgrade CTA (e.g., \"Upgrade to Pro to access this feature\")",
     "dependencies": ["I5.T2"],
     "parallelizable": true,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I5.T5",

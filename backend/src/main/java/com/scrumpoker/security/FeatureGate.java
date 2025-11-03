@@ -7,21 +7,28 @@ import jakarta.enterprise.context.ApplicationScoped;
 /**
  * Service for enforcing tier-based feature access control.
  * <p>
- * This service provides centralized business logic for checking whether a user's
- * subscription tier grants access to specific features. It implements the feature
- * gating matrix defined in the product specifications:
+ * This service provides centralized business logic for checking
+ * whether a user's subscription tier grants access to specific
+ * features. It implements the feature gating matrix defined in
+ * the product specifications:
  * </p>
  * <ul>
- *   <li><strong>Free Tier:</strong> Basic planning poker, public rooms only</li>
- *   <li><strong>Pro Tier:</strong> Ad removal, advanced reports, CSV/JSON/PDF export</li>
- *   <li><strong>Pro+ Tier:</strong> Invite-only rooms, enhanced privacy controls</li>
- *   <li><strong>Enterprise Tier:</strong> Organization management, SSO, audit logs, org-restricted rooms</li>
+ *   <li><strong>Free Tier:</strong> Basic planning poker, public
+ *   rooms only</li>
+ *   <li><strong>Pro Tier:</strong> Ad removal, advanced reports,
+ *   CSV/JSON/PDF export</li>
+ *   <li><strong>Pro+ Tier:</strong> Invite-only rooms, enhanced
+ *   privacy controls</li>
+ *   <li><strong>Enterprise Tier:</strong> Organization
+ *   management, SSO, audit logs, org-restricted rooms</li>
  * </ul>
  * <p>
  * <strong>Tier Hierarchy:</strong><br>
- * The tier system is hierarchical: {@code FREE < PRO < PRO_PLUS < ENTERPRISE}<br>
- * Higher tiers inherit all features from lower tiers. For example, Enterprise users
- * can access all Pro and Pro+ features.
+ * The tier system is hierarchical:
+ * {@code FREE < PRO < PRO_PLUS < ENTERPRISE}<br>
+ * Higher tiers inherit all features from lower tiers. For
+ * example, Enterprise users can access all Pro and Pro+
+ * features.
  * </p>
  * <p>
  * <strong>Usage Example (Imperative Checks):</strong>
@@ -48,9 +55,12 @@ import jakarta.enterprise.context.ApplicationScoped;
  * <p>
  * <strong>Integration Points:</strong>
  * <ul>
- *   <li>REST Controllers: Inject FeatureGate for business logic checks</li>
- *   <li>Domain Services: Use for conditional feature availability</li>
- *   <li>TierEnforcementInterceptor: Uses FeatureGate for declarative {@code @RequiresTier} enforcement</li>
+ *   <li>REST Controllers: Inject FeatureGate for business logic
+ *   checks</li>
+ *   <li>Domain Services: Use for conditional feature
+ *   availability</li>
+ *   <li>TierEnforcementInterceptor: Uses FeatureGate for
+ *   declarative {@code @RequiresTier} enforcement</li>
  * </ul>
  * </p>
  *
@@ -62,7 +72,8 @@ import jakarta.enterprise.context.ApplicationScoped;
 public class FeatureGate {
 
     /**
-     * Checks if a user's subscription tier is sufficient for the required tier.
+     * Checks if a user's subscription tier is sufficient for the
+     * required tier.
      * <p>
      * Uses enum ordinal comparison to implement tier hierarchy.
      * Higher ordinal values represent higher tiers.
@@ -70,13 +81,16 @@ public class FeatureGate {
      *
      * @param user The user whose tier to check
      * @param requiredTier The minimum required tier
-     * @return true if user's tier is equal to or higher than required tier
+     * @return true if user's tier is equal to or higher than
+     *         required tier
      */
-    public boolean hasSufficientTier(User user, SubscriptionTier requiredTier) {
+    public boolean hasSufficientTier(final User user,
+            final SubscriptionTier requiredTier) {
         if (user == null || user.subscriptionTier == null) {
             return false;
         }
-        return user.subscriptionTier.ordinal() >= requiredTier.ordinal();
+        return user.subscriptionTier.ordinal()
+            >= requiredTier.ordinal();
     }
 
     /**
@@ -85,28 +99,34 @@ public class FeatureGate {
      * <strong>Tier Requirement:</strong> PRO_PLUS or higher
      * </p>
      * <p>
-     * Invite-only rooms allow room owners to explicitly whitelist participants,
-     * providing enhanced privacy controls for sensitive planning sessions.
+     * Invite-only rooms allow room owners to explicitly whitelist
+     * participants, providing enhanced privacy controls for
+     * sensitive planning sessions.
      * </p>
      *
-     * @param user The user attempting to create an invite-only room
+     * @param user The user attempting to create an invite-only
+     *             room
      * @return true if user has PRO_PLUS or ENTERPRISE tier
      */
-    public boolean canCreateInviteOnlyRoom(User user) {
+    public boolean canCreateInviteOnlyRoom(final User user) {
         return hasSufficientTier(user, SubscriptionTier.PRO_PLUS);
     }
 
     /**
-     * Requires that a user can create invite-only rooms, throwing exception if not.
+     * Requires that a user can create invite-only rooms, throwing
+     * exception if not.
      * <p>
-     * This is a convenience method for imperative enforcement. Use this when you
-     * want to immediately fail if the user lacks sufficient tier.
+     * This is a convenience method for imperative enforcement. Use
+     * this when you want to immediately fail if the user lacks
+     * sufficient tier.
      * </p>
      *
-     * @param user The user attempting to create an invite-only room
-     * @throws FeatureNotAvailableException if user's tier is below PRO_PLUS
+     * @param user The user attempting to create an invite-only
+     *             room
+     * @throws FeatureNotAvailableException if user's tier is below
+     *                                      PRO_PLUS
      */
-    public void requireCanCreateInviteOnlyRoom(User user) {
+    public void requireCanCreateInviteOnlyRoom(final User user) {
         if (!canCreateInviteOnlyRoom(user)) {
             throw new FeatureNotAvailableException(
                 SubscriptionTier.PRO_PLUS,
@@ -117,7 +137,8 @@ public class FeatureGate {
     }
 
     /**
-     * Checks if a user can access advanced reports with round-level detail.
+     * Checks if a user can access advanced reports with
+     * round-level detail.
      * <p>
      * <strong>Tier Requirement:</strong> PRO or higher
      * </p>
@@ -129,23 +150,25 @@ public class FeatureGate {
      *   <li>CSV/JSON/PDF export capabilities</li>
      *   <li>Historical session comparisons</li>
      * </ul>
-     * Free tier users only see basic session summaries (story count, consensus rate).
+     * Free tier users only see basic session summaries (story
+     * count, consensus rate).
      * </p>
      *
      * @param user The user attempting to access advanced reports
      * @return true if user has PRO, PRO_PLUS, or ENTERPRISE tier
      */
-    public boolean canAccessAdvancedReports(User user) {
+    public boolean canAccessAdvancedReports(final User user) {
         return hasSufficientTier(user, SubscriptionTier.PRO);
     }
 
     /**
-     * Requires that a user can access advanced reports, throwing exception if not.
+     * Requires that a user can access advanced reports, throwing
+     * exception if not.
      *
      * @param user The user attempting to access advanced reports
      * @throws FeatureNotAvailableException if user's tier is FREE
      */
-    public void requireCanAccessAdvancedReports(User user) {
+    public void requireCanAccessAdvancedReports(final User user) {
         if (!canAccessAdvancedReports(user)) {
             throw new FeatureNotAvailableException(
                 SubscriptionTier.PRO,
@@ -161,24 +184,26 @@ public class FeatureGate {
      * <strong>Tier Requirement:</strong> PRO or higher
      * </p>
      * <p>
-     * Free tier users see non-intrusive banner ads to support platform maintenance.
-     * Pro and higher tiers enjoy an ad-free experience.
+     * Free tier users see non-intrusive banner ads to support
+     * platform maintenance. Pro and higher tiers enjoy an ad-free
+     * experience.
      * </p>
      *
      * @param user The user whose ad-free status to check
      * @return true if user has PRO, PRO_PLUS, or ENTERPRISE tier
      */
-    public boolean canRemoveAds(User user) {
+    public boolean canRemoveAds(final User user) {
         return hasSufficientTier(user, SubscriptionTier.PRO);
     }
 
     /**
-     * Requires that a user can remove ads, throwing exception if not.
+     * Requires that a user can remove ads, throwing exception if
+     * not.
      *
      * @param user The user attempting to access ad-free features
      * @throws FeatureNotAvailableException if user's tier is FREE
      */
-    public void requireCanRemoveAds(User user) {
+    public void requireCanRemoveAds(final User user) {
         if (!canRemoveAds(user)) {
             throw new FeatureNotAvailableException(
                 SubscriptionTier.PRO,
@@ -189,7 +214,8 @@ public class FeatureGate {
     }
 
     /**
-     * Checks if a user can manage organization settings and members.
+     * Checks if a user can manage organization settings and
+     * members.
      * <p>
      * <strong>Tier Requirement:</strong> ENTERPRISE only
      * </p>
@@ -204,20 +230,24 @@ public class FeatureGate {
      * </ul>
      * </p>
      *
-     * @param user The user attempting to manage organization features
+     * @param user The user attempting to manage organization
+     *             features
      * @return true if user has ENTERPRISE tier
      */
-    public boolean canManageOrganization(User user) {
+    public boolean canManageOrganization(final User user) {
         return hasSufficientTier(user, SubscriptionTier.ENTERPRISE);
     }
 
     /**
-     * Requires that a user can manage organizations, throwing exception if not.
+     * Requires that a user can manage organizations, throwing
+     * exception if not.
      *
-     * @param user The user attempting to manage organization features
-     * @throws FeatureNotAvailableException if user's tier is below ENTERPRISE
+     * @param user The user attempting to manage organization
+     *             features
+     * @throws FeatureNotAvailableException if user's tier is below
+     *                                      ENTERPRISE
      */
-    public void requireCanManageOrganization(User user) {
+    public void requireCanManageOrganization(final User user) {
         if (!canManageOrganization(user)) {
             throw new FeatureNotAvailableException(
                 SubscriptionTier.ENTERPRISE,
