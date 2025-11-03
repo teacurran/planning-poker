@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.scrumpoker.domain.user.User;
 import com.scrumpoker.repository.RoomRepository;
+import com.scrumpoker.security.FeatureGate;
 import io.quarkus.hibernate.reactive.panache.common.WithSession;
 import io.quarkus.hibernate.reactive.panache.common.WithTransaction;
 import io.smallrye.mutiny.Multi;
@@ -34,9 +35,13 @@ public class RoomService {
     @Inject
     ObjectMapper objectMapper;
 
+    @Inject
+    FeatureGate featureGate;
+
     /**
      * Creates a new room with the given parameters.
      * Generates a unique 6-character nanoid, validates inputs, and initializes JSONB config.
+     * Enforces subscription tier requirements for privacy modes.
      *
      * @param title The room title (max 255 characters)
      * @param privacyMode The privacy mode (PUBLIC, INVITE_ONLY, ORG_RESTRICTED)
@@ -44,6 +49,7 @@ public class RoomService {
      * @param config The room configuration settings
      * @return Uni containing the created room
      * @throws IllegalArgumentException if title exceeds max length or privacy mode is null
+     * @throws com.scrumpoker.security.FeatureNotAvailableException if user's tier is insufficient for privacy mode
      */
     @WithTransaction
     public Uni<Room> createRoom(String title, PrivacyMode privacyMode, User owner, RoomConfig config) {
@@ -56,6 +62,18 @@ public class RoomService {
         }
         if (privacyMode == null) {
             return Uni.createFrom().failure(new IllegalArgumentException("Privacy mode cannot be null"));
+        }
+
+        // Enforce tier requirements for privacy modes
+        if (owner != null) {
+            if (privacyMode == PrivacyMode.INVITE_ONLY) {
+                // INVITE_ONLY requires PRO_PLUS or ENTERPRISE tier
+                featureGate.requireCanCreateInviteOnlyRoom(owner);
+            } else if (privacyMode == PrivacyMode.ORG_RESTRICTED) {
+                // ORG_RESTRICTED requires ENTERPRISE tier (organization management)
+                featureGate.requireCanManageOrganization(owner);
+            }
+            // PUBLIC rooms are available to all tiers (no check needed)
         }
 
         // Use default config if not provided
@@ -130,12 +148,14 @@ public class RoomService {
 
     /**
      * Updates the privacy mode of an existing room.
+     * Enforces subscription tier requirements for privacy modes.
      *
      * @param roomId The room ID
      * @param privacyMode The new privacy mode
      * @return Uni containing the updated room
      * @throws IllegalArgumentException if privacyMode is null
      * @throws RoomNotFoundException if room doesn't exist
+     * @throws com.scrumpoker.security.FeatureNotAvailableException if user's tier is insufficient for privacy mode
      */
     @WithTransaction
     public Uni<Room> updatePrivacyMode(String roomId, PrivacyMode privacyMode) {
@@ -145,6 +165,18 @@ public class RoomService {
 
         return findById(roomId)
             .onItem().transform(room -> {
+                // Enforce tier requirements for privacy modes
+                if (room.owner != null) {
+                    if (privacyMode == PrivacyMode.INVITE_ONLY) {
+                        // INVITE_ONLY requires PRO_PLUS or ENTERPRISE tier
+                        featureGate.requireCanCreateInviteOnlyRoom(room.owner);
+                    } else if (privacyMode == PrivacyMode.ORG_RESTRICTED) {
+                        // ORG_RESTRICTED requires ENTERPRISE tier (organization management)
+                        featureGate.requireCanManageOrganization(room.owner);
+                    }
+                    // PUBLIC rooms are available to all tiers (no check needed)
+                }
+
                 room.privacyMode = privacyMode;
                 room.lastActiveAt = Instant.now();
                 return room;

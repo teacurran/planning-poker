@@ -10,26 +10,27 @@ This is the full specification of the task you must complete.
 
 ```json
 {
-  "task_id": "I5.T3",
+  "task_id": "I5.T4",
   "iteration_id": "I5",
   "iteration_goal": "Implement Stripe subscription billing, tier enforcement (Free/Pro/Pro+/Enterprise), payment flows, webhook handling for subscription lifecycle events, and frontend upgrade UI.",
-  "description": "Create REST endpoint `POST /api/v1/subscriptions/webhook` for Stripe webhook events. Verify webhook signature using Stripe webhook secret. Handle events: `customer.subscription.created` (call BillingService.syncSubscriptionStatus with ACTIVE), `customer.subscription.updated` (sync status changes), `customer.subscription.deleted` (sync CANCELED status), `invoice.payment_succeeded` (create PaymentHistory record), `invoice.payment_failed` (sync PAST_DUE status). Use idempotency keys (Stripe event ID) to prevent duplicate processing. Return 200 OK immediately to acknowledge webhook.",
+  "description": "Create `FeatureGate` service enforcing tier-based feature access. Methods: `canCreateInviteOnlyRoom(User)` (Pro+ or Enterprise), `canAccessAdvancedReports(User)` (Pro or higher), `canRemoveAds(User)` (Pro or higher), `canManageOrganization(User)` (Enterprise only). Inject into REST controllers and services. Throw `FeatureNotAvailableException` when user attempts unavailable feature. Implement `@RequiresTier(SubscriptionTier.PRO)` custom annotation for declarative enforcement on REST endpoints. Create interceptor validating tier requirements.",
   "agent_type_hint": "BackendAgent",
-  "inputs": "Stripe webhook event types, Webhook signature verification requirements, BillingService from I5.T2",
+  "inputs": "Feature tier matrix from product spec (Free vs. Pro vs. Enterprise), Subscription tier enum from I5.T2",
   "input_files": [
-    "backend/src/main/java/com/scrumpoker/domain/billing/BillingService.java",
-    "backend/src/main/java/com/scrumpoker/integration/stripe/StripeAdapter.java"
+    "backend/src/main/java/com/scrumpoker/domain/user/SubscriptionTier.java"
   ],
   "target_files": [
-    "backend/src/main/java/com/scrumpoker/api/rest/StripeWebhookController.java",
-    "backend/src/main/java/com/scrumpoker/domain/billing/WebhookEventLog.java"
+    "backend/src/main/java/com/scrumpoker/security/FeatureGate.java",
+    "backend/src/main/java/com/scrumpoker/security/RequiresTier.java",
+    "backend/src/main/java/com/scrumpoker/security/TierEnforcementInterceptor.java",
+    "backend/src/main/java/com/scrumpoker/security/FeatureNotAvailableException.java"
   ],
-  "deliverables": "Webhook endpoint at /api/v1/subscriptions/webhook, Signature verification using Stripe webhook secret, Event handlers for subscription lifecycle events, Payment history creation on successful invoice payment, Idempotency check (store processed event IDs in WebhookEventLog table), 200 OK response even if event processing fails internally (prevents Stripe retries)",
-  "acceptance_criteria": "Webhook endpoint receives Stripe events, Signature verification rejects invalid signatures (401 Unauthorized), Subscription created event updates database subscription status, Payment succeeded event creates PaymentHistory record, Subscription deleted event marks subscription as canceled, Duplicate event IDs skipped (idempotency), Webhook processing errors logged but return 200 to Stripe",
+  "deliverables": "FeatureGate service with tier check methods, Custom annotation @RequiresTier for declarative enforcement, Interceptor validating tier on annotated endpoints, FeatureNotAvailableException (403 Forbidden + upgrade prompt in message), Integration in RoomService (check tier before creating invite-only room)",
+  "acceptance_criteria": "Free tier user cannot create invite-only room (403 error), Pro tier user can create invite-only room, Free tier user accessing advanced reports returns 403, Interceptor enforces @RequiresTier annotation on endpoints, Exception message includes upgrade CTA (e.g., \"Upgrade to Pro to access this feature\")",
   "dependencies": [
     "I5.T2"
   ],
-  "parallelizable": false,
+  "parallelizable": true,
   "done": false
 }
 ```
@@ -40,55 +41,79 @@ This is the full specification of the task you must complete.
 
 The following are the relevant sections from the architecture and plan documents, which I found by analyzing the task description.
 
-### Context: Structured Logging Requirements (from 05_Operational_Architecture.md)
+### Context: Monetization Requirements (from 01_Context_and_Drivers.md)
 
 ```markdown
-**Structured Logging (JSON Format):**
-- **Library:** SLF4J with Quarkus Logging JSON formatter
-- **Schema:** Each log entry includes:
-  - `timestamp` - ISO8601 format
-  - `level` - DEBUG, INFO, WARN, ERROR
-  - `logger` - Java class name
-  - `message` - Human-readable description
-  - `correlationId` - Unique request/WebSocket session identifier for distributed tracing
-  - `userId` - Authenticated user ID (omitted for anonymous)
-  - `action` - Semantic action (e.g., `vote.cast`, `room.created`, `subscription.upgraded`)
-  - `duration` - Operation latency in milliseconds (for timed operations)
-  - `error` - Exception stack trace (for ERROR level)
-
-**Log Levels by Environment:**
-- **Development:** DEBUG (verbose SQL queries, WebSocket message payloads)
-- **Staging:** INFO (API requests, service method calls, integration events)
-- **Production:** WARN (error conditions, performance degradation, security events)
+<!-- anchor: monetization-requirements -->
+#### Monetization Requirements
+- **Stripe Integration:** Subscription management, payment processing, webhook handling
+- **Tier Enforcement:** Feature gating based on subscription level (ads, reports, room privacy, branding)
+- **Upgrade Flows:** In-app prompts, modal CTAs, settings panel upsells
+- **Billing Dashboard:** Subscription status, payment history, plan management
 ```
 
-### Context: Webhook Endpoint Specification (from api/openapi.yaml)
+### Context: Reporting Requirements (from 01_Context_and_Drivers.md)
 
-```yaml
-/api/v1/subscriptions/webhook:
-  post:
-    tags:
-      - Subscriptions
-    summary: Stripe webhook endpoint
-    description: |
-      Receives webhook events from Stripe (payment success, subscription canceled, etc.).
-      Verifies webhook signature before processing.
-    operationId: handleStripeWebhook
-    security: []  # Authenticated via Stripe signature
-    requestBody:
-      required: true
-      content:
-        application/json:
-          schema:
-            type: object
-            description: Stripe webhook event payload
-    responses:
-      '200':
-        description: Webhook processed successfully
-      '400':
-        $ref: '#/components/responses/BadRequest'
-      '500':
-        $ref: '#/components/responses/InternalServerError'
+```markdown
+<!-- anchor: reporting-requirements -->
+#### Reporting Requirements
+- **Free Tier:** Basic session summaries (story count, consensus rate, average vote)
+- **Pro Tier:** Round-level detail, user consistency metrics, CSV/JSON/PDF export
+- **Enterprise Tier:** Organizational dashboards, team trends, SSO-filtered reports, audit logs
+```
+
+### Context: Authorization Strategy (from 05_Operational_Architecture.md)
+
+```markdown
+<!-- anchor: authorization-strategy -->
+##### Authorization Strategy
+
+**Role-Based Access Control (RBAC):**
+- **Roles:** `ANONYMOUS`, `USER`, `PRO_USER`, `ORG_ADMIN`, `ORG_MEMBER`
+- **Implementation:** Quarkus Security annotations (`@RolesAllowed`) on REST endpoints and service methods
+- **JWT Claims:** Access token includes `roles` array for authorization decisions
+- **Dynamic Role Mapping:** Subscription tier (`FREE`, `PRO`, `PRO_PLUS`, `ENTERPRISE`) mapped to roles during token generation
+
+**Resource-Level Permissions:**
+- **Room Access:**
+  - `PUBLIC` rooms: Accessible to anyone with room ID
+  - `INVITE_ONLY` rooms: Requires room owner to whitelist participant (Pro+ tier)
+  - `ORG_RESTRICTED` rooms: Requires organization membership (Enterprise tier)
+- **Room Operations:**
+  - Host controls (reveal, reset, kick): Room creator or user with `HOST` role in `RoomParticipant`
+  - Configuration updates: Room owner only
+  - Vote casting: Participants with `VOTER` role (excludes `OBSERVER`)
+- **Report Access:**
+  - Free tier: Session summary only (no round-level detail)
+  - Pro tier: Full session history with round breakdown
+  - Enterprise tier: Organization-wide analytics with member filtering
+
+**Enforcement Points:**
+1. **API Gateway/Ingress:** JWT validation and signature verification
+2. **REST Controllers:** Role-based annotations reject unauthorized requests with `403 Forbidden`
+3. **Domain Services:** Business logic validates resource ownership and permissions
+4. **Database:** Row-level security policies (future enhancement for multi-tenancy)
+```
+
+### Context: Task I5.T4 - Tier Enforcement Details (from 02_Iteration_I5.md)
+
+```markdown
+<!-- anchor: task-i5-t4 -->
+*   **Task 5.4: Implement Subscription Tier Enforcement**
+    *   **Task ID:** `I5.T4`
+    *   **Description:** Create `FeatureGate` service enforcing tier-based feature access. Methods: `canCreateInviteOnlyRoom(User)` (Pro+ or Enterprise), `canAccessAdvancedReports(User)` (Pro or higher), `canRemoveAds(User)` (Pro or higher), `canManageOrganization(User)` (Enterprise only). Inject into REST controllers and services. Throw `FeatureNotAvailableException` when user attempts unavailable feature. Implement `@RequiresTier(SubscriptionTier.PRO)` custom annotation for declarative enforcement on REST endpoints. Create interceptor validating tier requirements.
+    *   **Deliverables:**
+        *   FeatureGate service with tier check methods
+        *   Custom annotation @RequiresTier for declarative enforcement
+        *   Interceptor validating tier on annotated endpoints
+        *   FeatureNotAvailableException (403 Forbidden + upgrade prompt in message)
+        *   Integration in RoomService (check tier before creating invite-only room)
+    *   **Acceptance Criteria:**
+        *   Free tier user cannot create invite-only room (403 error)
+        *   Pro tier user can create invite-only room
+        *   Free tier user accessing advanced reports returns 403
+        *   Interceptor enforces @RequiresTier annotation on endpoints
+        *   Exception message includes upgrade CTA (e.g., "Upgrade to Pro to access this feature")
 ```
 
 ---
@@ -99,78 +124,67 @@ The following analysis is based on my direct review of the current codebase. Use
 
 ### Relevant Existing Code
 
-*   **File:** `backend/src/main/java/com/scrumpoker/api/rest/StripeWebhookController.java`
-    *   **Summary:** THIS FILE ALREADY EXISTS AND IS FULLY IMPLEMENTED. The webhook controller is complete with all required functionality: signature verification, idempotency checks via WebhookEventLog, all five event handlers (subscription created/updated/deleted, invoice payment succeeded/failed), and proper error handling that always returns 200 OK.
-    *   **Recommendation:** **CRITICAL - This task (I5.T3) is ALREADY COMPLETE.** Review the existing implementation (447 lines) to verify it meets all acceptance criteria. The file includes comprehensive Javadoc, proper reactive patterns with Uni<>, transaction boundaries, and follows all architectural guidelines.
-    *   **Implementation Details:**
-        - Uses `Webhook.constructEvent()` for signature verification with 401 on failure
-        - Idempotency via `WebhookEventLogRepository.findByEventId()`
-        - All 5 event types handled in `processEventByType()` switch statement
-        - Payment history creation with duplicate invoice check
-        - Status mapping from Stripe to domain enums
-        - Always returns 200 OK even on processing failures (via `.onItemOrFailure().transform()`)
+*   **File:** `backend/src/main/java/com/scrumpoker/domain/user/SubscriptionTier.java`
+    *   **Summary:** Enum defining the four subscription tiers: FREE, PRO, PRO_PLUS, ENTERPRISE. This matches the database `subscription_tier_enum` type.
+    *   **Recommendation:** You MUST import and use this enum in your FeatureGate service for tier comparisons. The tier hierarchy is: FREE < PRO < PRO_PLUS < ENTERPRISE.
 
-*   **File:** `backend/src/main/java/com/scrumpoker/domain/billing/WebhookEventLog.java`
-    *   **Summary:** JPA entity for webhook idempotency already implemented with eventId as primary key, eventType, processedAt, and status (enum: PROCESSED/FAILED) fields.
-    *   **Recommendation:** This entity is complete and correctly used by StripeWebhookController. No changes needed.
+*   **File:** `backend/src/main/java/com/scrumpoker/domain/user/User.java`
+    *   **Summary:** User entity with a `subscriptionTier` field (type: `SubscriptionTier`, default: `FREE`). This field is automatically updated by BillingService when subscriptions change.
+    *   **Recommendation:** Your FeatureGate service MUST accept a `User` object as a parameter and check the `user.subscriptionTier` field. DO NOT attempt to query subscriptions directly - the tier is always available on the User entity.
 
 *   **File:** `backend/src/main/java/com/scrumpoker/domain/billing/BillingService.java`
-    *   **Summary:** Domain service with complete subscription lifecycle management (createSubscription, upgradeSubscription, cancelSubscription, syncSubscriptionStatus). The `syncSubscriptionStatus()` method is the integration point for webhook handlers.
-    *   **Recommendation:** This service is already correctly integrated in StripeWebhookController. The method signature is: `public Uni<Void> syncSubscriptionStatus(final String stripeSubscriptionId, final SubscriptionStatus status)`
-    *   **Status Handling:** Automatically downgrades to FREE tier when CANCELED status is synced AND period ended. Updates User.subscriptionTier to subscription tier for ACTIVE status.
+    *   **Summary:** Service managing subscription lifecycle. Contains the `updateUserTier()` private method that ensures User.subscriptionTier is always in sync with active subscriptions. Also includes `isValidUpgrade()` helper method showing the tier hierarchy.
+    *   **Recommendation:** You do NOT need to interact with BillingService. Your FeatureGate should ONLY read the User.subscriptionTier field, which BillingService keeps updated.
 
-*   **File:** `backend/src/main/java/com/scrumpoker/integration/stripe/StripeAdapter.java`
-    *   **Summary:** Stripe SDK wrapper providing customer creation, checkout sessions, subscription management, and price/tier mapping. The webhook signature verification is handled separately by StripeWebhookController using the Stripe SDK directly.
-    *   **Recommendation:** No changes needed to this file for webhook functionality.
+*   **File:** `backend/src/main/java/com/scrumpoker/security/JwtAuthenticationFilter.java`
+    *   **Summary:** Existing JAX-RS request filter that performs JWT authentication. Registered with `@Provider` and `@Priority(AUTHENTICATION)`. Populates SecurityIdentity with user principal and roles.
+    *   **Recommendation:** Your TierEnforcementInterceptor MUST use a DIFFERENT priority than AUTHENTICATION. Use `@Priority(Priorities.AUTHORIZATION)` since tier enforcement is an authorization concern, not authentication. This ensures it runs AFTER authentication.
 
-*   **File:** `backend/src/main/resources/db/migration/V4__create_webhook_event_log.sql`
-    *   **Summary:** Database migration for webhook_event_log table already exists (created by I5.T3 implementation).
-    *   **Recommendation:** Migration is complete with proper schema, unique constraint on event_id, and enum type for status.
+*   **File:** `backend/src/main/java/com/scrumpoker/security/JwtClaims.java`
+    *   **Summary:** Record containing JWT claims including `userId`, `email`, `roles`, and `tier` (as String). The SecurityIdentity contains JwtClaims in its attributes.
+    *   **Recommendation:** In your interceptor, you can extract the tier from SecurityIdentity attributes if needed, but it's cleaner to fetch the User entity from the repository using the userId from the SecurityIdentity principal.
 
-*   **File:** `backend/src/test/java/com/scrumpoker/api/rest/RoomControllerTest.java`
-    *   **Summary:** Reference example for integration test patterns using @QuarkusTest, @TestProfile(NoSecurityTestProfile.class), @RunOnVertxContext, UniAsserter, and RestAssured.
-    *   **Recommendation:** Use this as a template for writing integration tests for the webhook endpoint (required for acceptance criteria verification). Tests should mock Stripe events with valid signatures.
+*   **File:** `backend/src/main/java/com/scrumpoker/domain/room/PrivacyMode.java`
+    *   **Summary:** Enum defining room privacy modes: PUBLIC, INVITE_ONLY, ORG_RESTRICTED.
+    *   **Recommendation:** You MUST check for `PrivacyMode.INVITE_ONLY` when enforcing the invite-only room creation restriction in your FeatureGate.
+
+*   **File:** `backend/src/main/java/com/scrumpoker/domain/room/RoomService.java`
+    *   **Summary:** Service for room CRUD operations. The `createRoom()` method accepts a `PrivacyMode` parameter. Currently has NO tier enforcement.
+    *   **Recommendation:** You MUST modify the `createRoom()` method to inject FeatureGate and call `featureGate.canCreateInviteOnlyRoom(owner)` before allowing INVITE_ONLY or ORG_RESTRICTED room creation. If the check fails, throw FeatureNotAvailableException.
+
+*   **File:** `backend/src/main/java/com/scrumpoker/domain/user/UserNotFoundException.java`
+    *   **Summary:** Example of a domain exception pattern. Extends RuntimeException, includes the problematic entity ID, and has multiple constructors.
+    *   **Recommendation:** You SHOULD follow this exact pattern for your FeatureNotAvailableException. Include fields for `requiredTier` and `currentTier` to provide context in the error message.
+
+*   **File:** `backend/src/main/java/com/scrumpoker/api/rest/exception/UserNotFoundExceptionMapper.java`
+    *   **Summary:** JAX-RS exception mapper converting UserNotFoundException to 404 responses with ErrorResponse DTO. Uses `@Provider` annotation for automatic registration.
+    *   **Recommendation:** You MUST create a similar exception mapper for FeatureNotAvailableException that returns HTTP 403 (Forbidden) status with an ErrorResponse containing an upgrade CTA message.
 
 ### Implementation Tips & Notes
 
-*   **TASK STATUS:** This task (I5.T3) is **ALREADY COMPLETE**. All deliverables exist and all acceptance criteria are met by the existing StripeWebhookController.java implementation.
+*   **Tip:** The FeatureGate service should be a stateless `@ApplicationScoped` CDI bean for efficient dependency injection across the application.
 
-*   **Verification Checklist:** To confirm task completion, verify the following acceptance criteria:
-    - ✅ Webhook endpoint exists at `/api/v1/subscriptions/webhook` (line 47 in StripeWebhookController.java)
-    - ✅ Signature verification implemented with 401 on failure (lines 115-126)
-    - ✅ Subscription created event updates database (handleSubscriptionCreated, lines 237-257)
-    - ✅ Payment succeeded event creates PaymentHistory (handleInvoicePaymentSucceeded, lines 325-389)
-    - ✅ Subscription deleted event marks as canceled (handleSubscriptionDeleted, lines 296-315)
-    - ✅ Idempotency via WebhookEventLog (processEventIdempotently, lines 154-196)
-    - ✅ Always returns 200 OK on errors (onItemOrFailure transform, lines 130-142)
+*   **Tip:** For the `@RequiresTier` annotation, use `@Target({ElementType.METHOD, ElementType.TYPE})` so it can be applied to both individual endpoints and entire controller classes.
 
-*   **Next Actions Required:**
-    1. **Run existing tests** to verify the implementation works correctly
-    2. **Update task manifest** - Change `"done": false` to `"done": true` for task I5.T3 in `.codemachine/artifacts/tasks/tasks_I5.json`
-    3. **Move to next task** - Task I5.T4 (Subscription Tier Enforcement) or I5.T8 (Integration Tests for Stripe Webhook) if you want to add more test coverage
+*   **Tip:** The TierEnforcementInterceptor should implement `ContainerRequestFilter` (JAX-RS) to intercept HTTP requests. Use reflection to check if the target method/class has the `@RequiresTier` annotation.
 
-*   **Implementation Quality Notes:**
-    - The existing code follows all architectural patterns correctly
-    - Comprehensive logging with structured format (INFO for success, ERROR for failures)
-    - Proper reactive programming with Uni<> types and transformation chains
-    - Transaction boundaries correctly applied with @Transactional
-    - OpenAPI documentation complete with operation descriptions
-    - Error handling gracefully handles deserialization failures
-    - Status mapping implemented for all Stripe status values
-    - Payment history creation includes idempotency check on invoice ID
+*   **Tip:** For the upgrade CTA message in FeatureNotAvailableException, use a format like: "This feature requires {requiredTier} tier. Upgrade your subscription to access it." Make it user-friendly and actionable.
 
-*   **Testing Recommendations (for I5.T8):**
-    - Create test fixtures with sample Stripe webhook payloads in `src/test/resources/stripe/`
-    - Use `@QuarkusTest` with Testcontainers for PostgreSQL
-    - Mock Stripe signature generation or use test webhook secrets
-    - Test all 5 event types independently
-    - Test signature verification failure scenario
-    - Test idempotency (send same event twice, verify only processed once)
-    - Test missing subscription handling (webhook for non-existent subscription)
+*   **Tip:** When checking tier requirements, remember the hierarchy: PRO_PLUS satisfies PRO requirements, and ENTERPRISE satisfies both PRO and PRO_PLUS requirements. You'll need a helper method to check "is tier X sufficient for requirement Y?"
 
-*   **Database Schema:** The WebhookEventLog table was created by migration V4__create_webhook_event_log.sql with:
-    - event_id VARCHAR(100) PRIMARY KEY
-    - event_type VARCHAR(100) NOT NULL
-    - processed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-    - status webhook_event_status_enum NOT NULL (PROCESSED or FAILED)
-    - Unique constraint on event_id ensures idempotency
+*   **Warning:** Be careful with the PrivacyMode check in RoomService. You should only enforce tier restrictions for INVITE_ONLY and ORG_RESTRICTED modes. PUBLIC rooms should remain accessible to all tiers (FREE users can create PUBLIC rooms).
+
+*   **Warning:** The interceptor must NOT intercept public endpoints (those handled by JwtAuthenticationFilter's exemption list: /api/v1/auth/*, /q/health/*, etc.). You can check the request path before applying tier enforcement.
+
+*   **Note:** Based on the architecture, the tier enforcement points are:
+    1. **INVITE_ONLY rooms:** Requires PRO_PLUS or ENTERPRISE
+    2. **ORG_RESTRICTED rooms:** Requires ENTERPRISE (organization membership)
+    3. **Advanced reports:** Requires PRO or higher (not FREE)
+    4. **Ad removal:** Requires PRO or higher
+    5. **Organization management:** Requires ENTERPRISE
+
+*   **Note:** The existing codebase uses Quarkus reactive patterns (Uni<>, Multi<>) extensively. Your FeatureGate methods should be synchronous (return boolean or throw exception) since they're simple tier comparisons, not I/O operations.
+
+*   **Note:** The project follows comprehensive Javadoc commenting standards (see existing files). You MUST include detailed class-level and method-level Javadoc for all new classes, explaining the purpose, parameters, return values, and thrown exceptions.
+
+*   **Note:** The task description asks for RoomService integration. After creating FeatureGate, you should inject it into RoomService and add a tier check in the `createRoom()` method before allowing INVITE_ONLY or ORG_RESTRICTED privacy modes. The check should throw FeatureNotAvailableException if the user's tier is insufficient.
