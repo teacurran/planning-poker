@@ -1,153 +1,272 @@
 # Code Refinement Task
 
-The previous code submission did not pass verification. You must fix the following issues and resubmit your work.
+The previous code submission did not pass verification. Task I7.T2 was NOT implemented - none of the required deliverables were created.
 
 ---
 
 ## Original Task Description
 
-**Task ID:** I7.T1
-**Description:** Create `SsoAdapter` service supporting OIDC and SAML2 protocols using Quarkus Security extensions. OIDC: configure IdP discovery endpoint, handle authorization code flow, validate ID token, extract user attributes (email, name, groups). SAML2: configure IdP metadata URL, handle SAML response, validate assertions, extract attributes from assertion. Map IdP attributes to User entity fields. Support per-organization SSO configuration (stored in Organization.sso_config JSONB). Implement backchannel logout (OIDC logout endpoint, SAML SLO).
+**Task ID:** I7.T2
+
+**Description:** Create `OrganizationService` domain service managing enterprise organizations. Methods: `createOrganization(name, domain, ownerId)`, `updateSsoConfig(orgId, oidcConfig)` (store IdP settings in JSONB), `addMember(orgId, userId, role)`, `removeMember(orgId, userId)`, `updateBranding(orgId, logoUrl, primaryColor)`, `getOrganization(orgId)`, `getUserOrganizations(userId)`. Use `OrganizationRepository`, `OrgMemberRepository`. Validate domain ownership (user's email domain matches org domain). Enforce Enterprise tier requirement for org creation. Store branding config in Organization.branding JSONB.
 
 **Acceptance Criteria:**
-- OIDC authentication flow completes with test IdP (Okta sandbox)
-- SAML2 authentication flow completes (Azure AD or SAML test IdP)
-- User attributes correctly mapped from ID token/assertion
-- Organization-specific SSO config loaded from database
-- Logout endpoint invalidates SSO session
-- Certificate validation works for SAML2
+- Creating organization validates domain (user email matches domain)
+- SSO config persists to Organization.ssoConfig correctly
+- Adding member creates OrgMember record with role
+- Removing member soft-deletes membership (or hard delete based on design)
+- Branding config JSON serializes correctly
+- Non-Enterprise tier cannot create organization (403)
 
 ---
 
 ## Issues Detected
 
-### 1. Test Failures - Mockito Unnecessary Stubbing Errors
+### 1. Missing Implementation - Task I7.T2 Not Started
 
-**Files Affected:**
-- `backend/src/test/java/com/scrumpoker/integration/sso/OidcProviderTest.java`
-- `backend/src/test/java/com/scrumpoker/integration/sso/SsoAdapterTest.java`
+**Critical Issue:** The task I7.T2 has NOT been implemented at all. None of the target files exist:
 
-**Specific Failures:**
-- `OidcProviderTest.validateAndExtractClaims_expiredToken_throwsException` - UnnecessaryStubbingException at lines 296-300
-- `OidcProviderTest.validateAndExtractClaims_invalidIssuer_throwsException` - UnnecessaryStubbingException at lines 309-313
-- `OidcProviderTest.validateAndExtractClaims_invalidAudience_throwsException` - UnnecessaryStubbingException at lines 321-323
-- `SsoAdapterTest.authenticate_nullAuthenticationData_throwsException` - UnnecessaryStubbingException at line 191
-- `SsoAdapterTest.authenticate_nullOrganizationId_throwsException` - UnnecessaryStubbingException at line 210
+**Missing Files:**
+- `backend/src/main/java/com/scrumpoker/domain/organization/OrganizationService.java` - DOES NOT EXIST
+- `backend/src/main/java/com/scrumpoker/domain/organization/BrandingConfig.java` - DOES NOT EXIST
 
-**Root Cause:**
-The test helper methods (`createExpiredMockJwt()`, `createMockJwtWithInvalidIssuer()`, `createMockJwtWithInvalidAudience()`) are setting up mock stubs for JWT fields that are never accessed because the validation throws an exception early (e.g., when checking expiration, the issuer and audience stubs are never used).
+**Note:** The target file `SsoConfig.java` mentioned in the task description should NOT be created because it already exists in `backend/src/main/java/com/scrumpoker/integration/sso/SsoConfig.java` and should be reused, not duplicated.
 
-### 2. OpenSAML Version Mismatch
+### 2. Compilation Errors from Previous Task
 
-**File:** `backend/pom.xml`
+There are compilation errors in the SSO integration code (task I7.T1) that are preventing the project from compiling. These errors are in `Saml2Provider.java` and are related to missing OpenSAML classes. However, these are NOT part of task I7.T2 and should be fixed separately.
 
-**Issue:**
-The `Saml2Provider.java` implementation uses OpenSAML 5 API, but `pom.xml` specifies OpenSAML version `4.3.2`:
-```xml
-<opensaml.version>4.3.2</opensaml.version>
-```
-
-OpenSAML 5 has breaking API changes from version 4, and the current code will fail at runtime with NoClassDefFoundError or similar errors.
-
-### 3. Potential Runtime Issues
-
-Although compilation succeeded (because OpenSAML 4 has similar class names), the actual SAML2 authentication flow will likely fail at runtime due to:
-- Different initialization API between OpenSAML 4 and 5
-- Different XML parsing APIs
-- Different signature validation APIs
+For task I7.T2, you MUST ensure your code compiles even if the SSO integration has issues.
 
 ---
 
 ## Best Approach to Fix
 
-### Fix #1: Resolve Test Mockito Stubbing Issues
+You MUST implement task I7.T2 from scratch. Create the following files and follow the implementation guidance below:
 
-You MUST update the test helper methods in `OidcProviderTest.java` and `SsoAdapterTest.java` to use **lenient stubbing** for mocks that might not be fully accessed when exceptions are thrown early.
+### Step 1: Create BrandingConfig POJO
 
-**In OidcProviderTest.java:**
+**File:** `backend/src/main/java/com/scrumpoker/domain/organization/BrandingConfig.java`
 
-1. Locate the helper methods at lines 294-329:
-   - `createExpiredMockJwt()`
-   - `createMockJwtWithInvalidIssuer()`
-   - `createMockJwtWithInvalidAudience()`
+Create a simple POJO class to represent branding configuration that will be serialized to JSON and stored in `Organization.branding` field.
 
-2. Change the mock creation from:
-   ```java
-   JsonWebToken jwt = mock(JsonWebToken.class);
-   ```
+**Requirements:**
+- Package: `com.scrumpoker.domain.organization`
+- Fields: `String logoUrl`, `String primaryColor`, `String secondaryColor`
+- Include Jackson annotations for JSON serialization: `@JsonProperty`
+- Include standard getters, setters, no-args constructor, and all-args constructor
+- Add `@JsonIgnoreProperties(ignoreUnknown = true)` to handle schema evolution
+- Make it a simple data class - no business logic
 
-   To:
-   ```java
-   JsonWebToken jwt = mock(JsonWebToken.class, withSettings().lenient());
-   ```
+**Example structure:**
+```java
+package com.scrumpoker.domain.organization;
 
-3. This tells Mockito that not all stubs may be used, which is expected for these negative test cases.
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
 
-**In SsoAdapterTest.java:**
+@JsonIgnoreProperties(ignoreUnknown = true)
+public class BrandingConfig {
+    @JsonProperty("logo_url")
+    private String logoUrl;
 
-1. Find the two test methods that have unnecessary stubbing errors:
-   - `authenticate_nullAuthenticationData_throwsException` (around line 191)
-   - `authenticate_nullOrganizationId_throwsException` (around line 210)
+    @JsonProperty("primary_color")
+    private String primaryColor;
 
-2. Add `lenient()` wrapper to any mock stubs that might not be used when the IllegalArgumentException is thrown early. For example:
-   ```java
-   lenient().when(objectMapper.readValue(anyString(), eq(SsoConfig.class)))
-           .thenReturn(mockSsoConfig);
-   ```
+    @JsonProperty("secondary_color")
+    private String secondaryColor;
 
-### Fix #2: Upgrade OpenSAML to Version 5.x
+    // constructors, getters, setters
+}
+```
 
-You MUST update `backend/pom.xml` to use OpenSAML 5.x to match the implementation in `Saml2Provider.java`.
+### Step 2: Create OrganizationService
 
-**In backend/pom.xml:**
+**File:** `backend/src/main/java/com/scrumpoker/domain/organization/OrganizationService.java`
 
-1. Locate line 21:
-   ```xml
-   <opensaml.version>4.3.2</opensaml.version>
-   ```
+Create the domain service with the following specifications:
 
-2. Change it to:
-   ```xml
-   <opensaml.version>5.1.2</opensaml.version>
-   ```
+**Service Setup:**
+- Annotate with `@ApplicationScoped` (CDI bean)
+- Inject dependencies via `@Inject`:
+  - `OrganizationRepository organizationRepository`
+  - `OrgMemberRepository orgMemberRepository`
+  - `UserRepository userRepository`
+  - `FeatureGate featureGate`
+  - `ObjectMapper objectMapper` (for JSON serialization)
 
-   (OpenSAML 5.1.2 is the latest stable version compatible with Java 17 and the code implementation)
+**Method 1: createOrganization(String name, String domain, UUID ownerId)**
 
-3. Verify the Shibboleth repository is still present (it should be around lines 24-31) - this repository is required for OpenSAML 5 artifacts.
+**Signature:** `public Uni<Organization> createOrganization(String name, String domain, UUID ownerId)`
 
-4. After updating, run `mvn clean compile` to verify the new version compiles correctly.
+**Implementation Steps:**
+1. Use reactive chain: `userRepository.findById(ownerId)`
+2. Validate user exists (throw `IllegalArgumentException` if null)
+3. Call `featureGate.requireCanManageOrganization(user)` to enforce Enterprise tier (throws `FeatureNotAvailableException` if not Enterprise)
+4. Extract email domain from user's email (everything after '@')
+5. Validate that extracted domain matches the `domain` parameter (throw `IllegalArgumentException("User email domain does not match organization domain")` if mismatch)
+6. Create new `Organization` entity:
+   - Set `name`, `domain`
+   - Set `ssoConfig` to null initially
+   - Set `branding` to null initially
+   - Set `createdAt` to `Instant.now()`
+7. Persist organization: `organizationRepository.persist(organization)`
+8. Chain to create OrgMember for owner:
+   - Create `OrgMember` with composite ID (`OrgMemberId`)
+   - Set role to `OrgRole.ADMIN`
+   - Set `joinedAt` to `Instant.now()`
+9. Persist member: `orgMemberRepository.persist(orgMember)`
+10. Return the organization
+11. Annotate method with `@Transactional`
 
-### Fix #3: Verify Saml2Provider Implementation
+**Method 2: updateSsoConfig(UUID orgId, SsoConfig ssoConfig)**
 
-After upgrading OpenSAML to version 5.x, you should:
+**Signature:** `public Uni<Organization> updateSsoConfig(UUID orgId, SsoConfig ssoConfig)`
 
-1. Run the backend tests again to ensure SAML2 tests pass:
-   ```bash
-   mvn test -Dtest="com.scrumpoker.integration.sso.*Test"
-   ```
+**Implementation Steps:**
+1. Import `com.scrumpoker.integration.sso.SsoConfig` (DO NOT create a new SsoConfig class)
+2. Use `organizationRepository.findById(orgId)`
+3. Validate organization exists
+4. Serialize `ssoConfig` to JSON string using `objectMapper.writeValueAsString(ssoConfig)`
+5. Set `organization.setSsoConfig(jsonString)`
+6. Persist updated organization
+7. Return organization
+8. Annotate with `@Transactional`
+9. Wrap ObjectMapper exceptions in `RuntimeException` or custom exception
 
-2. If there are still test failures in `Saml2ProviderTest`, read the test file and fix any test-specific issues (similar to the Mockito stubbing issues).
+**Method 3: addMember(UUID orgId, UUID userId, OrgRole role)**
 
-### Summary of Required Changes
+**Signature:** `public Uni<OrgMember> addMember(UUID orgId, UUID userId, OrgRole role)`
 
-1. **OidcProviderTest.java**: Add `withSettings().lenient()` to mock creation in 3 helper methods (lines ~294, ~307, ~319)
-2. **SsoAdapterTest.java**: Add `lenient()` wrapper to mock stubs in 2 test methods that validate null arguments
-3. **pom.xml**: Change `<opensaml.version>4.3.2</opensaml.version>` to `<opensaml.version>5.1.2</opensaml.version>`
+**Implementation Steps:**
+1. Validate organization exists
+2. Validate user exists
+3. Check if member already exists (query `orgMemberRepository` by composite ID)
+4. If member exists, throw `IllegalStateException("User is already a member of this organization")`
+5. Create new `OrgMember`:
+   - Use `OrgMemberId` composite key with `orgId` and `userId`
+   - Set `role`
+   - Set `joinedAt` to `Instant.now()`
+6. Persist member
+7. Return member
+8. Annotate with `@Transactional`
 
-### Testing Steps After Fixes
+**Method 4: removeMember(UUID orgId, UUID userId)**
 
-1. Run `mvn clean compile -DskipTests` to verify compilation
-2. Run `mvn test -Dtest="com.scrumpoker.integration.sso.*Test"` to verify all SSO tests pass
-3. Verify no linting errors or warnings (except deprecation warnings which are acceptable)
+**Signature:** `public Uni<Void> removeMember(UUID orgId, UUID userId)`
+
+**Implementation Steps:**
+1. Create composite ID: `new OrgMemberId(orgId, userId)`
+2. Use `orgMemberRepository.findById(compositeId)`
+3. Validate member exists
+4. Check if this is the last admin:
+   - Query count of ADMIN members in organization: `orgMemberRepository.count("id.orgId = ?1 and role = ?2", orgId, OrgRole.ADMIN)`
+   - If count is 1 and the member being removed is ADMIN, throw `IllegalStateException("Cannot remove the last admin from organization")`
+5. Hard delete the member: `orgMemberRepository.delete(member)`
+6. Return `Uni.createFrom().voidItem()`
+7. Annotate with `@Transactional`
+
+**Note on soft vs hard delete:** The `OrgMember` entity does NOT have a `deletedAt` field, so use hard delete.
+
+**Method 5: updateBranding(UUID orgId, String logoUrl, String primaryColor, String secondaryColor)**
+
+**Signature:** `public Uni<Organization> updateBranding(UUID orgId, String logoUrl, String primaryColor, String secondaryColor)`
+
+**Implementation Steps:**
+1. Use `organizationRepository.findById(orgId)`
+2. Validate organization exists
+3. Create `BrandingConfig` object with the provided values
+4. Serialize to JSON using `objectMapper.writeValueAsString(brandingConfig)`
+5. Set `organization.setBranding(jsonString)`
+6. Persist updated organization
+7. Return organization
+8. Annotate with `@Transactional`
+
+**Method 6: getOrganization(UUID orgId)**
+
+**Signature:** `public Uni<Organization> getOrganization(UUID orgId)`
+
+**Implementation Steps:**
+1. Simple lookup: `organizationRepository.findById(orgId)`
+2. Return the result (Uni<Organization>, can be null if not found)
+
+**Method 7: getUserOrganizations(UUID userId)**
+
+**Signature:** `public Multi<Organization> getUserOrganizations(UUID userId)`
+
+**Implementation Steps:**
+1. Query org members: `orgMemberRepository.list("id.userId", userId)`
+2. Use `Multi.createFrom().iterable(members)`
+3. Chain with `flatMap` to fetch each organization:
+   - For each member, fetch organization: `organizationRepository.findById(member.getId().getOrgId())`
+4. Return `Multi<Organization>`
+
+**Alternative approach using join query:**
+```java
+return orgMemberRepository.find(
+    "SELECT m.organization FROM OrgMember m WHERE m.id.userId = ?1", userId
+).stream();
+```
+
+### Step 3: Testing and Validation
+
+After implementing the files:
+
+1. **Compilation check:** Run `mvn clean compile -DskipTests` to verify the code compiles
+2. **Verify dependencies:** Ensure all imports are correct:
+   - SsoConfig imported from `com.scrumpoker.integration.sso` package
+   - ObjectMapper imported from `com.fasterxml.jackson.databind`
+   - Reactive types (Uni, Multi) imported from `io.smallrye.mutiny`
+   - Transactional annotation from `jakarta.transaction`
+3. **Do NOT run tests yet** - unit tests will be created in task I7.T8
+
+### Critical Requirements Summary
+
+**DO:**
+- Use reactive types (`Uni<>`, `Multi<>`) for all method return types
+- Use `@Transactional` on methods that modify data
+- Use `@ApplicationScoped` on the service class
+- Import `SsoConfig` from `com.scrumpoker.integration.sso` package (existing class)
+- Use `ObjectMapper` for JSON serialization/deserialization
+- Use `FeatureGate.requireCanManageOrganization(user)` for Enterprise tier enforcement
+- Validate domain ownership (email domain matches org domain)
+- Prevent removal of last admin
+- Check for duplicate members before adding
+
+**DO NOT:**
+- Create a new `SsoConfig` class in `domain.organization` package (reuse the existing one from `integration.sso`)
+- Use blocking code (avoid `.await().indefinitely()` in service methods)
+- Use soft deletes for OrgMember (use hard delete since there's no `deletedAt` field)
+- Allow creation of organization if user is not Enterprise tier
+- Allow adding duplicate members
+
+### Error Handling
+
+- Domain validation failures: throw `IllegalArgumentException` with descriptive message
+- Entity not found: return null in Uni/Multi (let controller handle 404)
+- Feature gate violations: let `FeatureNotAvailableException` propagate (handled by exception mapper)
+- JSON serialization errors: wrap in `RuntimeException` or create custom `JsonProcessingException` wrapper
 
 ---
 
 ## Additional Context
 
-- The OIDC implementation in `OidcProvider.java` is complete and correct
-- The SAML2 implementation in `Saml2Provider.java` is complete and uses OpenSAML 5 API correctly
-- The `SsoAdapter.java` orchestration layer is complete and correct
-- All configuration POJOs (`SsoConfig`, `OidcConfig`, `Saml2Config`, `SsoUserInfo`) are complete
-- The only issues are test mock configuration and dependency version mismatch
+The task context document provides detailed implementation guidance including:
+- Existing file locations and their usage patterns
+- JSON serialization examples from SsoAdapter
+- FeatureGate usage for tier enforcement
+- Repository patterns and reactive operations
+- Domain validation logic
 
-Do NOT rewrite the implementation files. Only fix the test files and pom.xml as specified above.
+Refer to the implementation tips in the context document for specific code patterns and conventions used in this codebase.
+
+---
+
+## Expected Deliverables
+
+After implementing this task, the following files MUST exist and compile:
+
+1. `backend/src/main/java/com/scrumpoker/domain/organization/BrandingConfig.java` (NEW)
+2. `backend/src/main/java/com/scrumpoker/domain/organization/OrganizationService.java` (NEW)
+
+The code MUST compile successfully with `mvn clean compile -DskipTests`.

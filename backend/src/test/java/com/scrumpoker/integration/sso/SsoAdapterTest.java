@@ -18,6 +18,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -188,7 +189,7 @@ class SsoAdapterTest {
     void authenticate_nullAuthenticationData_throwsException() throws JsonProcessingException {
         // Given
         String ssoConfigJson = createOidcConfigJson();
-        when(objectMapper.readValue(anyString(), eq(SsoConfig.class)))
+        lenient().when(objectMapper.readValue(anyString(), eq(SsoConfig.class)))
                 .thenReturn(createOidcSsoConfig());
 
         // When/Then
@@ -207,7 +208,7 @@ class SsoAdapterTest {
     void authenticate_nullOrganizationId_throwsException() throws JsonProcessingException {
         // Given
         String ssoConfigJson = createOidcConfigJson();
-        when(objectMapper.readValue(anyString(), eq(SsoConfig.class)))
+        lenient().when(objectMapper.readValue(anyString(), eq(SsoConfig.class)))
                 .thenReturn(createOidcSsoConfig());
 
         // When/Then

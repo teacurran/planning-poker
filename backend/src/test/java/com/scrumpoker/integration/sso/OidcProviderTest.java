@@ -22,6 +22,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.withSettings;
 
 /**
  * Unit tests for {@link OidcProvider}.
@@ -292,7 +293,7 @@ class OidcProviderTest {
     }
 
     private JsonWebToken createExpiredMockJwt() {
-        JsonWebToken jwt = mock(JsonWebToken.class);
+        JsonWebToken jwt = mock(JsonWebToken.class, withSettings().lenient());
         when(jwt.getSubject()).thenReturn("test-subject");
         when(jwt.getClaim("email")).thenReturn("test@example.com");
         when(jwt.getClaim("name")).thenReturn("Test User");
@@ -305,7 +306,7 @@ class OidcProviderTest {
     }
 
     private JsonWebToken createMockJwtWithInvalidIssuer() {
-        JsonWebToken jwt = mock(JsonWebToken.class);
+        JsonWebToken jwt = mock(JsonWebToken.class, withSettings().lenient());
         when(jwt.getSubject()).thenReturn("test-subject");
         when(jwt.getClaim("email")).thenReturn("test@example.com");
         when(jwt.getClaim("name")).thenReturn("Test User");
@@ -317,7 +318,7 @@ class OidcProviderTest {
     }
 
     private JsonWebToken createMockJwtWithInvalidAudience() {
-        JsonWebToken jwt = mock(JsonWebToken.class);
+        JsonWebToken jwt = mock(JsonWebToken.class, withSettings().lenient());
         when(jwt.getSubject()).thenReturn("test-subject");
         when(jwt.getClaim("email")).thenReturn("test@example.com");
         when(jwt.getClaim("name")).thenReturn("Test User");
