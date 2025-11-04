@@ -25,9 +25,6 @@ import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.time.Instant;
 import java.util.UUID;
 
@@ -579,8 +576,15 @@ public class StripeWebhookControllerTest {
      * @throws IOException if file not found or cannot be read
      */
     private String loadWebhookPayload(String filename) throws IOException {
-        Path path = Paths.get("src/test/resources/stripe/" + filename);
-        return Files.readString(path, StandardCharsets.UTF_8);
+        // Use classpath resource loading instead of file path
+        // This works correctly regardless of the project structure
+        try (var stream = getClass().getClassLoader()
+                .getResourceAsStream("stripe/" + filename)) {
+            if (stream == null) {
+                throw new IOException("Resource not found: stripe/" + filename);
+            }
+            return new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+        }
     }
 
     /**

@@ -33,9 +33,6 @@ class SsoAdapterTest {
     private OidcProvider oidcProvider;
 
     @Mock
-    private Saml2Provider saml2Provider;
-
-    @Mock
     private ObjectMapper objectMapper;
 
     @InjectMocks
@@ -101,55 +98,12 @@ class SsoAdapterTest {
     }
 
     @Test
-    void authenticate_saml2Protocol_routesToSaml2Provider() throws JsonProcessingException {
-        // Given
-        String ssoConfigJson = createSaml2ConfigJson();
-        SsoConfig ssoConfig = createSaml2SsoConfig();
-        String samlResponse = "base64-encoded-saml-response";
-
-        SsoUserInfo expectedUserInfo = new SsoUserInfo(
-                "test-subject",
-                "test@example.com",
-                "Test User",
-                "saml2",
-                organizationId
-        );
-
-        when(objectMapper.readValue(ssoConfigJson, SsoConfig.class))
-                .thenReturn(ssoConfig);
-        when(saml2Provider.validateAssertion(
-                eq(samlResponse),
-                any(Saml2Config.class),
-                eq(organizationId)
-        )).thenReturn(Uni.createFrom().item(expectedUserInfo));
-
-        // When
-        SsoUserInfo result = ssoAdapter.authenticate(
-                ssoConfigJson,
-                samlResponse,
-                null,  // SAML2 doesn't need authParams
-                organizationId
-        ).await().indefinitely();
-
-        // Then
-        assertThat(result).isNotNull();
-        assertThat(result.getProtocol()).isEqualTo("saml2");
-        assertThat(result.getEmail()).isEqualTo("test@example.com");
-        verify(saml2Provider).validateAssertion(
-                eq(samlResponse),
-                any(Saml2Config.class),
-                eq(organizationId)
-        );
-    }
-
-    @Test
     void authenticate_unsupportedProtocol_throwsException() throws JsonProcessingException {
         // Given
         String ssoConfigJson = """
                 {
                     "protocol": "unsupported-protocol",
-                    "oidc": null,
-                    "saml2": null
+                    "oidc": null
                 }
                 """;
 
@@ -298,50 +252,10 @@ class SsoAdapterTest {
     }
 
     @Test
-    void logout_saml2Protocol_callsSaml2Provider() throws JsonProcessingException {
-        // Given
-        String ssoConfigJson = createSaml2ConfigJson();
-        SsoConfig ssoConfig = createSaml2SsoConfig();
-        SsoAdapter.SsoLogoutParams logoutParams = new SsoAdapter.SsoLogoutParams();
-        logoutParams.setNameId("test@example.com");
-        logoutParams.setSessionIndex("session-index-123");
-
-        when(objectMapper.readValue(ssoConfigJson, SsoConfig.class))
-                .thenReturn(ssoConfig);
-        when(saml2Provider.logout(
-                any(Saml2Config.class),
-                eq(logoutParams.getNameId()),
-                eq(logoutParams.getSessionIndex())
-        )).thenReturn(Uni.createFrom().item(true));
-
-        // When
-        Boolean result = ssoAdapter.logout(
-                ssoConfigJson,
-                "saml2",
-                logoutParams
-        ).await().indefinitely();
-
-        // Then
-        assertThat(result).isTrue();
-        verify(saml2Provider).logout(
-                any(Saml2Config.class),
-                eq(logoutParams.getNameId()),
-                eq(logoutParams.getSessionIndex())
-        );
-    }
-
-    @Test
     void isProtocolSupported_oidc_returnsTrue() {
         // When/Then
         assertThat(ssoAdapter.isProtocolSupported("oidc")).isTrue();
         assertThat(ssoAdapter.isProtocolSupported("OIDC")).isTrue();
-    }
-
-    @Test
-    void isProtocolSupported_saml2_returnsTrue() {
-        // When/Then
-        assertThat(ssoAdapter.isProtocolSupported("saml2")).isTrue();
-        assertThat(ssoAdapter.isProtocolSupported("SAML2")).isTrue();
     }
 
     @Test
@@ -353,14 +267,14 @@ class SsoAdapterTest {
     }
 
     @Test
-    void getSupportedProtocols_returnsOidcAndSaml2() {
+    void getSupportedProtocols_returnsOidc() {
         // When
         String[] protocols = ssoAdapter.getSupportedProtocols();
 
         // Then
         assertThat(protocols)
-                .hasSize(2)
-                .containsExactlyInAnyOrder("oidc", "saml2");
+                .hasSize(1)
+                .containsExactly("oidc");
     }
 
     // Helper methods
@@ -378,19 +292,6 @@ class SsoAdapterTest {
                 """;
     }
 
-    private String createSaml2ConfigJson() {
-        return """
-                {
-                    "protocol": "saml2",
-                    "saml2": {
-                        "idpEntityId": "https://test-idp.com",
-                        "ssoUrl": "https://test-idp.com/sso",
-                        "certificate": "-----BEGIN CERTIFICATE-----\\ntest\\n-----END CERTIFICATE-----"
-                    }
-                }
-                """;
-    }
-
     private SsoConfig createOidcSsoConfig() {
         OidcConfig oidcConfig = new OidcConfig(
                 "https://test-org.okta.com",
@@ -401,23 +302,6 @@ class SsoAdapterTest {
         return new SsoConfig(
                 "oidc",
                 oidcConfig,
-                null,
-                true,
-                true
-        );
-    }
-
-    private SsoConfig createSaml2SsoConfig() {
-        Saml2Config saml2Config = new Saml2Config(
-                "https://test-idp.com",
-                "https://test-idp.com/sso",
-                "-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----"
-        );
-
-        return new SsoConfig(
-                "saml2",
-                null,
-                saml2Config,
                 true,
                 true
         );

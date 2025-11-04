@@ -243,8 +243,11 @@ export default {
       
       wsService.value.connect().then(() => {
         wsService.value.send({
-          type: 'JOIN_ROOM',
-          username: username.value
+          type: 'room.join.v1',
+          requestId: Date.now().toString(),
+          payload: {
+            displayName: username.value
+          }
         })
       })
     }

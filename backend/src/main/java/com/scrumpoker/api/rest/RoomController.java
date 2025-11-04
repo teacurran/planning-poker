@@ -49,6 +49,7 @@ public class RoomController {
      */
     @POST
     @Path("/rooms")
+    @jakarta.annotation.security.PermitAll
     @Operation(summary = "Create a new room", description = "Creates a new estimation room with the specified configuration")
     @APIResponse(responseCode = "201", description = "Room created successfully",
         content = @Content(schema = @Schema(implementation = RoomDTO.class)))
@@ -85,6 +86,7 @@ public class RoomController {
      */
     @GET
     @Path("/rooms/{roomId}")
+    @jakarta.annotation.security.PermitAll
     @Operation(summary = "Get room by ID", description = "Retrieves room details by its unique 6-character identifier")
     @APIResponse(responseCode = "200", description = "Room found",
         content = @Content(schema = @Schema(implementation = RoomDTO.class)))

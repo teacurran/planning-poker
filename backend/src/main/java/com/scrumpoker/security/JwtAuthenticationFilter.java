@@ -227,6 +227,7 @@ public class JwtAuthenticationFilter implements ContainerRequestFilter {
      * Public endpoints include:
      * <ul>
      *   <li>Authentication endpoints: /api/v1/auth/*</li>
+     *   <li>Room creation and viewing: POST/GET /api/v1/rooms (anonymous users)</li>
      *   <li>Health checks: /q/health/*</li>
      *   <li>Swagger UI: /q/swagger-ui/*</li>
      *   <li>OpenAPI spec: /q/openapi</li>
@@ -248,6 +249,13 @@ public class JwtAuthenticationFilter implements ContainerRequestFilter {
         // Authentication endpoints are public
         if (path.startsWith("api/v1/auth/") || path.startsWith("/api/v1/auth/")) {
             return true;
+        }
+
+        // Allow anonymous room creation and viewing
+        // POST /api/v1/rooms - Create room
+        // GET /api/v1/rooms/{roomId} - View room
+        if (path.startsWith("api/v1/rooms") || path.startsWith("/api/v1/rooms")) {
+            return "POST".equalsIgnoreCase(method) || "GET".equalsIgnoreCase(method);
         }
 
         // Quarkus management endpoints are public

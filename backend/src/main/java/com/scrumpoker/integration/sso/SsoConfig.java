@@ -6,7 +6,7 @@ import jakarta.validation.constraints.NotNull;
 
 /**
  * SSO configuration POJO for deserializing Organization.ssoConfig JSONB field.
- * Supports both OIDC and SAML2 protocols with per-organization configuration.
+ * Supports OIDC protocol with per-organization configuration.
  * This configuration is stored in the database as JSON in the
  * Organization.ssoConfig field and loaded at runtime when processing
  * SSO authentication requests.
@@ -31,7 +31,7 @@ public final class SsoConfig {
 
     /**
      * SSO protocol to use for this organization.
-     * Either "oidc" or "saml2".
+     * Currently only "oidc" is supported.
      */
     @NotNull
     @JsonProperty("protocol")
@@ -39,19 +39,10 @@ public final class SsoConfig {
 
     /**
      * OIDC-specific configuration.
-     * Populated when protocol is "oidc".
      */
     @Valid
     @JsonProperty("oidc")
     private OidcConfig oidc;
-
-    /**
-     * SAML2-specific configuration.
-     * Populated when protocol is "saml2".
-     */
-    @Valid
-    @JsonProperty("saml2")
-    private Saml2Config saml2;
 
     /**
      * Whether email domain verification is required.
@@ -78,21 +69,18 @@ public final class SsoConfig {
     /**
      * Constructor for creating SsoConfig instances.
      *
-     * @param ssoProtocol SSO protocol ("oidc" or "saml2")
-     * @param oidcConfig OIDC configuration (null if not using OIDC)
-     * @param saml2Config SAML2 configuration (null if not using SAML2)
+     * @param ssoProtocol SSO protocol ("oidc")
+     * @param oidcConfig OIDC configuration
      * @param requireDomainVerification Whether domain verification
      *                                  is required
      * @param enableJitProvisioning Whether JIT provisioning is enabled
      */
     public SsoConfig(final String ssoProtocol,
                      final OidcConfig oidcConfig,
-                     final Saml2Config saml2Config,
                      final boolean requireDomainVerification,
                      final boolean enableJitProvisioning) {
         this.protocol = ssoProtocol;
         this.oidc = oidcConfig;
-        this.saml2 = saml2Config;
         this.domainVerificationRequired = requireDomainVerification;
         this.jitProvisioningEnabled = enableJitProvisioning;
     }
@@ -102,7 +90,7 @@ public final class SsoConfig {
     /**
      * Gets the SSO protocol.
      *
-     * @return SSO protocol ("oidc" or "saml2")
+     * @return SSO protocol ("oidc")
      */
     public String getProtocol() {
         return protocol;
@@ -111,7 +99,7 @@ public final class SsoConfig {
     /**
      * Sets the SSO protocol.
      *
-     * @param ssoProtocol SSO protocol ("oidc" or "saml2")
+     * @param ssoProtocol SSO protocol ("oidc")
      */
     public void setProtocol(final String ssoProtocol) {
         this.protocol = ssoProtocol;
@@ -120,7 +108,7 @@ public final class SsoConfig {
     /**
      * Gets the OIDC configuration.
      *
-     * @return OIDC configuration or null if not using OIDC
+     * @return OIDC configuration
      */
     public OidcConfig getOidc() {
         return oidc;
@@ -133,24 +121,6 @@ public final class SsoConfig {
      */
     public void setOidc(final OidcConfig oidcConfig) {
         this.oidc = oidcConfig;
-    }
-
-    /**
-     * Gets the SAML2 configuration.
-     *
-     * @return SAML2 configuration or null if not using SAML2
-     */
-    public Saml2Config getSaml2() {
-        return saml2;
-    }
-
-    /**
-     * Sets the SAML2 configuration.
-     *
-     * @param saml2Config SAML2 configuration
-     */
-    public void setSaml2(final Saml2Config saml2Config) {
-        this.saml2 = saml2Config;
     }
 
     /**
@@ -194,7 +164,6 @@ public final class SsoConfig {
         return "SsoConfig{"
                 + "protocol='" + protocol + '\''
                 + ", oidc=" + oidc
-                + ", saml2=" + saml2
                 + ", domainVerificationRequired=" + domainVerificationRequired
                 + ", jitProvisioningEnabled=" + jitProvisioningEnabled
                 + '}';

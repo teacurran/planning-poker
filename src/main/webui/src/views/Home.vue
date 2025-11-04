@@ -76,12 +76,12 @@ export default {
     
     const createRoom = async () => {
       try {
-        const response = await fetch('/api/rooms', {
+        const response = await fetch('/api/v1/rooms', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
           },
-          body: JSON.stringify({ name: roomName.value })
+          body: JSON.stringify({ title: roomName.value })
         })
         
         if (response.ok) {

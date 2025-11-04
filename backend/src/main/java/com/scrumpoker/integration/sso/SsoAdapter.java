@@ -12,12 +12,12 @@ import java.util.UUID;
 /**
  * SSO integration adapter service.
  * Provides a unified interface for enterprise SSO authentication
- * across multiple protocols (OIDC and SAML2).
- * Delegates to protocol-specific implementations based on the
+ * using OIDC protocol.
+ * Delegates to OIDC provider implementation based on the
  * organization's SSO configuration.
  * <p>
- * This adapter implements the Strategy pattern where each
- * SSO protocol has its own implementation class handling
+ * This adapter implements the Strategy pattern where the
+ * OIDC protocol has its own implementation class handling
  * protocol-specific flows and validation.
  * </p>
  * <p>
@@ -65,12 +65,6 @@ public class SsoAdapter {
     private OidcProvider oidcProvider;
 
     /**
-     * SAML2 provider implementation.
-     */
-    @Inject
-    private Saml2Provider saml2Provider;
-
-    /**
      * Jackson ObjectMapper for JSON serialization/deserialization.
      */
     @Inject
@@ -82,18 +76,12 @@ public class SsoAdapter {
      * <p>
      * For OIDC: Exchanges authorization code for ID token,
      * validates token, extracts claims.
-     * For SAML2: Validates SAML assertion, verifies signature,
-     * extracts attributes.
      * </p>
      *
      * @param ssoConfigJson Organization's SSO configuration as JSON string
      *                      (from Organization.ssoConfig field)
-     * @param authenticationData Protocol-specific authentication data:
-     *                          - OIDC: authorization code
-     *                          - SAML2: Base64-encoded SAML response
-     * @param additionalParams Protocol-specific additional parameters:
-     *                        - OIDC: codeVerifier, redirectUri
-     *                        - SAML2: (none currently)
+     * @param authenticationData Authorization code from OIDC callback
+     * @param additionalParams Additional parameters (codeVerifier, redirectUri)
      * @param organizationId Organization ID owning this SSO config
      * @return Uni emitting SsoUserInfo with user profile data
      *         and organization context
@@ -129,21 +117,16 @@ public class SsoAdapter {
                 + "using protocol: %s",
                 organizationId, ssoConfig.getProtocol());
 
-        // Delegate to protocol-specific implementation
+        // Validate protocol is OIDC
         String protocol = ssoConfig.getProtocol().toLowerCase();
-        switch (protocol) {
-            case "oidc":
-                return authenticateOidc(authenticationData, additionalParams,
-                        ssoConfig.getOidc(), organizationId);
-
-            case "saml2":
-                return authenticateSaml2(authenticationData,
-                        ssoConfig.getSaml2(), organizationId);
-
-            default:
-                throw new SsoAuthenticationException(
-                        "Unsupported SSO protocol: " + protocol);
+        if (!"oidc".equals(protocol)) {
+            throw new SsoAuthenticationException(
+                    "Unsupported SSO protocol: " + protocol
+                    + ". Only OIDC is currently supported.");
         }
+
+        return authenticateOidc(authenticationData, additionalParams,
+                ssoConfig.getOidc(), organizationId);
     }
 
     /**
@@ -186,33 +169,6 @@ public class SsoAdapter {
     }
 
     /**
-     * Authenticates user via SAML2.
-     * Delegates to Saml2Provider for assertion validation
-     * and attribute extraction.
-     *
-     * @param samlResponse Base64-encoded SAML response
-     * @param saml2Config SAML2 configuration
-     * @param organizationId Organization ID
-     * @return Uni emitting SsoUserInfo
-     */
-    private Uni<SsoUserInfo> authenticateSaml2(
-            final String samlResponse,
-            final Saml2Config saml2Config,
-            final UUID organizationId) {
-
-        if (saml2Config == null) {
-            throw new SsoAuthenticationException(
-                    "SAML2 configuration not found in SSO config",
-                    "saml2");
-        }
-
-        return saml2Provider.validateAssertion(
-                samlResponse,
-                saml2Config,
-                organizationId);
-    }
-
-    /**
      * Parses SSO configuration from JSON string.
      * Deserializes Organization.ssoConfig JSONB field into SsoConfig POJO.
      *
@@ -243,12 +199,12 @@ public class SsoAdapter {
     }
 
     /**
-     * Initiates SSO logout (backchannel logout or SLO).
+     * Initiates SSO logout (backchannel logout).
      * Calls the IdP's logout endpoint to invalidate the SSO session.
      *
      * @param ssoConfigJson Organization's SSO configuration as JSON string
-     * @param protocol SSO protocol ("oidc" or "saml2")
-     * @param logoutParams Protocol-specific logout parameters
+     * @param protocol SSO protocol (must be "oidc")
+     * @param logoutParams Logout parameters (idTokenHint, postLogoutRedirectUri)
      * @return Uni emitting true if logout successful
      */
     public Uni<Boolean> logout(
@@ -261,32 +217,22 @@ public class SsoAdapter {
 
         LOG.infof("Processing SSO logout using protocol: %s", protocol);
 
-        // Delegate to protocol-specific implementation
-        switch (protocol.toLowerCase()) {
-            case "oidc":
-                if (ssoConfig.getOidc() == null) {
-                    throw new SsoAuthenticationException(
-                            "OIDC configuration not found", "oidc");
-                }
-                return oidcProvider.logout(
-                        ssoConfig.getOidc(),
-                        logoutParams.getIdTokenHint(),
-                        logoutParams.getPostLogoutRedirectUri());
-
-            case "saml2":
-                if (ssoConfig.getSaml2() == null) {
-                    throw new SsoAuthenticationException(
-                            "SAML2 configuration not found", "saml2");
-                }
-                return saml2Provider.logout(
-                        ssoConfig.getSaml2(),
-                        logoutParams.getNameId(),
-                        logoutParams.getSessionIndex());
-
-            default:
-                throw new SsoAuthenticationException(
-                        "Unsupported SSO protocol: " + protocol);
+        // Validate protocol is OIDC
+        if (!"oidc".equalsIgnoreCase(protocol)) {
+            throw new SsoAuthenticationException(
+                    "Unsupported SSO protocol: " + protocol
+                    + ". Only OIDC is currently supported.");
         }
+
+        if (ssoConfig.getOidc() == null) {
+            throw new SsoAuthenticationException(
+                    "OIDC configuration not found", "oidc");
+        }
+
+        return oidcProvider.logout(
+                ssoConfig.getOidc(),
+                logoutParams.getIdTokenHint(),
+                logoutParams.getPostLogoutRedirectUri());
     }
 
     /**
@@ -295,7 +241,7 @@ public class SsoAdapter {
      * @return Array of supported protocol names
      */
     public String[] getSupportedProtocols() {
-        return new String[]{"oidc", "saml2"};
+        return new String[]{"oidc"};
     }
 
     /**
@@ -308,9 +254,7 @@ public class SsoAdapter {
         if (protocol == null) {
             return false;
         }
-        final String normalizedProtocol = protocol.toLowerCase();
-        return normalizedProtocol.equals("oidc")
-                || normalizedProtocol.equals("saml2");
+        return "oidc".equalsIgnoreCase(protocol);
     }
 
     /**

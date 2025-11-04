@@ -118,14 +118,47 @@ public class RoomWebSocketHandler {
     public void onOpen(Session session, @PathParam("roomId") String roomId) {
         Log.infof("WebSocket connection attempt: session %s, room %s", session.getId(), roomId);
 
-        // Extract JWT token from query parameter
+        // Extract JWT token from query parameter (optional for anonymous users)
         String token = extractTokenFromQuery(session);
+
         if (token == null || token.isBlank()) {
-            closeWithError(session, 4000, "UNAUTHORIZED", "Missing or invalid JWT token");
+            // Anonymous connection - validate room only
+            Log.infof("Anonymous WebSocket connection attempt for room %s", roomId);
+
+            roomService.findById(roomId)
+                    .subscribe().with(
+                            room -> {
+                                // Room exists, allow anonymous connection
+                                // Generate anonymous user ID for this session
+                                String anonymousUserId = "anon_" + UUID.randomUUID().toString();
+
+                                // Store anonymous user ID and room ID in session properties
+                                session.getUserProperties().put(USER_ID_KEY, anonymousUserId);
+                                session.getUserProperties().put(ROOM_ID_KEY, roomId);
+                                session.getUserProperties().put("anonymous", true);
+
+                                // Track session for join timeout enforcement
+                                sessionIdToSession.put(session.getId(), session);
+
+                                // Register connection in registry
+                                connectionRegistry.addConnection(roomId, session);
+
+                                // Schedule join timeout (client must send room.join.v1 within 10 seconds)
+                                scheduleJoinTimeout(session);
+
+                                Log.infof("Anonymous WebSocket connection established: user %s, room %s, session %s",
+                                        anonymousUserId, roomId, session.getId());
+                            },
+                            failure -> {
+                                Log.errorf(failure, "Failed to establish anonymous WebSocket connection for session %s", session.getId());
+                                closeWithError(session, 4001, "ROOM_NOT_FOUND",
+                                        "Room does not exist or has been deleted");
+                            }
+                    );
             return;
         }
 
-        // Validate token and room reactively (async, non-blocking)
+        // Authenticated connection - validate token and room
         jwtTokenService.validateAccessToken(token)
                 .onItem().transformToUni(claims -> {
                     // Token valid, now validate room
@@ -140,6 +173,7 @@ public class RoomWebSocketHandler {
                             // Store user ID and room ID in session properties
                             session.getUserProperties().put(USER_ID_KEY, claims.userId().toString());
                             session.getUserProperties().put(ROOM_ID_KEY, roomId);
+                            session.getUserProperties().put("anonymous", false);
 
                             // Track session for join timeout enforcement
                             sessionIdToSession.put(session.getId(), session);
@@ -150,7 +184,7 @@ public class RoomWebSocketHandler {
                             // Schedule join timeout (client must send room.join.v1 within 10 seconds)
                             scheduleJoinTimeout(session);
 
-                            Log.infof("WebSocket connection established: user %s, room %s, session %s",
+                            Log.infof("Authenticated WebSocket connection established: user %s, room %s, session %s",
                                     claims.userId(), roomId, session.getId());
                         },
                         failure -> {
