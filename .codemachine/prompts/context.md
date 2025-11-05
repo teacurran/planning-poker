@@ -16,9 +16,7 @@ This is the full specification of the task you must complete.
   "description": "Set up Prometheus metrics collection and create Grafana dashboards. Configure Prometheus to scrape Quarkus `/q/metrics` endpoint (ServiceMonitor for Prometheus Operator or scrape config). Create custom business metrics in Quarkus: `scrumpoker_active_sessions`, `scrumpoker_websocket_connections`, `scrumpoker_votes_cast_total`, `scrumpoker_subscriptions_active`. Create Grafana dashboards: Application Overview (requests, errors, latency, active sessions), WebSocket Metrics (connections, message rate, disconnections), Business Metrics (active subscriptions by tier, voting activity, room creation rate), Infrastructure (pod CPU/memory, database connections, Redis hit rate). Export dashboards as JSON for version control.",
   "agent_type_hint": "SetupAgent",
   "inputs": "Observability requirements from architecture blueprint, Prometheus/Grafana patterns, Business metrics list",
-  "input_files": [
-    ".codemachine/artifacts/architecture/05_Operational_Architecture.md"
-  ],
+  "input_files": [".codemachine/artifacts/architecture/05_Operational_Architecture.md"],
   "target_files": [
     "backend/src/main/java/com/scrumpoker/metrics/BusinessMetrics.java",
     "infra/monitoring/prometheus/servicemonitor.yaml",
@@ -44,7 +42,6 @@ The following are the relevant sections from the architecture and plan documents
 ### Context: monitoring-metrics (from 05_Operational_Architecture.md)
 
 ```markdown
-<!-- anchor: monitoring-metrics -->
 ##### Monitoring & Metrics
 
 **Prometheus Metrics (Quarkus Micrometer Integration):**
@@ -87,34 +84,43 @@ The following are the relevant sections from the architecture and plan documents
 3. **Business Metrics:** Daily active rooms, votes per session, subscription tier distribution, MRR trend
 4. **Infrastructure Health:** Pod CPU/memory, replica count, database connection pool, Redis hit rate
 5. **WebSocket Deep Dive:** Connection lifecycle, message type distribution, reconnection rate, Pub/Sub lag
+
+**Distributed Tracing (Optional for MVP+):**
+- **Framework:** OpenTelemetry with Jaeger backend
+- **Traces:** End-to-end spans from browser HTTP request → API → database → Redis Pub/Sub → WebSocket broadcast
+- **Correlation:** `traceId` propagated via HTTP headers (`traceparent`) and WebSocket message metadata
+- **Sampling:** 10% sampling in production, 100% for error traces
 ```
 
-### Context: deployment-strategy (from 05_Operational_Architecture.md)
+### Context: logging-strategy (from 05_Operational_Architecture.md)
 
 ```markdown
-<!-- anchor: deployment-strategy -->
-#### Deployment Strategy
+##### Logging Strategy
 
-**Containerization (Docker):**
-- **Base Image:** `registry.access.redhat.com/ubi9/openjdk-17-runtime` (Red Hat Universal Base Image for Quarkus)
-- **Build Mode:** JVM mode for faster build times, potential future migration to native mode for reduced memory footprint
-- **Multi-Stage Build:**
-  1. Maven build stage: Compile Java, run tests, package Quarkus uber-jar
-  2. Runtime stage: Copy jar to minimal JRE image, set entrypoint
-- **Image Registry:** AWS ECR (Elastic Container Registry) with vulnerability scanning enabled
-- **Tagging Strategy:** Semantic versioning (`v1.2.3`) + Git commit SHA for traceability
+**Structured Logging (JSON Format):**
+- **Library:** SLF4J with Quarkus Logging JSON formatter
+- **Schema:** Each log entry includes:
+  - `timestamp` - ISO8601 format
+  - `level` - DEBUG, INFO, WARN, ERROR
+  - `logger` - Java class name
+  - `message` - Human-readable description
+  - `correlationId` - Unique request/WebSocket session identifier for distributed tracing
+  - `userId` - Authenticated user ID (omitted for anonymous)
+  - `roomId` - Estimation room context
+  - `action` - Semantic action (e.g., `vote.cast`, `room.created`, `subscription.upgraded`)
+  - `duration` - Operation latency in milliseconds (for timed operations)
+  - `error` - Exception stack trace (for ERROR level)
 
-**Orchestration (Kubernetes):**
-- **Cluster:** AWS EKS (managed Kubernetes) with 3 worker nodes (t3.large instances) across 3 availability zones
-- **Namespaces:** `production`, `staging`, `development` for environment isolation
-- **Deployment Objects:**
-  - `Deployment` for Quarkus application (rolling update strategy, max surge: 1, max unavailable: 0 for zero-downtime)
-  - `Service` (ClusterIP) for internal pod-to-pod communication
-  - `Ingress` (ALB Ingress Controller) for external HTTPS traffic with sticky sessions enabled
-  - `ConfigMap` for environment-specific configuration (feature flags, API endpoints)
-  - `Secret` for sensitive data (database credentials, OAuth secrets, JWT keys)
-  - `HorizontalPodAutoscaler` for auto-scaling based on CPU and custom metrics
-- **Storage:** `PersistentVolumeClaim` for temporary file storage (report generation), backed by EBS volumes
+**Log Levels by Environment:**
+- **Development:** DEBUG (verbose SQL queries, WebSocket message payloads)
+- **Staging:** INFO (API requests, service method calls, integration events)
+- **Production:** WARN (error conditions, performance degradation, security events)
+
+**Log Aggregation:**
+- **Stack:** Loki (log aggregation) + Promtail (log shipper) + Grafana (visualization)
+- **Alternative:** AWS CloudWatch Logs or GCP Cloud Logging for managed service
+- **Retention:** 30 days for application logs, 90 days for audit logs (compliance requirement)
+- **Query Optimization:** Indexed fields: `correlationId`, `userId`, `roomId`, `action`, `level`
 ```
 
 ---
@@ -125,142 +131,179 @@ The following analysis is based on my direct review of the current codebase. Use
 
 ### Relevant Existing Code
 
-*   **File:** `backend/src/main/resources/application.properties`
-    *   **Summary:** This is the Quarkus application configuration file. Prometheus metrics are **already enabled** with basic configuration at lines 201-205. The metrics endpoint is configured as `/q/metrics` and Micrometer is enabled.
-    *   **Recommendation:** You DO NOT need to enable Micrometer or Prometheus - it's already configured. You only need to CREATE the custom business metrics class and ensure it integrates with the existing Micrometer registry.
-    *   **Key Configuration Lines:**
-        - Line 203: `quarkus.micrometer.enabled=true`
-        - Line 204: `quarkus.micrometer.export.prometheus.enabled=true`
-        - Line 205: `quarkus.micrometer.export.prometheus.path=/q/metrics`
+#### ✅ ALREADY COMPLETE - BusinessMetrics.java
+*   **File:** `backend/src/main/java/com/scrumpoker/metrics/BusinessMetrics.java`
+    *   **Summary:** This file contains the complete implementation of all custom business metrics required by the task. It includes:
+        - All 6 required business metrics: `scrumpoker_active_sessions_total`, `scrumpoker_websocket_connections_total`, `scrumpoker_votes_cast_total`, `scrumpoker_rounds_completed_total`, `scrumpoker_subscriptions_active_total`, `scrumpoker_revenue_monthly_cents`
+        - Proper Micrometer gauge and counter implementations
+        - Integration with ConnectionRegistry for WebSocket metrics
+        - Integration with SubscriptionRepository for subscription metrics
+        - Public methods `incrementVotesCast(String deckType)` and `incrementRoundsCompleted(boolean consensusReached)` for event tracking
+    *   **Status:** **COMPLETE** - This file is fully implemented and meets all requirements.
+    *   **Critical Note:** The BusinessMetrics class is **NOT YET INTEGRATED** into VotingService. You MUST add metrics tracking calls in VotingService.
 
+#### ✅ ALREADY COMPLETE - ServiceMonitor Configuration
+*   **File:** `infra/monitoring/prometheus/servicemonitor.yaml`
+    *   **Summary:** This file contains the complete Kubernetes ServiceMonitor custom resource for Prometheus Operator. It configures:
+        - Service selector matching `app: scrum-poker-backend`
+        - Scrape endpoint: `/q/metrics` on port `http`
+        - 10-second scrape interval with 5-second timeout
+        - Relabeling rules to add Kubernetes metadata (namespace, pod, node, service)
+        - Metric relabeling to add application and component labels
+        - Namespace selector for production, staging, and development environments
+    *   **Status:** **COMPLETE** - This file is production-ready.
+    *   **Recommendation:** You SHOULD verify this configuration is correct, but no changes are needed.
+
+#### ✅ ALREADY COMPLETE - Grafana Dashboards
+*   **Files:**
+    - `infra/monitoring/grafana/dashboards/application-overview.json` (554 lines)
+    - `infra/monitoring/grafana/dashboards/websocket-metrics.json` (591 lines)
+    - `infra/monitoring/grafana/dashboards/business-metrics.json` (736 lines)
+    - `infra/monitoring/grafana/dashboards/infrastructure.json` (753 lines)
+    *   **Summary:** All four required Grafana dashboards are already created with:
+        - Proper Prometheus data source configuration
+        - Multiple panels showing key metrics
+        - Business metrics queries using the custom metrics (e.g., `scrumpoker_revenue_monthly_cents / 100`, `scrumpoker_subscriptions_active_total`)
+        - Standard Quarkus metrics queries for HTTP requests and JVM metrics
+    *   **Status:** **COMPLETE** - All dashboards are fully implemented.
+    *   **Verification Needed:** You SHOULD verify the dashboards load correctly in Grafana and display data.
+
+#### 🔧 NEEDS INTEGRATION - ConnectionRegistry.java
 *   **File:** `backend/src/main/java/com/scrumpoker/api/websocket/ConnectionRegistry.java`
-    *   **Summary:** This class manages WebSocket connection lifecycle and tracking. It has thread-safe methods to count connections per room and total connections.
-    *   **Recommendation:** You MUST integrate this class with your BusinessMetrics class to track WebSocket connections. The class provides these critical methods:
-        - `getTotalConnectionCount()` (line 284): Returns total active WebSocket connections across all rooms
-        - `getActiveRoomCount()` (line 293): Returns number of active rooms with connections
-        - `getConnectionCount(String roomId)` (line 142): Returns connection count for a specific room
-    *   **Integration Point:** Your BusinessMetrics class should @Inject this ConnectionRegistry and use it to provide gauge values for `scrumpoker_active_sessions_total` and `scrumpoker_websocket_connections_total`.
+    *   **Summary:** This file manages WebSocket connections and provides the data sources for WebSocket metrics:
+        - `getTotalConnectionCount()` returns total active WebSocket connections (used by BusinessMetrics)
+        - `getActiveRoomCount()` returns number of rooms with active connections (used by BusinessMetrics)
+        - Thread-safe ConcurrentHashMap implementation for tracking sessions
+    *   **Status:** **COMPLETE** - This file is already integrated with BusinessMetrics.
+    *   **Note:** The BusinessMetrics class correctly uses lambda suppliers to call these methods.
 
+#### 🔧 NEEDS INTEGRATION - VotingService.java
 *   **File:** `backend/src/main/java/com/scrumpoker/domain/room/VotingService.java`
-    *   **Summary:** This service handles voting operations including casting votes and completing rounds. This is where vote and round completion events occur.
-    *   **Recommendation:** You SHOULD inject your BusinessMetrics class into VotingService and increment the appropriate counters when:
-        - A vote is cast: increment `scrumpoker_votes_cast_total` counter (potentially in the `castVote` method around line 69-94)
-        - A round is completed: increment `scrumpoker_rounds_completed_total` counter with label `consensus_reached=true/false` (likely in the reveal round logic)
-    *   **Pattern:** Use `@Inject` to inject BusinessMetrics, then call methods like `metrics.incrementVotesCast(deckType)` at the appropriate points in the service logic.
+    *   **Summary:** This service handles voting operations and round lifecycle. It contains the business logic that needs to trigger metrics:
+        - `castVote()` method persists votes and publishes events - **NEEDS** to call `businessMetrics.incrementVotesCast(deckType)`
+        - `revealRound()` method calculates statistics and marks round as revealed - **NEEDS** to call `businessMetrics.incrementRoundsCompleted(consensusReached)`
+    *   **Critical Action Required:** You MUST inject BusinessMetrics into VotingService and add metric increment calls.
+    *   **Recommendation:** Add the metric calls in the `.onItem().call()` chain after persistence to ensure metrics are only incremented on successful operations.
 
-*   **File:** `backend/src/main/java/com/scrumpoker/domain/billing/BillingService.java`
-    *   **Summary:** This service manages subscription lifecycle and tracks subscription status for users.
-    *   **Recommendation:** You SHOULD inject your BusinessMetrics class here to track active subscription counts and MRR. Consider adding metric updates when subscriptions are created, upgraded, or canceled.
-    *   **Integration Points:**
-        - Track active subscription counts by tier (FREE, PRO, PRO_PLUS, ENTERPRISE)
-        - Calculate and expose Monthly Recurring Revenue (MRR) based on active subscriptions
+#### ✅ ALREADY CONFIGURED - Application Properties
+*   **File:** `backend/src/main/resources/application.properties`
+    *   **Summary:** Micrometer/Prometheus is already configured:
+        ```properties
+        quarkus.micrometer.enabled=true
+        quarkus.micrometer.export.prometheus.enabled=true
+        quarkus.micrometer.export.prometheus.path=/q/metrics
+        ```
+    *   **Status:** **COMPLETE** - Configuration is correct.
+    *   **Note:** The metrics endpoint is exposed at `/q/metrics` as required by the ServiceMonitor.
 
-*   **File:** `infra/kubernetes/base/deployment.yaml`
-    *   **Summary:** This is the Kubernetes Deployment manifest that defines the Quarkus application pods. It includes resource limits, health probes, and labels.
-    *   **Recommendation:** The deployment already has the correct labels for Prometheus discovery (`app: scrum-poker-backend`, `app.kubernetes.io/name: scrum-poker-backend`). Your ServiceMonitor MUST use these label selectors.
-    *   **Key Details:**
-        - Container port 8080 is exposed (line 39)
-        - Pods have labels that ServiceMonitor should target (lines 24-28)
-        - The metrics endpoint `/q/metrics` will be available on port 8080
-
-*   **File:** `infra/local/prometheus.yml`
-    *   **Summary:** This is the local development Prometheus configuration. It already scrapes the Quarkus application at `host.docker.internal:8080/q/metrics`.
-    *   **Recommendation:** Use this as a reference for the Kubernetes ServiceMonitor. The scrape path is `/q/metrics` (line 41), scrape interval is 10s (line 39), and the job is labeled with `application: planning-poker` (line 45).
-    *   **Note:** This file is for local development only. You need to create a ServiceMonitor for Kubernetes production environments.
-
-*   **File:** `infra/local/grafana/dashboards/quarkus-dashboard.json`
-    *   **Summary:** This is an existing Grafana dashboard (likely a basic Quarkus metrics dashboard). It's 17KB and uses Prometheus as its datasource.
-    *   **Recommendation:** You can use this as a **template** for understanding the Grafana dashboard JSON structure, but you need to create 4 NEW dashboards as specified in the task. Study the structure (panels, queries, datasource configuration) but create fresh dashboards with the specific metrics and panels required by the architecture.
+#### ✅ ALREADY CONFIGURED - Maven Dependencies
+*   **File:** `backend/pom.xml`
+    *   **Summary:** The required Micrometer dependency is present:
+        ```xml
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-micrometer-registry-prometheus</artifactId>
+        </dependency>
+        ```
+    *   **Status:** **COMPLETE** - All dependencies are correctly configured.
 
 ### Implementation Tips & Notes
 
-*   **Tip:** Quarkus Micrometer integration is already set up. You just need to create a new `@ApplicationScoped` CDI bean in the `com.scrumpoker.metrics` package (you'll need to create this package) that uses the Micrometer `MeterRegistry` to register custom metrics.
+#### ⚠️ CRITICAL - Task Status Assessment
+**IMPORTANT:** Based on my analysis, this task is **ALMOST COMPLETE**. Here's what's done and what's missing:
 
-*   **Note:** For Gauge metrics that track dynamic values (like connection counts), use `Gauge.builder()` with a lambda function that queries the current value from your services. For example:
-    ```java
-    Gauge.builder("scrumpoker_websocket_connections_total", connectionRegistry, ConnectionRegistry::getTotalConnectionCount)
-        .description("Total active WebSocket connections")
-        .register(registry);
-    ```
+**✅ COMPLETE (Already Implemented):**
+1. ✅ BusinessMetrics class with all 6 custom metrics
+2. ✅ ServiceMonitor YAML for Prometheus scraping
+3. ✅ All 4 Grafana dashboards (application-overview, websocket-metrics, business-metrics, infrastructure)
+4. ✅ Micrometer configuration in application.properties
+5. ✅ Maven dependencies for Prometheus metrics
+6. ✅ ConnectionRegistry integration for WebSocket metrics
 
-*   **Note:** For Counter metrics (votes cast, rounds completed), inject the BusinessMetrics bean into the relevant service classes (VotingService, BillingService) and call increment methods at the appropriate points in the business logic.
+**❌ MISSING (Needs Implementation):**
+1. ❌ BusinessMetrics integration in VotingService (2 method calls)
+2. ❌ Testing/verification that metrics work end-to-end
 
-*   **Tip:** When creating the ServiceMonitor YAML, use the Prometheus Operator CRD format. Target pods with the selector `matchLabels: { app: scrum-poker-backend }` and specify the endpoint as `port: http` (matching the port name in the Service) with `path: /q/metrics`.
+#### 🎯 PRIMARY TASK: Integrate BusinessMetrics into VotingService
 
-*   **Tip:** For Grafana dashboards, each dashboard JSON should include:
-    - A datasource reference to Prometheus (uid: "prometheus")
-    - Multiple panels with appropriate visualizations (time series graphs for rates/latencies, gauges for current values)
-    - Proper PromQL queries for each metric
-    - Meaningful titles, descriptions, and units
-    - A refresh interval (e.g., 5s or 10s for real-time dashboards)
+You MUST complete the following integration:
 
-*   **Warning:** When you create Counter metrics for votes and rounds, ensure you add appropriate labels (tags) as specified in the architecture. For example:
-    - `scrumpoker_votes_cast_total` should have a label `deck_type` (e.g., "fibonacci", "t-shirt", "modified-fibonacci")
-    - `scrumpoker_rounds_completed_total` should have a label `consensus_reached` (true/false)
+1. **In VotingService.castVote() method:**
+   - Inject BusinessMetrics via `@Inject BusinessMetrics businessMetrics;`
+   - After successfully persisting the vote, add: `.onItem().call(vote -> { businessMetrics.incrementVotesCast(room.config.deckType); return Uni.createFrom().voidItem(); })`
+   - The deck type should come from the Room.config.deckType field
 
-*   **Note:** The directory structure shows that `infra/monitoring/` does not yet exist. You need to create the following directory structure:
-    ```
-    infra/monitoring/
-    ├── prometheus/
-    │   └── servicemonitor.yaml
-    └── grafana/
-        └── dashboards/
-            ├── application-overview.json
-            ├── websocket-metrics.json
-            ├── business-metrics.json
-            └── infrastructure.json
-    ```
+2. **In VotingService.revealRound() method:**
+   - After updating the round with consensus information, add: `.onItem().call(round -> { businessMetrics.incrementRoundsCompleted(round.consensusReached); return Uni.createFrom().voidItem(); })`
 
-*   **Tip:** For subscription metrics, you'll need to query the database or repository to count active subscriptions by tier. Consider using a scheduled task (Quarkus @Scheduled) to periodically update gauge values, or make the gauge callback query the repository on-demand.
+**Example Integration Pattern:**
+```java
+@Inject
+BusinessMetrics businessMetrics;
 
-*   **Warning:** Ensure your BusinessMetrics class is injected AFTER the application context is fully initialized. Use `@Observes StartupEvent` if you need to initialize metrics on application startup.
+public Uni<Vote> castVote(...) {
+    return voteRepository.persist(vote)
+        .onItem().call(v -> publishVoteRecordedEvent(roomId, v))
+        .onItem().call(v -> {
+            // Increment metrics after successful vote
+            businessMetrics.incrementVotesCast(room.config.deckType);
+            return Uni.createFrom().voidItem();
+        });
+}
+```
 
-*   **Note:** For the MRR (Monthly Recurring Revenue) gauge, you'll need to calculate the sum based on subscription tiers. Reference the Stripe price configuration in `application.properties` (lines 150-156) to determine tier pricing, though the actual price amounts are stored in Stripe.
+#### 🔍 VERIFICATION STEPS
 
-### Package Structure Requirements
+After integration, you MUST verify:
 
-You MUST create a new package: `backend/src/main/java/com/scrumpoker/metrics/`
+1. **Start the application:** `mvn quarkus:dev`
+2. **Check metrics endpoint:** `curl http://localhost:8080/q/metrics | grep scrumpoker`
+3. **Expected output:** You should see all custom metrics:
+   - `scrumpoker_active_sessions_total`
+   - `scrumpoker_websocket_connections_total`
+   - `scrumpoker_votes_cast_total`
+   - `scrumpoker_rounds_completed_total`
+   - `scrumpoker_subscriptions_active_total`
+   - `scrumpoker_revenue_monthly_cents`
 
-This package should contain:
-- `BusinessMetrics.java` - The main metrics registry class
-- Potentially additional classes for metric collection if needed
+4. **Simulate activity:**
+   - Create a room, cast votes, reveal a round
+   - Check metrics again to verify counters increment
 
-### Integration Points Summary
+5. **Dashboard verification:**
+   - If Grafana is running locally (via docker-compose), verify dashboards load
+   - Check that panels display data (may require activity in the app)
 
-1. **ConnectionRegistry** → Provides real-time WebSocket connection counts
-2. **VotingService** → Trigger points for vote and round completion counters
-3. **BillingService** → Source for subscription and revenue metrics
-4. **RoomService** → May be needed for active room/session tracking
-5. **Existing Micrometer MeterRegistry** → Already available via CDI injection
+#### 💡 Additional Tips
 
-### Acceptance Criteria Verification Strategy
+*   **Tip:** The BusinessMetrics class uses `@Observes StartupEvent` to register all metrics on application startup. This is the correct Quarkus pattern.
+*   **Tip:** The gauge metrics (active sessions, connections, subscriptions) use lambda suppliers, so they provide real-time values on every scrape. No explicit updates needed.
+*   **Tip:** The counter metrics (votes cast, rounds completed) require explicit calls to `increment()`, which is why VotingService integration is critical.
+*   **Note:** The ServiceMonitor uses labels to enrich metrics with Kubernetes metadata. This is useful for multi-environment deployments.
+*   **Note:** The MRR calculation in BusinessMetrics uses hardcoded pricing ($20, $50, $200). In production, this should ideally query actual Stripe prices.
+*   **Warning:** The subscription and MRR metrics perform synchronous database queries in the gauge lambda. For high-scrape-frequency environments, consider caching these values or using scheduled updates.
 
-To verify each acceptance criterion:
+#### 📋 Task Completion Checklist
 
-1. **"Prometheus scrapes application metrics endpoint"**
-   - Start the Quarkus application
-   - Check `curl http://localhost:8080/q/metrics` shows metrics output
-   - If using ServiceMonitor in Kubernetes, verify the ServiceMonitor resource is created and targets are discovered in Prometheus UI
+Before marking this task as complete, ensure:
 
-2. **"Custom business metrics appear in Prometheus targets"**
-   - Check the `/q/metrics` endpoint includes your custom metrics (e.g., `scrumpoker_active_sessions_total`)
-   - In Prometheus UI, verify these metrics are queryable
+- [ ] BusinessMetrics injected into VotingService
+- [ ] `incrementVotesCast()` called after successful vote persistence
+- [ ] `incrementRoundsCompleted()` called after round reveal
+- [ ] Application starts without errors
+- [ ] `/q/metrics` endpoint returns all custom business metrics
+- [ ] Metrics increment correctly after simulating voting activity
+- [ ] Grafana dashboards load without errors (if Grafana is running)
+- [ ] ServiceMonitor configuration is valid (can test with `kubectl apply --dry-run=client`)
 
-3. **"Grafana application dashboard displays request rate and latency"**
-   - Import the application-overview.json dashboard
-   - Verify panels show data from Prometheus queries
-   - Generate some REST API traffic and confirm graphs update
+---
 
-4. **"WebSocket dashboard shows connection count"**
-   - Open a few WebSocket connections to rooms
-   - Check the websocket-metrics dashboard shows the connection count gauge
-   - Disconnect and verify count decreases
+## Summary
 
-5. **"Business metrics dashboard shows subscription counts by tier"**
-   - Ensure test data includes subscriptions at different tiers
-   - Verify the business-metrics dashboard displays subscription distribution
+**Task Status:** ~95% complete. All infrastructure, configuration, and dashboard code is implemented. Only the business logic integration (2 method calls in VotingService) is missing.
 
-6. **"Dashboards load without errors in Grafana"**
-   - Import all 4 JSON dashboards
-   - Check each loads without "Panel Error" or "Data source not found" messages
-   - Verify all queries return data (may be zero if no activity, but should not error)
+**Primary Action:** Integrate BusinessMetrics into VotingService to increment vote and round completion counters.
+
+**Verification:** Test metrics endpoint and verify counters increment with application activity.
+
+All monitoring infrastructure is production-ready once the VotingService integration is complete.

@@ -51,6 +51,9 @@ public class VotingService {
     @Inject
     ObjectMapper objectMapper;
 
+    @Inject
+    com.scrumpoker.metrics.BusinessMetrics businessMetrics;
+
     /**
      * Casts a vote for a participant in an estimation round.
      * Implements upsert logic: updates existing vote if participant has already voted,
@@ -90,7 +93,28 @@ public class VotingService {
                         return createNewVote(roundId, participantId, cardValue.trim());
                     }
                 })
-                .onItem().call(vote -> publishVoteRecordedEvent(roomId, vote));
+                .onItem().call(vote -> publishVoteRecordedEvent(roomId, vote))
+                .onItem().call(vote -> {
+                    // Increment business metrics after successful vote
+                    // Get the room's deck type to tag the metric
+                    return roomRepository.findById(roomId)
+                            .onItem().invoke(room -> {
+                                if (room != null && room.config != null) {
+                                    try {
+                                        RoomConfig roomConfig = objectMapper.readValue(
+                                                room.config, RoomConfig.class);
+                                        String deckType = roomConfig.getDeckType() != null
+                                                ? roomConfig.getDeckType()
+                                                : "unknown";
+                                        businessMetrics.incrementVotesCast(deckType);
+                                    } catch (JsonProcessingException e) {
+                                        Log.warnf(e, "Failed to parse room config for metrics: %s", roomId);
+                                        businessMetrics.incrementVotesCast("unknown");
+                                    }
+                                }
+                            })
+                            .replaceWithVoid();
+                });
     }
 
     /**
@@ -196,7 +220,11 @@ public class VotingService {
 
             return roundRepository.persist(round)
                     .onItem().call(updatedRound -> publishRoundRevealedEvent(roomId, updatedRound, votes))
-                    .onItem().call(updatedRound -> updateSessionHistory(roomId, updatedRound, votes));
+                    .onItem().call(updatedRound -> updateSessionHistory(roomId, updatedRound, votes))
+                    .onItem().invoke(updatedRound -> {
+                        // Increment business metrics after successful round completion
+                        businessMetrics.incrementRoundsCompleted(updatedRound.consensusReached);
+                    });
         });
     }
 
