@@ -123,4 +123,112 @@ public class AuditLogRepository implements PanacheRepositoryBase<AuditLog, Audit
         return count("action = ?1 and id.timestamp >= ?2 and id.timestamp <= ?3",
                      action, startDate, endDate);
     }
+
+    /**
+     * Find audit logs for an organization with filters and pagination.
+     * Optimized for partition pruning when timestamp range is provided.
+     *
+     * @param orgId The organization ID
+     * @param from Start timestamp (optional)
+     * @param to End timestamp (optional)
+     * @param action Action filter (optional)
+     * @param page Page number (0-indexed)
+     * @param size Page size
+     * @return Uni of paginated list of audit logs
+     */
+    public Uni<List<AuditLog>> findByOrgIdWithFilters(
+            UUID orgId,
+            Instant from,
+            Instant to,
+            String action,
+            int page,
+            int size) {
+
+        // Build dynamic query based on provided filters
+        StringBuilder query = new StringBuilder("organization.orgId = ?1");
+        int paramIndex = 2;
+
+        if (from != null) {
+            query.append(" and id.timestamp >= ?").append(paramIndex++);
+        }
+        if (to != null) {
+            query.append(" and id.timestamp <= ?").append(paramIndex++);
+        }
+        if (action != null && !action.isBlank()) {
+            query.append(" and action = ?").append(paramIndex++);
+        }
+
+        query.append(" order by id.timestamp desc");
+
+        // Execute query with parameters
+        io.quarkus.panache.common.Page panachePage =
+            io.quarkus.panache.common.Page.of(page, size);
+
+        if (from != null && to != null && action != null && !action.isBlank()) {
+            return find(query.toString(), orgId, from, to, action).page(panachePage).list();
+        } else if (from != null && to != null) {
+            return find(query.toString(), orgId, from, to).page(panachePage).list();
+        } else if (from != null && action != null && !action.isBlank()) {
+            return find(query.toString(), orgId, from, action).page(panachePage).list();
+        } else if (to != null && action != null && !action.isBlank()) {
+            return find(query.toString(), orgId, to, action).page(panachePage).list();
+        } else if (from != null) {
+            return find(query.toString(), orgId, from).page(panachePage).list();
+        } else if (to != null) {
+            return find(query.toString(), orgId, to).page(panachePage).list();
+        } else if (action != null && !action.isBlank()) {
+            return find(query.toString(), orgId, action).page(panachePage).list();
+        } else {
+            return find(query.toString(), orgId).page(panachePage).list();
+        }
+    }
+
+    /**
+     * Count audit logs for an organization with filters.
+     *
+     * @param orgId The organization ID
+     * @param from Start timestamp (optional)
+     * @param to End timestamp (optional)
+     * @param action Action filter (optional)
+     * @return Uni containing the count of matching audit logs
+     */
+    public Uni<Long> countByOrgIdWithFilters(
+            UUID orgId,
+            Instant from,
+            Instant to,
+            String action) {
+
+        // Build dynamic query based on provided filters
+        StringBuilder query = new StringBuilder("organization.orgId = ?1");
+        int paramIndex = 2;
+
+        if (from != null) {
+            query.append(" and id.timestamp >= ?").append(paramIndex++);
+        }
+        if (to != null) {
+            query.append(" and id.timestamp <= ?").append(paramIndex++);
+        }
+        if (action != null && !action.isBlank()) {
+            query.append(" and action = ?").append(paramIndex++);
+        }
+
+        // Execute count query with parameters
+        if (from != null && to != null && action != null && !action.isBlank()) {
+            return count(query.toString(), orgId, from, to, action);
+        } else if (from != null && to != null) {
+            return count(query.toString(), orgId, from, to);
+        } else if (from != null && action != null && !action.isBlank()) {
+            return count(query.toString(), orgId, from, action);
+        } else if (to != null && action != null && !action.isBlank()) {
+            return count(query.toString(), orgId, to, action);
+        } else if (from != null) {
+            return count(query.toString(), orgId, from);
+        } else if (to != null) {
+            return count(query.toString(), orgId, to);
+        } else if (action != null && !action.isBlank()) {
+            return count(query.toString(), orgId, action);
+        } else {
+            return count(query.toString(), orgId);
+        }
+    }
 }
