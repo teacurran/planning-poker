@@ -11,6 +11,10 @@ import { SubscriptionSettingsPage } from '@/pages/SubscriptionSettingsPage';
 import { BillingSuccessPage } from '@/pages/BillingSuccessPage';
 import SessionHistoryPage from '@/pages/SessionHistoryPage';
 import SessionDetailPage from '@/pages/SessionDetailPage';
+import OrganizationSettingsPage from '@/pages/org/OrganizationSettingsPage';
+import SsoConfigPage from '@/pages/org/SsoConfigPage';
+import MemberManagementPage from '@/pages/org/MemberManagementPage';
+import AuditLogPage from '@/pages/org/AuditLogPage';
 import PrivateRoute from '@/components/auth/PrivateRoute';
 import { UpgradeModalProvider } from '@/contexts/UpgradeModalContext';
 
@@ -66,6 +70,38 @@ const App: React.FC = () => {
               element={
                 <PrivateRoute>
                   <SessionDetailPage />
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/org/:orgId/settings"
+              element={
+                <PrivateRoute>
+                  <OrganizationSettingsPage />
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/org/:orgId/members"
+              element={
+                <PrivateRoute>
+                  <MemberManagementPage />
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/org/:orgId/sso"
+              element={
+                <PrivateRoute>
+                  <SsoConfigPage />
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/org/:orgId/audit-logs"
+              element={
+                <PrivateRoute>
+                  <AuditLogPage />
                 </PrivateRoute>
               }
             />
