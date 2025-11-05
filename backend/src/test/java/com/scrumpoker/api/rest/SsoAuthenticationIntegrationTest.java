@@ -14,27 +14,27 @@ import com.scrumpoker.repository.OrganizationRepository;
 import com.scrumpoker.repository.OrgMemberRepository;
 import com.scrumpoker.repository.UserRepository;
 import io.quarkus.hibernate.reactive.panache.Panache;
+import io.quarkus.test.InjectMock;
 import io.quarkus.test.junit.QuarkusTest;
 import io.quarkus.test.junit.TestProfile;
 import io.quarkus.test.vertx.RunOnVertxContext;
 import io.quarkus.test.vertx.UniAsserter;
 import io.restassured.http.ContentType;
 import io.smallrye.mutiny.Uni;
-import jakarta.enterprise.context.ApplicationScoped;
-import jakarta.enterprise.inject.Alternative;
+import io.smallrye.mutiny.infrastructure.Infrastructure;
 import jakarta.inject.Inject;
-import jakarta.annotation.Priority;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 
 import java.time.Instant;
-import java.util.List;
-import java.util.Set;
 import java.util.UUID;
 
 import static io.restassured.RestAssured.given;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.when;
 
 /**
  * Integration tests for SSO authentication flow.
@@ -50,6 +50,9 @@ import static org.hamcrest.Matchers.*;
 @QuarkusTest
 @TestProfile(SsoAuthenticationIntegrationTest.SsoTestProfile.class)
 public class SsoAuthenticationIntegrationTest {
+
+    @InjectMock
+    SsoAdapter ssoAdapter;
 
     @Inject
     OrganizationRepository organizationRepository;
@@ -70,72 +73,17 @@ public class SsoAuthenticationIntegrationTest {
     private static final String TEST_SSO_SUBJECT = "oidc-subject-123456";
 
     /**
-     * Mock SSO adapter that returns predictable responses for testing.
-     * Used as an alternative bean to replace the real SsoAdapter during tests.
-     * Does not extend SsoAdapter to avoid dependency injection issues.
-     */
-    @Alternative
-    @Priority(1)
-    @ApplicationScoped
-    public static class MockSsoAdapter {
-
-        // State to control mock behavior
-        public static volatile boolean shouldReturnDomainMismatch = false;
-
-        public Uni<SsoUserInfo> authenticate(
-                String ssoConfigJson,
-                String authenticationData,
-                SsoAdapter.SsoAuthParams additionalParams,
-                UUID organizationId) {
-
-            // Return domain mismatch scenario if requested
-            if (shouldReturnDomainMismatch) {
-                SsoUserInfo userInfo = new SsoUserInfo(
-                        "oidc-subject-mismatch",
-                        "hacker@evil.com",
-                        "Hacker User",
-                        "oidc",
-                        organizationId
-                );
-                return Uni.createFrom().item(userInfo);
-            }
-
-            // Return successful authentication
-            SsoUserInfo userInfo = new SsoUserInfo(
-                    TEST_SSO_SUBJECT,
-                    TEST_USER_EMAIL,
-                    TEST_USER_NAME,
-                    "oidc",
-                    organizationId
-            );
-            return Uni.createFrom().item(userInfo);
-        }
-
-        // Stub methods that might be called by other code
-        public String[] getSupportedProtocols() {
-            return new String[]{"oidc"};
-        }
-
-        public boolean isProtocolSupported(String protocol) {
-            return "oidc".equalsIgnoreCase(protocol);
-        }
-    }
-
-    /**
-     * Test profile that extends NoSecurityTestProfile and enables the MockSsoAdapter.
+     * Test profile that extends NoSecurityTestProfile.
      */
     public static class SsoTestProfile extends NoSecurityTestProfile {
-        @Override
-        public Set<Class<?>> getEnabledAlternatives() {
-            return Set.of(MockSsoAdapter.class, TestSecurityIdentityAugmentor.class);
-        }
+        // No additional configuration needed - @InjectMock handles mocking
     }
 
     @BeforeEach
     @RunOnVertxContext
     void setUp(UniAsserter asserter) {
-        // Reset mock state
-        MockSsoAdapter.shouldReturnDomainMismatch = false;
+        // Reset Mockito mock
+        Mockito.reset(ssoAdapter);
 
         // Clean up test data before each test
         asserter.execute(() -> Panache.withTransaction(() ->
@@ -155,6 +103,26 @@ public class SsoAuthenticationIntegrationTest {
             testOrganization.updatedAt = Instant.now();
             return organizationRepository.persist(testOrganization);
         }));
+
+        // Setup default mock behavior for successful authentication
+        SsoUserInfo successUserInfo = new SsoUserInfo(
+            TEST_SSO_SUBJECT,
+            TEST_USER_EMAIL,
+            TEST_USER_NAME,
+            "oidc",
+            null // Will be set to actual org ID in test
+        );
+        when(ssoAdapter.authenticate(anyString(), anyString(), any(), any()))
+            .thenAnswer(invocation -> {
+                UUID orgId = invocation.getArgument(3);
+                return Uni.createFrom().item(new SsoUserInfo(
+                    TEST_SSO_SUBJECT,
+                    TEST_USER_EMAIL,
+                    TEST_USER_NAME,
+                    "oidc",
+                    orgId
+                ));
+            });
     }
 
     // ========================================
@@ -175,22 +143,20 @@ public class SsoAuthenticationIntegrationTest {
         request.email = TEST_USER_EMAIL;
 
         // When: Call SSO callback endpoint
-        asserter.execute(() ->
-            given()
-                .contentType(ContentType.JSON)
-                .body(request)
-                .header("X-Forwarded-For", "192.168.1.100")
-                .header("User-Agent", "Mozilla/5.0 Test Browser")
-            .when()
-                .post("/api/v1/auth/sso/callback")
-            .then()
-                .statusCode(200)
-                .body("accessToken", notNullValue())
-                .body("refreshToken", notNullValue())
-                .body("user.email", equalTo(TEST_USER_EMAIL))
-                .body("user.displayName", equalTo(TEST_USER_NAME))
-                .body("user.subscriptionTier", equalTo("FREE"))
-        );
+        given()
+            .contentType(ContentType.JSON)
+            .body(request)
+            .header("X-Forwarded-For", "192.168.1.100")
+            .header("User-Agent", "Mozilla/5.0 Test Browser")
+        .when()
+            .post("/api/v1/auth/sso/callback")
+        .then()
+            .statusCode(200)
+            .body("accessToken", notNullValue())
+            .body("refreshToken", notNullValue())
+            .body("user.email", equalTo(TEST_USER_EMAIL))
+            .body("user.displayName", equalTo(TEST_USER_NAME))
+            .body("user.subscriptionTier", equalTo("FREE"));
 
         // Then: Verify user was created via JIT provisioning
         asserter.assertThat(() -> Panache.withTransaction(() ->
@@ -218,9 +184,8 @@ public class SsoAuthenticationIntegrationTest {
 
         // And: Verify audit log entry was created (with small delay for async processing)
         asserter.execute(() -> {
-            // Give async audit logging time to complete
             try {
-                Thread.sleep(500);
+                Thread.sleep(500); // Give async audit logging time to complete
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
@@ -284,19 +249,17 @@ public class SsoAuthenticationIntegrationTest {
         request.email = TEST_USER_EMAIL;
 
         // When: Call SSO callback endpoint (second login)
-        asserter.execute(() ->
-            given()
-                .contentType(ContentType.JSON)
-                .body(request)
-                .header("X-Forwarded-For", "10.0.0.50")
-                .header("User-Agent", "Chrome Test")
-            .when()
-                .post("/api/v1/auth/sso/callback")
-            .then()
-                .statusCode(200)
-                .body("accessToken", notNullValue())
-                .body("user.email", equalTo(TEST_USER_EMAIL))
-        );
+        given()
+            .contentType(ContentType.JSON)
+            .body(request)
+            .header("X-Forwarded-For", "10.0.0.50")
+            .header("User-Agent", "Chrome Test")
+        .when()
+            .post("/api/v1/auth/sso/callback")
+        .then()
+            .statusCode(200)
+            .body("accessToken", notNullValue())
+            .body("user.email", equalTo(TEST_USER_EMAIL));
 
         // Then: Verify no duplicate org membership was created
         asserter.assertThat(() -> Panache.withTransaction(() ->
@@ -312,7 +275,7 @@ public class SsoAuthenticationIntegrationTest {
     }
 
     @Test
-    public void testOidcSsoCallback_MissingEmail_Returns400(UniAsserter asserter) {
+    public void testOidcSsoCallback_MissingEmail_Returns400() {
         // Given: Request without email
         SsoCallbackRequest request = new SsoCallbackRequest();
         request.code = "mock-authorization-code";
@@ -334,7 +297,7 @@ public class SsoAuthenticationIntegrationTest {
     }
 
     @Test
-    public void testOidcSsoCallback_UnknownDomain_Returns401(UniAsserter asserter) {
+    public void testOidcSsoCallback_UnknownDomain_Returns401() {
         // Given: Email with unknown domain
         SsoCallbackRequest request = new SsoCallbackRequest();
         request.code = "mock-authorization-code";
@@ -356,7 +319,7 @@ public class SsoAuthenticationIntegrationTest {
     }
 
     @Test
-    public void testOidcSsoCallback_MissingCodeVerifier_Returns400(UniAsserter asserter) {
+    public void testOidcSsoCallback_MissingCodeVerifier_Returns400() {
         // Given: OIDC request without code verifier
         SsoCallbackRequest request = new SsoCallbackRequest();
         request.code = "mock-authorization-code";
@@ -378,10 +341,19 @@ public class SsoAuthenticationIntegrationTest {
     }
 
     @Test
-    @RunOnVertxContext
-    public void testOidcSsoCallback_DomainMismatch_Returns401(UniAsserter asserter) {
-        // Given: Configure MockSsoAdapter to return user with different domain
-        MockSsoAdapter.shouldReturnDomainMismatch = true;
+    public void testOidcSsoCallback_DomainMismatch_Returns401() {
+        // Given: Override mock to return user with different domain (hacker@evil.com)
+        when(ssoAdapter.authenticate(anyString(), anyString(), any(), any()))
+            .thenAnswer(invocation -> {
+                UUID orgId = invocation.getArgument(3);
+                return Uni.createFrom().item(new SsoUserInfo(
+                    "oidc-subject-mismatch",
+                    "hacker@evil.com",  // Different domain than organization
+                    "Hacker User",
+                    "oidc",
+                    orgId
+                ));
+            });
 
         // Request with acmecorp.com email
         SsoCallbackRequest request = new SsoCallbackRequest();

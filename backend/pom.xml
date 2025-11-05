@@ -248,6 +248,12 @@
             <version>5.5.0</version>
             <scope>test</scope>
         </dependency>
+        <!-- Quarkus Mockito integration for @InjectMock -->
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-junit5-mockito</artifactId>
+            <scope>test</scope>
+        </dependency>
         <!-- WebSocket client for integration tests -->
         <dependency>
             <groupId>org.eclipse.jetty.websocket</groupId>

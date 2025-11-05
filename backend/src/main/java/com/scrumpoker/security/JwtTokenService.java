@@ -2,8 +2,7 @@ package com.scrumpoker.security;
 
 import com.scrumpoker.domain.user.SubscriptionTier;
 import com.scrumpoker.domain.user.User;
-import io.quarkus.redis.datasource.RedisDataSource;
-import io.quarkus.redis.datasource.value.ValueCommands;
+import io.quarkus.redis.datasource.ReactiveRedisDataSource;
 import io.smallrye.jwt.build.Jwt;
 import io.smallrye.jwt.auth.principal.JWTParser;
 import io.smallrye.mutiny.Uni;
@@ -71,7 +70,7 @@ public class JwtTokenService {
     private static final String REFRESH_TOKEN_KEY_PREFIX = "refresh_token:";
 
     @Inject
-    RedisDataSource redisDataSource;
+    ReactiveRedisDataSource redisDataSource;
 
     @Inject
     JWTParser jwtParser;
@@ -323,14 +322,13 @@ public class JwtTokenService {
      */
     private Uni<Void> storeRefreshToken(String refreshToken, UUID userId) {
         String key = REFRESH_TOKEN_KEY_PREFIX + refreshToken;
-        ValueCommands<String, String> commands = redisDataSource.value(String.class);
 
-        return Uni.createFrom().item(() -> {
-            commands.setex(key, refreshTokenExpirationSeconds, userId.toString());
-            LOG.debugf("Refresh token stored in Redis: %s... -> user %s (TTL: %d seconds)",
-                       refreshToken.substring(0, 8), userId, refreshTokenExpirationSeconds);
-            return null;
-        });
+        // Use reactive Redis API to avoid blocking
+        return redisDataSource.value(String.class)
+                .setex(key, refreshTokenExpirationSeconds, userId.toString())
+                .invoke(() -> LOG.debugf("Refresh token stored in Redis: %s... -> user %s (TTL: %d seconds)",
+                                       refreshToken.substring(0, 8), userId, refreshTokenExpirationSeconds))
+                .replaceWithVoid();
     }
 
     /**
@@ -342,20 +340,20 @@ public class JwtTokenService {
      */
     private Uni<Boolean> validateRefreshToken(String refreshToken, UUID userId) {
         String key = REFRESH_TOKEN_KEY_PREFIX + refreshToken;
-        ValueCommands<String, String> commands = redisDataSource.value(String.class);
 
-        return Uni.createFrom().item(() -> {
-            String storedUserId = commands.get(key);
-            if (storedUserId == null) {
-                LOG.debugf("Refresh token not found in Redis: %s...",
-                           refreshToken.substring(0, 8));
-                return false;
-            }
-            boolean matches = storedUserId.equals(userId.toString());
-            LOG.debugf("Refresh token validation: %s... -> %s (expected: %s)",
-                       refreshToken.substring(0, 8), storedUserId, userId);
-            return matches;
-        });
+        return redisDataSource.value(String.class)
+                .get(key)
+                .map(storedUserId -> {
+                    if (storedUserId == null) {
+                        LOG.debugf("Refresh token not found in Redis: %s...",
+                                   refreshToken.substring(0, 8));
+                        return false;
+                    }
+                    boolean matches = storedUserId.equals(userId.toString());
+                    LOG.debugf("Refresh token validation: %s... -> %s (expected: %s)",
+                               refreshToken.substring(0, 8), storedUserId, userId);
+                    return matches;
+                });
     }
 
     /**
@@ -371,14 +369,12 @@ public class JwtTokenService {
         }
 
         String key = REFRESH_TOKEN_KEY_PREFIX + refreshToken;
-        ValueCommands<String, String> commands = redisDataSource.value(String.class);
 
-        return Uni.createFrom().item(() -> {
-            commands.getdel(key);
-            LOG.debugf("Refresh token invalidated in Redis: %s...",
-                       refreshToken.substring(0, 8));
-            return null;
-        });
+        return redisDataSource.value(String.class)
+                .getdel(key)
+                .invoke(() -> LOG.debugf("Refresh token invalidated in Redis: %s...",
+                                       refreshToken.substring(0, 8)))
+                .replaceWithVoid();
     }
 
     /**
@@ -394,17 +390,17 @@ public class JwtTokenService {
         }
 
         String key = REFRESH_TOKEN_KEY_PREFIX + refreshToken;
-        ValueCommands<String, String> commands = redisDataSource.value(String.class);
 
-        return Uni.createFrom().item(() -> {
-            String storedUserId = commands.get(key);
-            if (storedUserId == null) {
-                LOG.debugf("Refresh token not found in Redis: %s...",
-                           refreshToken.substring(0, 8));
-                return null;
-            }
-            return UUID.fromString(storedUserId);
-        });
+        return redisDataSource.value(String.class)
+                .get(key)
+                .map(storedUserId -> {
+                    if (storedUserId == null) {
+                        LOG.debugf("Refresh token not found in Redis: %s...",
+                                   refreshToken.substring(0, 8));
+                        return null;
+                    }
+                    return UUID.fromString(storedUserId);
+                });
     }
 
     /**

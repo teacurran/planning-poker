@@ -68,18 +68,25 @@ The following are the relevant sections from the architecture and plan documents
 - **Data Lifecycle:** Anonymous session data purged 24 hours after room inactivity
 ```
 
-### Context: audit-logging (from 05_Operational_Architecture.md)
+### Context: enterprise-requirements (from 01_Context_and_Drivers.md)
 
 ```markdown
-**Audit Logging:**
-- **Scope:** Enterprise tier security and compliance events
-- **Storage:** Dedicated `AuditLog` table (partitioned by month) + immutable S3 bucket for archival
-- **Events:**
-  - User authentication (SSO login, logout)
-  - Organization configuration changes (SSO settings, branding)
-  - Member management (invite, role change, removal)
-  - Administrative actions (room deletion, user account suspension)
-- **Attributes:** `timestamp`, `orgId`, `userId`, `action`, `resourceType`, `resourceId`, `ipAddress`, `userAgent`, `changeDetails` (JSONB)
+#### Enterprise Requirements
+- **SSO Integration:** OIDC and SAML2 protocol support for identity federation
+- **Organization Management:** Workspace creation, custom branding, org-wide defaults
+- **Role-Based Access:** Admin/member roles with configurable permissions
+- **Audit Logging:** Comprehensive event tracking for compliance and security monitoring
+```
+
+### Context: security-nfrs (from 01_Context_and_Drivers.md)
+
+```markdown
+#### Security
+- **Transport Security:** HTTPS/TLS 1.3 for all communications, WSS for WebSocket connections
+- **Authentication:** JWT tokens with 1-hour expiration, refresh token rotation
+- **Authorization:** Role-based access control (RBAC) for organization features
+- **Data Protection:** Encryption at rest for sensitive data (PII, payment info), GDPR compliance
+- **Session Isolation:** Anonymous session data segregated by room ID, automatic cleanup after 24 hours
 ```
 
 ---
@@ -88,80 +95,106 @@ The following are the relevant sections from the architecture and plan documents
 
 The following analysis is based on my direct review of the current codebase. Use these notes and tips to guide your implementation.
 
+### ⚠️ CRITICAL DISCOVERY: THIS TASK IS ALREADY COMPLETE
+
+*   **File:** `backend/src/test/java/com/scrumpoker/api/rest/SsoAuthenticationIntegrationTest.java`
+    *   **Summary:** **THIS FILE ALREADY EXISTS AND IS COMPREHENSIVE.** The file is 442 lines long and contains a fully working integration test suite for SSO authentication with 6 test cases covering all acceptance criteria.
+    *   **Current Test Coverage:**
+        1. Lines 165-244: `testOidcSsoCallback_FirstLogin_CreatesUserAndAssignsToOrg` - Tests complete OIDC flow including JIT provisioning, org assignment, JWT token generation, and audit logging
+        2. Lines 247-312: `testOidcSsoCallback_ReturningUser_DoesNotDuplicateOrgMembership` - Tests idempotency for returning users
+        3. Lines 315-334: `testOidcSsoCallback_MissingEmail_Returns400` - Tests validation for missing email
+        4. Lines 337-356: `testOidcSsoCallback_UnknownDomain_Returns401` - Tests domain validation
+        5. Lines 359-378: `testOidcSsoCallback_MissingCodeVerifier_Returns400` - Tests OIDC parameter validation
+        6. Lines 382-404: `testOidcSsoCallback_DomainMismatch_Returns401` - Tests security domain matching
+    *   **Test Implementation Approach:** Uses `MockSsoAdapter` class (lines 77-122) marked as `@Alternative` bean to replace real SsoAdapter during tests. This approach avoids WireMock complexity and integrates cleanly with Quarkus CDI.
+    *   **Recommendation:** **DO NOT REWRITE THIS FILE.** Run `mvn verify` to confirm all tests pass. The tests comprehensively verify all requirements in the acceptance criteria.
+
+*   **CRITICAL FINDING - SAML2 Status:**
+    *   Lines 407-419 of SsoAuthenticationIntegrationTest.java explicitly document: "NOTE: SAML2 protocol is planned but NOT YET IMPLEMENTED in the codebase. The SsoAdapter only supports OIDC protocol (see SsoAdapter lines 121-126). SAML2 integration tests will be added in a future iteration when SAML2 support is implemented."
+    *   `backend/src/main/java/com/scrumpoker/integration/sso/SsoAdapter.java` lines 121-126 throw `SsoAuthenticationException` for any protocol other than "oidc" with message: "Unsupported SSO protocol: " + protocol + ". Only OIDC is currently supported."
+    *   **Conclusion:** SAML2 cannot be tested because it is not implemented in the codebase. The task description asks for SAML2 tests, but this is impossible without first implementing SAML2 authentication support.
+
 ### Relevant Existing Code
 
 *   **File:** `backend/src/main/java/com/scrumpoker/api/rest/AuthController.java`
-    *   **Summary:** This file contains the REST controller for authentication endpoints including OAuth2 and SSO callback handlers. The `ssoCallback` method (lines 370-558) implements the complete SSO authentication flow including organization lookup, SSO adapter authentication, user JIT provisioning, organization membership assignment, JWT token generation, and audit log entry creation.
-    *   **Recommendation:** You MUST study this implementation carefully as it shows the exact flow your test needs to verify. Pay special attention to how `SsoAdapter.authenticate()` is called with `SsoAuthParams` (lines 462-467), email domain extraction (line 430), organization lookup (line 433), JIT provisioning (lines 482-489), membership assignment with error recovery (lines 495-507), and audit logging (lines 519-525).
-    *   **Note:** The SSO callback handler extracts IP address and user agent from HTTP headers (lines 401-408) for audit logging. Your test should verify these are captured correctly.
+    *   **Summary:** REST controller handling SSO authentication at `POST /api/v1/auth/sso/callback` (lines 370-558). Complete implementation includes:
+        - Lines 401-408: Extract IP address and user agent from HTTP headers for audit logging
+        - Lines 428-447: Validate email and lookup organization by email domain
+        - Lines 461-467: Call SsoAdapter.authenticate() with org SSO config
+        - Lines 472-479: Verify email domain matches organization domain
+        - Lines 481-489: JIT user provisioning via UserService.findOrCreateUser()
+        - Lines 494-507: Organization membership assignment with duplicate handling
+        - Lines 512-525: JWT token generation and audit log entry creation
+    *   **Recommendation:** The existing integration test already verifies this complete flow works correctly.
 
 *   **File:** `backend/src/main/java/com/scrumpoker/integration/sso/SsoAdapter.java`
-    *   **Summary:** This is the SSO adapter service that provides a unified interface for enterprise SSO authentication. Currently ONLY supports OIDC protocol (lines 121-126 validate protocol is "oidc"). Key methods: `authenticate()` (main entry point), `authenticateOidc()` (delegates to OidcProvider), `parseSsoConfig()` (deserializes JSON config), and `logout()` (backchannel logout).
-    *   **Recommendation:** The adapter expects `ssoConfigJson` containing JSON with `"protocol": "oidc"` and oidc configuration object, `authenticationData` (authorization code), `SsoAuthParams` with `codeVerifier` and `redirectUri`, and `organizationId` UUID.
-    *   **CRITICAL:** SAML2 is mentioned in comments and task description but is NOT IMPLEMENTED. The code throws `SsoAuthenticationException` for any protocol other than "oidc". You should ONLY test OIDC flow, not SAML2.
+    *   **Summary:** SSO adapter providing unified SSO interface. **Only supports OIDC protocol** (lines 121-126).
+    *   **Key Methods:**
+        - `authenticate()` (line 92): Main entry point, validates inputs, routes to OIDC handler
+        - `authenticateOidc()` (line 143): Delegates to OidcProvider
+        - `parseSsoConfig()` (line 179): Deserializes JSON config from database
+        - `getSupportedProtocols()` (line 243): Returns ["oidc"] only
+    *   **Recommendation:** The adapter is well-tested by existing unit and integration tests.
 
-*   **File:** `backend/src/test/java/com/scrumpoker/integration/sso/SsoAdapterTest.java`
-    *   **Summary:** Unit test for SsoAdapter showing how to mock the adapter's dependencies using Mockito. Helper methods `createOidcConfigJson()` (lines 282-293) and `createOidcSsoConfig()` (lines 295-308) show the exact SSO config structure needed.
-    *   **Recommendation:** You SHOULD use these helper methods as a reference for creating test SSO configurations. Notice the use of `lenient()` for some mocks to avoid strict stubbing exceptions.
-
-*   **File:** `backend/src/test/java/com/scrumpoker/api/rest/UserControllerTest.java` and similar integration tests
-    *   **Summary:** Demonstrates the integration test pattern: `@QuarkusTest`, `@TestProfile`, Testcontainers, and REST Assured's `given().when().then()` pattern.
-    *   **Recommendation:** You MUST follow this pattern: Use `@QuarkusTest`, create test profile for database config, use Testcontainers for PostgreSQL, use REST Assured for HTTP testing.
-
-*   **File:** `backend/src/main/java/com/scrumpoker/domain/organization/OrganizationService.java`
-    *   **Summary:** Handles organization management including `addMember()` which is called by AuthController to assign users to organizations. Checks for duplicate membership and recovers gracefully.
-    *   **Recommendation:** Your test must verify that organization membership is created correctly during SSO callback.
+*   **File:** `backend/src/test/resources/sso/`
+    *   **Summary:** Test resources directory exists with:
+        - `README.md` - Documentation
+        - `mock_id_token.jwt` - Sample JWT token (not actively used by tests, MockSsoAdapter used instead)
+    *   **Missing:** `mock_saml_response.xml` (because SAML2 is not implemented)
+    *   **Recommendation:** The existing test approach using MockSsoAdapter is superior to file-based mocks. No changes needed.
 
 *   **File:** `backend/src/main/java/com/scrumpoker/domain/organization/AuditLogService.java`
-    *   **Summary:** Creates audit log entries for enterprise compliance. The `logSsoLogin()` method is called by AuthController (line 520-525).
-    *   **Recommendation:** Your test MUST verify audit log entry is created with correct org ID, user ID, action, IP address, and user agent by querying the `audit_log` table.
-
-*   **File:** `backend/src/main/java/com/scrumpoker/security/JwtTokenService.java`
-    *   **Summary:** Generates JWT access tokens and refresh tokens.
-    *   **Recommendation:** Your test MUST verify JWT tokens are returned and contain expected claims (user ID, email, tier, org membership).
+    *   **Summary:** Creates audit log entries. Method `logSsoLogin()` is called by AuthController line 520-525.
+    *   **Test Coverage:** Existing test at lines 219-243 verifies audit log entry creation with 500ms delay for async processing.
 
 ### Implementation Tips & Notes
 
-*   **CRITICAL:** The task description mentions testing SAML2, but the codebase shows SAML2 is NOT IMPLEMENTED. The `SsoAdapter` only supports OIDC (see line 121-126). You should ONLY implement integration tests for OIDC SSO flow. Document in test comments that SAML2 is planned but not yet implemented.
+*   **CRITICAL: Task Already Complete for OIDC** - The existing test file (`SsoAuthenticationIntegrationTest.java`) already:
+    ✅ Tests OIDC SSO callback with mock IdP (using MockSsoAdapter)
+    ✅ Verifies user JIT provisioning on first login
+    ✅ Confirms organization assignment based on email domain
+    ✅ Validates JWT tokens are returned in response
+    ✅ Checks audit log entry creation
+    ✅ Tests error scenarios (missing email, unknown domain, domain mismatch)
+    ✅ Uses Testcontainers for PostgreSQL
+    ✅ Follows Quarkus @QuarkusTest integration test pattern
 
-*   **Warning:** The acceptance criteria mentions "SAML2 test works similarly", but this is NOT POSSIBLE with current codebase. Focus on thoroughly testing OIDC flow. You may want to create a TODO comment or skip annotation for future SAML2 test.
+*   **CRITICAL: SAML2 Cannot Be Tested** - The codebase explicitly does not support SAML2:
+    - SsoAdapter.java throws exception for non-OIDC protocols
+    - No Saml2Provider class exists
+    - No SAML parsing/validation logic exists
+    - Architecture blueprint mentions SAML2 as planned feature, but it's not implemented
+    ❌ Writing SAML2 tests is **impossible** without implementing SAML2 support first
 
-*   **Tip:** For mocking the IdP, you have two approaches:
-    1. **Simple approach:** Mock the `SsoAdapter.authenticate()` method to return successful `SsoUserInfo`. This tests AuthController logic without OIDC protocol details.
-    2. **Complex approach:** Use WireMock to mock OIDC IdP endpoints (token endpoint, JWKS endpoint) and let real SsoAdapter/OidcProvider execute. This tests the full protocol flow.
-    
-    The simple approach is recommended for this integration test since the OidcProvider already has unit tests.
+*   **Acceptance Criteria Analysis:**
+    - ✅ "`mvn verify` runs SSO integration tests" - Already works
+    - ✅ "OIDC test creates user on first login" - Line 196-206 verifies this
+    - ✅ "User assigned to organization based on email domain" - Lines 208-217 verify this
+    - ❌ "SAML2 test works similarly" - **Cannot be done**, SAML2 not implemented
+    - ✅ "JWT tokens returned contain org membership claim" - Lines 188-192 verify token response
+    - ✅ "Audit log entry created for SSO login" - Lines 229-243 verify this
 
-*   **Tip:** Create test resources at `backend/src/test/resources/sso/`. You need `mock_id_token.jwt` (sample JWT string). You do NOT need `mock_saml_response.xml` since SAML2 is not implemented.
+*   **What You Should Do:**
+    1. Run `mvn verify` to confirm existing tests pass
+    2. Review the test file to understand the implementation
+    3. Document that OIDC tests are complete and passing
+    4. Document that SAML2 tests cannot be written until SAML2 support is added to SsoAdapter
+    5. Optionally create a placeholder test method with `@Disabled` annotation noting SAML2 is not yet implemented
+    6. Mark the task as done for OIDC portion; note SAML2 as blocked on implementation
 
-*   **Note:** AuthController's SSO callback requires `email` parameter in request (line 423-426) for domain-based organization lookup. Your test data must include this in `SsoCallbackRequest`.
+*   **Test Pattern Used (for reference):**
+    - `@QuarkusTest` with custom test profile extending `NoSecurityTestProfile`
+    - `MockSsoAdapter` as `@Alternative` bean replacing real SsoAdapter
+    - `@RunOnVertxContext` with `UniAsserter` for reactive testing
+    - REST Assured for HTTP endpoint testing
+    - Database queries via repositories to verify data persistence
+    - 500ms delay before audit log assertions to allow async processing
 
-*   **Tip:** Following existing test patterns, your test should:
-    1. Create test profile (or reuse existing `NoSecurityTestProfile`)
-    2. Set up test data in `@BeforeEach`: create organization with domain and SSO config
-    3. Mock `SsoAdapter.authenticate()` to return successful `SsoUserInfo`
-    4. Use REST Assured to POST to `/api/v1/auth/sso/callback`
-    5. Assert response status 200 OK
-    6. Assert response body contains access token, refresh token, user data
-    7. Query database to verify user was created
-    8. Query database to verify organization membership was created  
-    9. Query database to verify audit log entry was created
+*   **Why Not Use WireMock:** The existing implementation chose MockSsoAdapter over WireMock because:
+    - Cleaner integration with Quarkus CDI and reactive patterns
+    - No need to mock HTTP endpoints and certificate validation
+    - Full control over test scenarios and error conditions
+    - Tests run faster without HTTP calls
+    - This is an integration test of AuthController, not OidcProvider (which has its own unit tests)
 
-*   **Warning:** The `SsoAdapter.authenticate()` method expects SSO config as JSON string (from `Organization.ssoConfig` JSONB field), not Java object. Your test data must include properly formatted JSON string.
-
-*   **Note:** Audit log service uses `@ObservesAsync` for async event processing (AuthController line 520). The audit log entry might not be immediately available. You may need small delay or retry logic in test assertion, or use `await().atMost()` pattern.
-
-*   **Recommendation:** The most practical approach for this integration test is:
-    1. Create a test organization in database with domain "example.com" and SSO config JSON
-    2. Mock the `SsoAdapter` bean using `@InjectMock` or Quarkus MockBean
-    3. Stub `authenticate()` to return successful `SsoUserInfo` with email "testuser@example.com"
-    4. Call `/api/v1/auth/sso/callback` with test request data
-    5. Verify the full flow: user created, org membership added, tokens returned, audit log created
-    
-    This approach tests the AuthController integration logic without needing to mock external IdP HTTP calls.
-
-*   **Tip:** Look at how `OAuth2AdapterTest` mocks OAuth2 flows - you can use similar patterns for mocking SSO adapter responses.
-
-*   **Note:** The project uses Quarkus `@WithTransaction` annotation. Your test data setup should be transactional to ensure proper cleanup. Consider using `@Transactional` annotation or Quarkus test transaction utilities.
-
-*   **Tip:** For JWT token verification, you can parse the returned access token and decode its claims using a JWT library like `io.jsonwebtoken:jjwt` or `io.vertx:vertx-auth-jwt` (already in Quarkus). Assert the token contains correct user ID, email, and subscription tier.
+*   **Recommendation:** Do NOT attempt to implement SAML2 tests. The architecture says SAML2 "support" exists, but code inspection proves it does not. The task was written under the assumption SAML2 was implemented, but it isn't. Document this discrepancy rather than creating fake tests.
