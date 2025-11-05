@@ -1,0 +1,56 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: scrum-poker-backend
+  labels:
+    app: scrum-poker-backend
+    app.kubernetes.io/name: scrum-poker-backend
+    app.kubernetes.io/component: backend
+spec:
+  # Select the Service that exposes the application pods
+  selector:
+    matchLabels:
+      app: scrum-poker-backend
+      app.kubernetes.io/name: scrum-poker-backend
+
+  # Define the endpoints to scrape metrics from
+  endpoints:
+  - port: http
+    path: /q/metrics
+    interval: 10s
+    scrapeTimeout: 5s
+
+    # Optional: Relabeling rules to enrich metrics
+    relabelings:
+    # Add namespace label
+    - sourceLabels: [__meta_kubernetes_namespace]
+      targetLabel: kubernetes_namespace
+
+    # Add pod name label
+    - sourceLabels: [__meta_kubernetes_pod_name]
+      targetLabel: kubernetes_pod_name
+
+    # Add node name label
+    - sourceLabels: [__meta_kubernetes_pod_node_name]
+      targetLabel: kubernetes_node_name
+
+    # Add service label
+    - sourceLabels: [__meta_kubernetes_service_name]
+      targetLabel: kubernetes_service_name
+
+    # Metric relabeling (applied after scraping)
+    metricRelabelings:
+    # Add application label to all metrics
+    - targetLabel: application
+      replacement: planning-poker
+
+    # Add component label
+    - targetLabel: component
+      replacement: backend
+
+  # Namespace selector (optional - defaults to same namespace as ServiceMonitor)
+  namespaceSelector:
+    matchNames:
+    - production
+    - staging
+    - development
