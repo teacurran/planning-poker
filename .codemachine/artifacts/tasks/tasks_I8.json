@@ -42,7 +42,7 @@
     "acceptance_criteria": "Application logs in JSON format, Each log entry includes `correlationId` field, HTTP requests logged with method, path, status, duration, correlationId, Correlation ID appears consistently across multiple log entries for same request, WebSocket messages include correlationId in logs, Log level adjusts per environment",
     "dependencies": [],
     "parallelizable": true,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I8.T4",
