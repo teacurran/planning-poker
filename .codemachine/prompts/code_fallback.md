@@ -6,112 +6,180 @@ The previous code submission did not pass verification. You must fix the followi
 
 ## Original Task Description
 
-Create integration test for SSO authentication flow using mock IdP. Test OIDC: mock authorization server, valid ID token, callback processes successfully, user created (JIT provisioning), org assignment, JWT tokens returned. Test SAML2: mock SAML response, assertion validated, user provisioned, tokens returned. Test audit log entry creation. Use Testcontainers for PostgreSQL.
+Create unit tests for `OrganizationService` with mocked `SubscriptionRepository` and `StripeAdapter`. Test scenarios: create organization (verify domain validation), add member (verify OrgMember created), remove member (verify deletion), update SSO config (verify JSONB serialization), update branding (verify JSONB persistence). Test edge cases: duplicate member addition, removing last admin (prevent), invalid domain.
 
 ---
 
 ## Issues Detected
 
-*   **Test Failure:** The test methods `testOidcSsoCallback_FirstLogin_CreatesUserAndAssignsToOrg` and `testOidcSsoCallback_ReturningUser_DoesNotDuplicateOrgMembership` are failing with `IllegalStateException: Hibernate Reactive Panache requires a safe (isolated) Vert.x sub-context, but the current context hasn't been flagged as such`.
+*   **Missing Implementation:** The test file `backend/src/test/java/com/scrumpoker/domain/organization/OrganizationServiceTest.java` has NOT been created yet. The task requires a complete unit test suite with 12+ test methods.
 
-*   **Root Cause:** The `runInVertxContext` helper method at lines 395-413 of `SsoAuthenticationIntegrationTest.java` creates a duplicated Vert.x context using `VertxContext.getOrCreateDuplicatedContext(vertx)`, but this context is NOT properly marked as "safe" for Hibernate Reactive Panache operations.
+*   **Directory Missing:** The directory `backend/src/test/java/com/scrumpoker/domain/organization/` does not exist and needs to be created.
 
-*   **Pattern Error:** Hibernate Reactive Panache requires contexts to be explicitly marked as safe using `VertxContextSafetyToggle.setContextSafe()`. The helper method creates a duplicated context but doesn't flag it as safe, causing all `Panache.withTransaction()` calls to fail.
-
-*   **Impact:** Two test methods that perform database setup and assertions outside of `@RunOnVertxContext` are failing because they can't execute Panache operations in the test-created context.
+*   **No Code Generated:** There is no generated code to verify. The task requires implementing a comprehensive unit test suite from scratch.
 
 ---
 
 ## Best Approach to Fix
 
-You MUST modify the `runInVertxContext` helper method in `backend/src/test/java/com/scrumpoker/api/rest/SsoAuthenticationIntegrationTest.java` to properly mark the duplicated context as safe for Panache operations.
+You MUST create the file `backend/src/test/java/com/scrumpoker/domain/organization/OrganizationServiceTest.java` with a complete unit test suite following these requirements:
 
-### Option 1: Mark Context as Safe (Recommended)
+### 1. Test Structure Requirements
 
-Replace the `runInVertxContext` method (lines 395-413) with this corrected version:
+**Use JUnit 5 + Mockito (NOT @QuarkusTest):**
+- This is a UNIT test, not an integration test
+- Use `@ExtendWith(MockitoExtension.class)` for Mockito support
+- Use `@Mock` for dependencies: `OrganizationRepository`, `OrgMemberRepository`, `UserRepository`, `FeatureGate`, `ObjectMapper`
+- Use `@InjectMocks` for the `OrganizationService` under test
+- Use `@BeforeEach` to reset mocks and set up common test data
 
+**Reference Pattern:**
+Follow the pattern from `backend/src/test/java/com/scrumpoker/domain/billing/BillingServiceTest.java` which demonstrates pure Mockito-based unit testing without Quarkus integration.
+
+### 2. Required Test Methods (Minimum 12)
+
+**Organization Creation Tests (3 tests):**
+1. `testCreateOrganization_Success_ValidDomainAndEnterpriseTier()` - Mock FeatureGate to allow, verify org created with owner as ADMIN
+2. `testCreateOrganization_Failure_EmailDomainMismatch()` - User email `user@different.com` creating org with domain `company.com` should fail
+3. `testCreateOrganization_Failure_MissingEnterpriseTier()` - Mock FeatureGate to throw `FeatureNotAvailableException`
+
+**Member Management Tests (4 tests):**
+4. `testAddMember_Success_CreatesOrgMemberWithRole()` - Verify OrgMember created with specified role (e.g., MEMBER)
+5. `testAddMember_Failure_DuplicateMember()` - Mock `orgMemberRepository.findByOrgIdAndUserId()` to return existing member, verify throws exception
+6. `testRemoveMember_Success_RemovesMember()` - Mock member exists, verify deletion called
+7. `testRemoveMember_Failure_RemoveLastAdmin()` - Mock `orgMemberRepository.countAdmins(orgId)` to return 1, verify throws exception preventing lockout
+
+**SSO Configuration Tests (2 tests):**
+8. `testUpdateSsoConfig_Success_SerializesToJsonb()` - Mock ObjectMapper to verify `writeValueAsString()` called with SSO config
+9. `testGetOrganization_Success_DeserializesSsoConfig()` - Mock org with SSO config JSON, verify ObjectMapper deserializes correctly
+
+**Branding Configuration Tests (2 tests):**
+10. `testUpdateBranding_Success_SerializesToJsonb()` - Mock ObjectMapper to verify branding persisted as JSON
+11. `testGetOrganization_Success_DeserializesBranding()` - Mock org with branding JSON, verify deserialization
+
+**Query Tests (1 test):**
+12. `testGetUserOrganizations_Success_ReturnsUserOrgs()` - Mock `orgMemberRepository.findByUserId()` to return list of memberships
+
+### 3. Reactive Mocking Patterns
+
+Since `OrganizationService` uses Quarkus Hibernate Reactive and returns `Uni<>` types, you MUST mock repository methods to return Uni instances:
+
+**Success Case:**
 ```java
-/**
- * Executes a reactive Uni operation in a Vert.x duplicated context and blocks until completion.
- * This allows running reactive Panache operations from regular test methods (without @RunOnVertxContext).
- *
- * @param <T> The type of result returned by the Uni
- * @param supplier The Uni supplier to execute
- * @return The result of the Uni operation
- */
-private <T> T runInVertxContext(java.util.function.Supplier<Uni<T>> supplier) {
-    // Create a duplicated context (safe/isolated for Hibernate Reactive Panache)
-    Context context = VertxContext.getOrCreateDuplicatedContext(vertx);
-
-    // CRITICAL: Mark the context as safe for Hibernate Reactive Panache
-    VertxContextSafetyToggle.setContextSafe(context, true);
-
-    // Create a Promise to capture the result
-    Promise<T> promise = Promise.promise();
-
-    // Run the Uni supplier on the duplicated context
-    context.runOnContext(v -> {
-        supplier.get()
-            .subscribe().with(
-                result -> promise.complete(result),
-                error -> promise.fail(error)
-            );
-    });
-
-    // Block and wait for the result
-    return promise.future().toCompletionStage().toCompletableFuture().join();
-}
+when(organizationRepository.persist(any(Organization.class)))
+    .thenReturn(Uni.createFrom().item(mockOrg));
 ```
 
-**Required Import:** Add this import at the top of the file:
+**Failure Case:**
 ```java
-import io.quarkus.vertx.core.runtime.context.VertxContextSafetyToggle;
+when(featureGate.requireCanManageOrganization(any(User.class)))
+    .thenReturn(Uni.createFrom().failure(new FeatureNotAvailableException("Enterprise required")));
 ```
 
-### Option 2: Alternative Simpler Approach
+**Blocking for Assertions:**
+Use `.await().indefinitely()` to block and get the result:
+```java
+Organization result = organizationService.createOrganization(name, domain, ownerId)
+    .await().indefinitely();
+assertThat(result).isNotNull();
+```
 
-If `VertxContextSafetyToggle` is not accessible (it's an internal Quarkus class), use this alternative that wraps operations in `asserter.execute()` instead:
+**Failure Assertions:**
+```java
+assertThatThrownBy(() ->
+    organizationService.removeMember(orgId, lastAdminUserId).await().indefinitely()
+).isInstanceOf(IllegalStateException.class)
+ .hasMessageContaining("Cannot remove last admin");
+```
 
-**Step 1:** Change test methods back to using `@RunOnVertxContext` with `UniAsserter`:
+### 4. JSONB Serialization Testing
+
+Mock the `ObjectMapper` behavior for SSO config and branding:
+
+```java
+@Mock
+private ObjectMapper objectMapper;
+
+// In test method:
+SsoConfig ssoConfig = new SsoConfig(/* ... */);
+when(objectMapper.writeValueAsString(ssoConfig))
+    .thenReturn("{\"protocol\":\"oidc\",\"issuer\":\"https://idp.example.com\"}");
+```
+
+### 5. Critical Implementation Notes
+
+*   **IMPORTANT:** The task description mentions "mocked `SubscriptionRepository` and `StripeAdapter`" but these are NOT injected into `OrganizationService`. Ignore this - it's a copy-paste error. Mock the ACTUAL dependencies listed in section 1.
+
+*   **Domain Validation:** The `createOrganization()` method validates that the owner's email domain matches the organization domain. Test both success (matching domains) and failure (mismatched domains).
+
+*   **Transaction Annotations:** The service uses `@WithTransaction` but in unit tests with mocked repositories, transactions won't execute. You don't need to mock transaction behavior.
+
+*   **AssertJ Assertions:** Use AssertJ fluent assertions (`assertThat(...).isEqualTo(...)`) as this is the project standard.
+
+*   **Feature Gate:** The `FeatureGate.requireCanManageOrganization()` checks if the user has Enterprise tier. Mock this to return `Uni.createFrom().voidItem()` for success, or `Uni.createFrom().failure(exception)` for failure.
+
+### 6. Example Test Method Structure
 
 ```java
 @Test
-@RunOnVertxContext
-public void testOidcSsoCallback_FirstLogin_CreatesUserAndAssignsToOrg(UniAsserter asserter) {
-    // REST Assured call (NO asserter.execute - runs blocking on test thread before Vert.x context)
-    ...REST call code...
+void testCreateOrganization_Success_ValidDomainAndEnterpriseTier() {
+    // Arrange
+    String name = "Acme Corp";
+    String domain = "acme.com";
+    Long ownerId = 1L;
 
-    // Database assertions (wrapped in asserter.execute)
-    asserter.execute(() -> Panache.withTransaction(() ->
-        userRepository.findByOAuthProviderAndSubject("sso_oidc", TEST_SSO_SUBJECT)
-            .invoke(user -> {
-                assertThat(user).isNotNull();
-                // ... assertions
-            })
+    User owner = new User();
+    owner.setId(ownerId);
+    owner.setEmail("john@acme.com");
+
+    Organization mockOrg = new Organization();
+    mockOrg.setId(100L);
+    mockOrg.setName(name);
+    mockOrg.setDomain(domain);
+
+    when(userRepository.findById(ownerId))
+        .thenReturn(Uni.createFrom().item(owner));
+    when(featureGate.requireCanManageOrganization(owner))
+        .thenReturn(Uni.createFrom().voidItem());
+    when(organizationRepository.persist(any(Organization.class)))
+        .thenReturn(Uni.createFrom().item(mockOrg));
+    when(orgMemberRepository.persist(any(OrgMember.class)))
+        .thenReturn(Uni.createFrom().item(new OrgMember()));
+
+    // Act
+    Organization result = organizationService.createOrganization(name, domain, ownerId)
+        .await().indefinitely();
+
+    // Assert
+    assertThat(result).isNotNull();
+    assertThat(result.getName()).isEqualTo(name);
+    assertThat(result.getDomain()).isEqualTo(domain);
+    verify(organizationRepository).persist(any(Organization.class));
+    verify(orgMemberRepository).persist(argThat(member ->
+        member.getRole() == OrgRole.ADMIN &&
+        member.getUserId().equals(ownerId)
     ));
 }
 ```
 
-**Step 2:** Remove the `runInVertxContext` helper method and `Vertx vertx` injection - they're not needed.
+### 7. Acceptance Criteria Checklist
+
+Ensure your test suite verifies ALL of these:
+- [ ] Org creation validates email domain matches org domain
+- [ ] Add member creates OrgMember with correct role
+- [ ] Remove last admin throws exception (prevent lockout)
+- [ ] SSO config persists to JSONB correctly (mock ObjectMapper)
+- [ ] Branding config round-trips through JSONB (mock ObjectMapper)
+- [ ] Duplicate member addition throws exception
+- [ ] Missing Enterprise tier throws FeatureNotAvailableException
+- [ ] All tests pass with `mvn test -Dtest=OrganizationServiceTest`
 
 ---
 
-## Recommendation
+## Additional Requirements
 
-**Use Option 1** (mark context as safe) because:
-1. It allows test methods to remain as simple `@Test` methods without `@RunOnVertxContext`
-2. REST Assured HTTP calls run on regular test threads (no deadlock risk)
-3. Database operations run in properly marked Vert.x contexts
-4. Cleaner test code with less boilerplate
-
-After fixing, run `mvn test -Dtest=SsoAuthenticationIntegrationTest` to verify all tests pass.
-
----
-
-## Additional Notes
-
-*   **No SAML2 tests needed:** The task description mentions SAML2 tests, but the codebase does not have SAML2 support implemented yet (see `SsoAdapter.java` lines 121-126). The TODO section at lines 369-381 correctly documents this. Do NOT implement SAML2 tests.
-
-*   **Test coverage is sufficient:** The existing 6 OIDC tests cover all required scenarios: first login with JIT provisioning, returning user (no duplicate membership), missing email, unknown domain, missing code verifier, and domain mismatch.
-
-*   **Audit logging works:** The test logs show audit log entries are being created successfully. The 500ms delay pattern is correct for async audit log verification.
+*   Create the directory structure if it doesn't exist: `backend/src/test/java/com/scrumpoker/domain/organization/`
+*   Use proper package declaration: `package com.scrumpoker.domain.organization;`
+*   Import all necessary classes (JUnit 5, Mockito, AssertJ, Uni, domain entities)
+*   Add Javadoc comments for the test class explaining its purpose
+*   Use descriptive test method names following the pattern: `test<MethodName>_<Scenario>_<ExpectedOutcome>()`
