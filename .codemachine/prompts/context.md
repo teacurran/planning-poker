@@ -10,27 +10,25 @@ This is the full specification of the task you must complete.
 
 ```json
 {
-  "task_id": "I7.T6",
+  "task_id": "I7.T7",
   "iteration_id": "I7",
   "iteration_goal": "Implement enterprise-tier features including SSO integration (OIDC/SAML2), organization management, member administration, org-level branding, and audit logging.",
-  "description": "Implement React components for organization administration (Enterprise tier). `OrganizationSettingsPage`: display org name, domain, member count, branding preview, \"Configure SSO\" button. `SsoConfigPage`: form for OIDC settings (IdP URL, client ID, client secret) or SAML2 settings (IdP metadata URL, certificate upload), test SSO button. `MemberManagementPage`: table listing org members (name, email, role), \"Invite Member\" button, role change dropdown, remove button. `AuditLogPage`: audit event table (timestamp, user, action, resource, IP), date range filter, pagination. Conditional rendering based on user's org admin role.",
-  "agent_type_hint": "FrontendAgent",
-  "inputs": "Organization management requirements, OpenAPI spec for organization endpoints, Enterprise tier UI patterns",
+  "description": "Create integration test for SSO authentication flow using mock IdP. Test OIDC: mock authorization server, valid ID token, callback processes successfully, user created (JIT provisioning), org assignment, JWT tokens returned. Test SAML2: mock SAML response, assertion validated, user provisioned, tokens returned. Test audit log entry creation. Use Testcontainers for PostgreSQL.",
+  "agent_type_hint": "BackendAgent",
+  "inputs": "SSO callback handler from I7.T4, Mock IdP patterns (WireMock for OIDC, SAML test assertions)",
   "input_files": [
-    "api/openapi.yaml"
+    "backend/src/main/java/com/scrumpoker/api/rest/AuthController.java",
+    "backend/src/main/java/com/scrumpoker/integration/sso/SsoAdapter.java"
   ],
   "target_files": [
-    "frontend/src/pages/org/OrganizationSettingsPage.tsx",
-    "frontend/src/pages/org/SsoConfigPage.tsx",
-    "frontend/src/pages/org/MemberManagementPage.tsx",
-    "frontend/src/pages/org/AuditLogPage.tsx",
-    "frontend/src/components/org/MemberTable.tsx",
-    "frontend/src/services/organizationApi.ts"
+    "backend/src/test/java/com/scrumpoker/api/rest/SsoAuthenticationIntegrationTest.java",
+    "backend/src/test/resources/sso/mock_id_token.jwt",
+    "backend/src/test/resources/sso/mock_saml_response.xml"
   ],
-  "deliverables": "OrganizationSettingsPage showing org details, SsoConfigPage with OIDC/SAML2 configuration form, MemberManagementPage with member table and invite/remove actions, AuditLogPage with filterable event table, React Query hooks for organization API calls, Admin-only access (redirect non-admins to 403 page)",
-  "acceptance_criteria": "OrganizationSettingsPage displays org name and member count, SsoConfigPage form submits to /organizations/{id}/sso endpoint, SSO test button validates configuration, MemberManagementPage lists current members, Invite member opens modal, calls POST /members, Remove member confirms action, calls DELETE /members/{userId}, AuditLogPage displays events with timestamp, action, user, Non-admin users cannot access org admin pages (403 or redirect)",
+  "deliverables": "Integration test for OIDC SSO flow, Integration test for SAML2 SSO flow, Mock IdP responses (ID token, SAML assertion), Assertions: user created, org assigned, tokens returned, Audit log entry verified",
+  "acceptance_criteria": "`mvn verify` runs SSO integration tests, OIDC test creates user on first login, User assigned to organization based on email domain, SAML2 test works similarly, JWT tokens returned contain org membership claim, Audit log entry created for SSO login",
   "dependencies": [
-    "I7.T5"
+    "I7.T4"
   ],
   "parallelizable": false,
   "done": false
@@ -70,76 +68,18 @@ The following are the relevant sections from the architecture and plan documents
 - **Data Lifecycle:** Anonymous session data purged 24 hours after room inactivity
 ```
 
-### Context: authorization-strategy (from 05_Operational_Architecture.md)
+### Context: audit-logging (from 05_Operational_Architecture.md)
 
 ```markdown
-##### Authorization Strategy
-
-**Role-Based Access Control (RBAC):**
-- **Roles:** `ANONYMOUS`, `USER`, `PRO_USER`, `ORG_ADMIN`, `ORG_MEMBER`
-- **Implementation:** Quarkus Security annotations (`@RolesAllowed`) on REST endpoints and service methods
-- **JWT Claims:** Access token includes `roles` array for authorization decisions
-- **Dynamic Role Mapping:** Subscription tier (`FREE`, `PRO`, `PRO_PLUS`, `ENTERPRISE`) mapped to roles during token generation
-
-**Resource-Level Permissions:**
-- **Room Access:**
-  - `PUBLIC` rooms: Accessible to anyone with room ID
-  - `INVITE_ONLY` rooms: Requires room owner to whitelist participant (Pro+ tier)
-  - `ORG_RESTRICTED` rooms: Requires organization membership (Enterprise tier)
-- **Room Operations:**
-  - Host controls (reveal, reset, kick): Room creator or user with `HOST` role in `RoomParticipant`
-  - Configuration updates: Room owner only
-  - Vote casting: Participants with `VOTER` role (excludes `OBSERVER`)
-- **Report Access:**
-  - Free tier: Session summary only (no round-level detail)
-  - Pro tier: Full session history with round breakdown
-  - Enterprise tier: Organization-wide analytics with member filtering
-
-**Enforcement Points:**
-1. **API Gateway/Ingress:** JWT validation and signature verification
-2. **REST Controllers:** Role-based annotations reject unauthorized requests with `403 Forbidden`
-3. **WebSocket Handshake:** Token validation before connection upgrade
-4. **Service Layer:** Domain-level checks (e.g., room privacy mode enforcement, subscription feature gating)
-```
-
-### Context: task-i7-t6 (from 02_Iteration_I7.md)
-
-```markdown
-*   **Task 7.6: Create Frontend Organization Management Pages**
-    *   **Task ID:** `I7.T6`
-    *   **Description:** Implement React components for organization administration (Enterprise tier). `OrganizationSettingsPage`: display org name, domain, member count, branding preview, "Configure SSO" button. `SsoConfigPage`: form for OIDC settings (IdP URL, client ID, client secret) or SAML2 settings (IdP metadata URL, certificate upload), test SSO button. `MemberManagementPage`: table listing org members (name, email, role), "Invite Member" button, role change dropdown, remove button. `AuditLogPage`: audit event table (timestamp, user, action, resource, IP), date range filter, pagination. Conditional rendering based on user's org admin role.
-    *   **Agent Type Hint:** `FrontendAgent`
-    *   **Inputs:**
-        *   Organization management requirements
-        *   OpenAPI spec for organization endpoints
-        *   Enterprise tier UI patterns
-    *   **Input Files:**
-        *   `api/openapi.yaml` (organization endpoints)
-    *   **Target Files:**
-        *   `frontend/src/pages/org/OrganizationSettingsPage.tsx`
-        *   `frontend/src/pages/org/SsoConfigPage.tsx`
-        *   `frontend/src/pages/org/MemberManagementPage.tsx`
-        *   `frontend/src/pages/org/AuditLogPage.tsx`
-        *   `frontend/src/components/org/MemberTable.tsx`
-        *   `frontend/src/services/organizationApi.ts` (React Query hooks)
-    *   **Deliverables:**
-        *   OrganizationSettingsPage showing org details
-        *   SsoConfigPage with OIDC/SAML2 configuration form
-        *   MemberManagementPage with member table and invite/remove actions
-        *   AuditLogPage with filterable event table
-        *   React Query hooks for organization API calls
-        *   Admin-only access (redirect non-admins to 403 page)
-    *   **Acceptance Criteria:**
-        *   OrganizationSettingsPage displays org name and member count
-        *   SsoConfigPage form submits to /organizations/{id}/sso endpoint
-        *   SSO test button validates configuration
-        *   MemberManagementPage lists current members
-        *   Invite member opens modal, calls POST /members
-        *   Remove member confirms action, calls DELETE /members/{userId}
-        *   AuditLogPage displays events with timestamp, action, user
-        *   Non-admin users cannot access org admin pages (403 or redirect)
-    *   **Dependencies:** [I7.T5]
-    *   **Parallelizable:** No (depends on API)
+**Audit Logging:**
+- **Scope:** Enterprise tier security and compliance events
+- **Storage:** Dedicated `AuditLog` table (partitioned by month) + immutable S3 bucket for archival
+- **Events:**
+  - User authentication (SSO login, logout)
+  - Organization configuration changes (SSO settings, branding)
+  - Member management (invite, role change, removal)
+  - Administrative actions (room deletion, user account suspension)
+- **Attributes:** `timestamp`, `orgId`, `userId`, `action`, `resourceType`, `resourceId`, `ipAddress`, `userAgent`, `changeDetails` (JSONB)
 ```
 
 ---
@@ -150,95 +90,78 @@ The following analysis is based on my direct review of the current codebase. Use
 
 ### Relevant Existing Code
 
-*   **File:** `backend/src/main/java/com/scrumpoker/api/rest/OrganizationController.java`
-    *   **Summary:** This is the REST controller implementing all 6 organization management endpoints. It handles: organization creation (Enterprise tier only), org details retrieval, SSO configuration updates (admin only), member invitations (admin only), member removal (admin only), and paginated audit log queries (admin only). The controller enforces role-based access control using a helper method `requireOrgAdmin()`.
-    *   **Recommendation:** You MUST ensure that your frontend API calls match the exact endpoint paths, request/response formats, and security model defined in this controller. For example, SSO config update requires admin role, member invite looks up users by email, and audit logs support date range filters with pagination.
+*   **File:** `backend/src/main/java/com/scrumpoker/api/rest/AuthController.java`
+    *   **Summary:** This file contains the REST controller for authentication endpoints including OAuth2 and SSO callback handlers. The `ssoCallback` method (lines 370-558) implements the complete SSO authentication flow including organization lookup, SSO adapter authentication, user JIT provisioning, organization membership assignment, JWT token generation, and audit log entry creation.
+    *   **Recommendation:** You MUST study this implementation carefully as it shows the exact flow your test needs to verify. Pay special attention to how `SsoAdapter.authenticate()` is called with `SsoAuthParams` (lines 462-467), email domain extraction (line 430), organization lookup (line 433), JIT provisioning (lines 482-489), membership assignment with error recovery (lines 495-507), and audit logging (lines 519-525).
+    *   **Note:** The SSO callback handler extracts IP address and user agent from HTTP headers (lines 401-408) for audit logging. Your test should verify these are captured correctly.
 
-*   **File:** `frontend/src/services/organizationApi.ts`
-    *   **Summary:** This file already contains COMPLETE React Query hooks for all organization API operations: `useOrganization()` for fetching org details, `useAuditLogs()` for paginated audit log queries with filters, `useUpdateSsoConfig()` for SSO configuration mutations, `useInviteMember()` for member invitation mutations, and `useRemoveMember()` for member removal mutations. All hooks are fully implemented with proper query key factories, cache invalidation, error handling, and TypeScript types.
-    *   **Recommendation:** You MUST import and use these existing hooks in your page components. DO NOT recreate or duplicate these API functions. The hooks are already optimized with React Query best practices including automatic cache invalidation after mutations.
+*   **File:** `backend/src/main/java/com/scrumpoker/integration/sso/SsoAdapter.java`
+    *   **Summary:** This is the SSO adapter service that provides a unified interface for enterprise SSO authentication. Currently ONLY supports OIDC protocol (lines 121-126 validate protocol is "oidc"). Key methods: `authenticate()` (main entry point), `authenticateOidc()` (delegates to OidcProvider), `parseSsoConfig()` (deserializes JSON config), and `logout()` (backchannel logout).
+    *   **Recommendation:** The adapter expects `ssoConfigJson` containing JSON with `"protocol": "oidc"` and oidc configuration object, `authenticationData` (authorization code), `SsoAuthParams` with `codeVerifier` and `redirectUri`, and `organizationId` UUID.
+    *   **CRITICAL:** SAML2 is mentioned in comments and task description but is NOT IMPLEMENTED. The code throws `SsoAuthenticationException` for any protocol other than "oidc". You should ONLY test OIDC flow, not SAML2.
 
-*   **File:** `frontend/src/types/organization.ts`
-    *   **Summary:** This file defines all TypeScript types for organization-related data: `OrganizationDTO`, `OrgMemberDTO`, `AuditLogDTO`, `AuditLogListResponse`, `SsoConfigRequest`, `InviteMemberRequest`, `AuditLogFilters`, `SsoConfigDTO`, `BrandingDTO`, `OrgRole`, and `SsoProtocol` enums.
-    *   **Recommendation:** You MUST use these existing TypeScript types throughout your components. These types match the OpenAPI specification exactly and ensure type safety for all API interactions.
+*   **File:** `backend/src/test/java/com/scrumpoker/integration/sso/SsoAdapterTest.java`
+    *   **Summary:** Unit test for SsoAdapter showing how to mock the adapter's dependencies using Mockito. Helper methods `createOidcConfigJson()` (lines 282-293) and `createOidcSsoConfig()` (lines 295-308) show the exact SSO config structure needed.
+    *   **Recommendation:** You SHOULD use these helper methods as a reference for creating test SSO configurations. Notice the use of `lenient()` for some mocks to avoid strict stubbing exceptions.
 
-*   **File:** `frontend/src/pages/org/OrganizationSettingsPage.tsx`
-    *   **Summary:** This page component already exists and is FULLY IMPLEMENTED (15,409 bytes). It includes: skeleton loading state, error state with retry button, Enterprise tier check (redirects non-Enterprise users to pricing page), organization header display with icon, and navigation tabs. The page displays org name, domain, member count, SSO configuration status, and branding preview.
-    *   **Recommendation:** This file is COMPLETE. You SHOULD NOT modify it unless there are bugs or missing features after testing. Use it as a reference for design patterns and styling conventions.
+*   **File:** `backend/src/test/java/com/scrumpoker/api/rest/UserControllerTest.java` and similar integration tests
+    *   **Summary:** Demonstrates the integration test pattern: `@QuarkusTest`, `@TestProfile`, Testcontainers, and REST Assured's `given().when().then()` pattern.
+    *   **Recommendation:** You MUST follow this pattern: Use `@QuarkusTest`, create test profile for database config, use Testcontainers for PostgreSQL, use REST Assured for HTTP testing.
 
-*   **File:** `frontend/src/pages/org/SsoConfigPage.tsx`
-    *   **Summary:** This page already exists and is FULLY IMPLEMENTED (21,249 bytes - approximately 530 lines). It likely contains a complete OIDC/SAML2 configuration form implementation with protocol toggle, input validation, and test SSO functionality.
-    *   **Recommendation:** This file is COMPLETE. You SHOULD NOT modify it unless there are bugs discovered during testing.
+*   **File:** `backend/src/main/java/com/scrumpoker/domain/organization/OrganizationService.java`
+    *   **Summary:** Handles organization management including `addMember()` which is called by AuthController to assign users to organizations. Checks for duplicate membership and recovers gracefully.
+    *   **Recommendation:** Your test must verify that organization membership is created correctly during SSO callback.
 
-*   **File:** `frontend/src/pages/org/MemberManagementPage.tsx`
-    *   **Summary:** This page already exists and is FULLY IMPLEMENTED (20,633 bytes - approximately 515 lines). It likely contains the complete member management UI with member table, invite member modal, role change dropdown, and remove member confirmation dialog.
-    *   **Recommendation:** This file is COMPLETE. You SHOULD NOT modify it unless there are bugs discovered during testing.
+*   **File:** `backend/src/main/java/com/scrumpoker/domain/organization/AuditLogService.java`
+    *   **Summary:** Creates audit log entries for enterprise compliance. The `logSsoLogin()` method is called by AuthController (line 520-525).
+    *   **Recommendation:** Your test MUST verify audit log entry is created with correct org ID, user ID, action, IP address, and user agent by querying the `audit_log` table.
 
-*   **File:** `frontend/src/pages/org/AuditLogPage.tsx`
-    *   **Summary:** This page already exists and is FULLY IMPLEMENTED (17,833 bytes - approximately 445 lines). It likely contains the complete audit log UI with event table, timestamp display, date range filters, action type filters, and pagination controls.
-    *   **Recommendation:** This file is COMPLETE. You SHOULD NOT modify it unless there are bugs discovered during testing.
-
-*   **File:** `frontend/src/components/org/MemberTable.tsx`
-    *   **Summary:** This is a shared component (5,888 bytes) for displaying organization members in a table format. It shows member avatar, name, email, role badge, joined date, and action buttons.
-    *   **Recommendation:** This component is COMPLETE and likely already integrated into MemberManagementPage. You SHOULD NOT modify it.
-
-*   **File:** `frontend/src/App.tsx`
-    *   **Summary:** This is the main React Router configuration file. It currently defines routes for homepage, login, dashboard, pricing, billing, reports, and room pages. CRITICALLY, there are NO routes defined for the organization admin pages (`/org/:orgId/*`).
-    *   **Recommendation:** You MUST add routes for all organization admin pages to make them accessible. Add routes for: `/org/:orgId/settings` (OrganizationSettingsPage), `/org/:orgId/sso` (SsoConfigPage), `/org/:orgId/members` (MemberManagementPage), and `/org/:orgId/audit-logs` (AuditLogPage). Wrap these routes with `<PrivateRoute>` for authentication enforcement.
-
-*   **File:** `frontend/src/services/api.ts`
-    *   **Summary:** This is the configured Axios client with authentication interceptors. It automatically adds Bearer tokens to requests, handles 401 errors with token refresh, queues failed requests during refresh, and includes a registered handler for 403 FeatureNotAvailable errors to trigger upgrade modals.
-    *   **Recommendation:** All API calls in organizationApi.ts already use this client. You don't need to modify it, but understand that authentication and error handling are automatic.
+*   **File:** `backend/src/main/java/com/scrumpoker/security/JwtTokenService.java`
+    *   **Summary:** Generates JWT access tokens and refresh tokens.
+    *   **Recommendation:** Your test MUST verify JWT tokens are returned and contain expected claims (user ID, email, tier, org membership).
 
 ### Implementation Tips & Notes
 
-*   **Tip:** ALL page components for I7.T6 (OrganizationSettingsPage, SsoConfigPage, MemberManagementPage, AuditLogPage) already exist in the codebase and appear to be fully implemented based on their file sizes (15-21KB each). Your primary task is to VERIFY their completeness, TEST their functionality, and WIRE THEM INTO THE ROUTING in App.tsx.
+*   **CRITICAL:** The task description mentions testing SAML2, but the codebase shows SAML2 is NOT IMPLEMENTED. The `SsoAdapter` only supports OIDC (see line 121-126). You should ONLY implement integration tests for OIDC SSO flow. Document in test comments that SAML2 is planned but not yet implemented.
 
-*   **Tip:** The `organizationApi.ts` service file is COMPLETE with all required React Query hooks. You should NOT need to modify this file at all. Just ensure the page components correctly import and use these hooks.
+*   **Warning:** The acceptance criteria mentions "SAML2 test works similarly", but this is NOT POSSIBLE with current codebase. Focus on thoroughly testing OIDC flow. You may want to create a TODO comment or skip annotation for future SAML2 test.
 
-*   **Note:** The OrganizationController.java backend already implements all required endpoints with proper admin role enforcement. The endpoints use a `requireOrgAdmin()` helper method that checks if the user is a member with ADMIN role and throws ForbiddenException if not. Your frontend should handle 403 responses gracefully.
+*   **Tip:** For mocking the IdP, you have two approaches:
+    1. **Simple approach:** Mock the `SsoAdapter.authenticate()` method to return successful `SsoUserInfo`. This tests AuthController logic without OIDC protocol details.
+    2. **Complex approach:** Use WireMock to mock OIDC IdP endpoints (token endpoint, JWKS endpoint) and let real SsoAdapter/OidcProvider execute. This tests the full protocol flow.
+    
+    The simple approach is recommended for this integration test since the OidcProvider already has unit tests.
 
-*   **Warning:** The App.tsx file is MISSING routes for organization admin pages. This is the CRITICAL gap preventing the pages from being accessible. You MUST add these routes:
-    ```tsx
-    // Import the organization page components
-    import OrganizationSettingsPage from '@/pages/org/OrganizationSettingsPage';
-    import SsoConfigPage from '@/pages/org/SsoConfigPage';
-    import MemberManagementPage from '@/pages/org/MemberManagementPage';
-    import AuditLogPage from '@/pages/org/AuditLogPage';
+*   **Tip:** Create test resources at `backend/src/test/resources/sso/`. You need `mock_id_token.jwt` (sample JWT string). You do NOT need `mock_saml_response.xml` since SAML2 is not implemented.
 
-    // Add routes inside the <Routes> component
-    <Route path="/org/:orgId/settings" element={<PrivateRoute><OrganizationSettingsPage /></PrivateRoute>} />
-    <Route path="/org/:orgId/sso" element={<PrivateRoute><SsoConfigPage /></PrivateRoute>} />
-    <Route path="/org/:orgId/members" element={<PrivateRoute><MemberManagementPage /></PrivateRoute>} />
-    <Route path="/org/:orgId/audit-logs" element={<PrivateRoute><AuditLogPage /></PrivateRoute>} />
-    ```
+*   **Note:** AuthController's SSO callback requires `email` parameter in request (line 423-426) for domain-based organization lookup. Your test data must include this in `SsoCallbackRequest`.
 
-*   **Note:** Based on the existing codebase patterns, all pages use Tailwind CSS for styling, Heroicons for icons, React Query hooks for data fetching, date-fns for date formatting, and Headless UI for interactive components (modals, dropdowns, etc.). The organization pages follow these same patterns.
+*   **Tip:** Following existing test patterns, your test should:
+    1. Create test profile (or reuse existing `NoSecurityTestProfile`)
+    2. Set up test data in `@BeforeEach`: create organization with domain and SSO config
+    3. Mock `SsoAdapter.authenticate()` to return successful `SsoUserInfo`
+    4. Use REST Assured to POST to `/api/v1/auth/sso/callback`
+    5. Assert response status 200 OK
+    6. Assert response body contains access token, refresh token, user data
+    7. Query database to verify user was created
+    8. Query database to verify organization membership was created  
+    9. Query database to verify audit log entry was created
 
-*   **Tip:** The existing pages already implement tier enforcement. For example, OrganizationSettingsPage checks `user?.subscriptionTier === 'ENTERPRISE'` and redirects non-Enterprise users to the pricing page. Verify this logic is working correctly after adding routes.
+*   **Warning:** The `SsoAdapter.authenticate()` method expects SSO config as JSON string (from `Organization.ssoConfig` JSONB field), not Java object. Your test data must include properly formatted JSON string.
 
-*   **Note:** The backend audit log endpoint supports query parameters for filtering: `from` (ISO-8601 timestamp), `to` (ISO-8601 timestamp), `action` (string), `page` (number), and `size` (number). The AuditLogPage should provide UI controls for these filters.
+*   **Note:** Audit log service uses `@ObservesAsync` for async event processing (AuthController line 520). The audit log entry might not be immediately available. You may need small delay or retry logic in test assertion, or use `await().atMost()` pattern.
 
-*   **Warning:** Member invitation requires the user to already exist in the system (found by email via `userRepository.findByEmail()`). The UI should handle the case where a user is not found (404 error) and display an appropriate error message like "No user found with that email address. They must sign up first."
+*   **Recommendation:** The most practical approach for this integration test is:
+    1. Create a test organization in database with domain "example.com" and SSO config JSON
+    2. Mock the `SsoAdapter` bean using `@InjectMock` or Quarkus MockBean
+    3. Stub `authenticate()` to return successful `SsoUserInfo` with email "testuser@example.com"
+    4. Call `/api/v1/auth/sso/callback` with test request data
+    5. Verify the full flow: user created, org membership added, tokens returned, audit log created
+    
+    This approach tests the AuthController integration logic without needing to mock external IdP HTTP calls.
 
-*   **Note:** Member removal has a safety check preventing removal of the last admin. The backend will throw an exception if you try to remove the last admin. The frontend should either prevent this action proactively (disable remove button for last admin) or handle the error gracefully with a clear message.
+*   **Tip:** Look at how `OAuth2AdapterTest` mocks OAuth2 flows - you can use similar patterns for mocking SSO adapter responses.
 
-### Action Items Summary
+*   **Note:** The project uses Quarkus `@WithTransaction` annotation. Your test data setup should be transactional to ensure proper cleanup. Consider using `@Transactional` annotation or Quarkus test transaction utilities.
 
-1. **ADD ROUTES to App.tsx** for all four organization admin pages under `/org/:orgId/*` paths, wrapped with `<PrivateRoute>`.
-
-2. **IMPORT ORGANIZATION PAGE COMPONENTS** in App.tsx at the top of the file.
-
-3. **TEST** that non-admin users are properly blocked from accessing admin-only pages (verify 403 handling or Enterprise tier redirect).
-
-4. **TEST** the complete user flows: viewing org settings, configuring SSO, inviting/removing members, and viewing audit logs.
-
-5. **VERIFY** that the navigation tabs in OrganizationSettingsPage correctly link to all four organization pages.
-
-6. **ENSURE** proper error handling for edge cases: non-existent users during invite, removing last admin, missing required SSO fields, empty audit log results, etc.
-
----
-
-## Summary
-
-**THE TASK IS 95% COMPLETE.** All UI components (4 pages + 1 shared component) and all API hooks are fully implemented. The ONLY missing piece is registering the routes in App.tsx to make the pages accessible. After adding the routes, test thoroughly to ensure proper functionality.
+*   **Tip:** For JWT token verification, you can parse the returned access token and decode its claims using a JWT library like `io.jsonwebtoken:jjwt` or `io.vertx:vertx-auth-jwt` (already in Quarkus). Assert the token contains correct user ID, email, and subscription tier.
