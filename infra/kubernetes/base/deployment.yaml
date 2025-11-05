@@ -1,0 +1,111 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scrum-poker-backend
+  labels:
+    app: scrum-poker-backend
+    app.kubernetes.io/name: scrum-poker-backend
+    app.kubernetes.io/component: backend
+    app.kubernetes.io/part-of: scrum-poker-platform
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  minReadySeconds: 10
+  selector:
+    matchLabels:
+      app: scrum-poker-backend
+      app.kubernetes.io/name: scrum-poker-backend
+  template:
+    metadata:
+      labels:
+        app: scrum-poker-backend
+        app.kubernetes.io/name: scrum-poker-backend
+        app.kubernetes.io/component: backend
+        app.kubernetes.io/part-of: scrum-poker-platform
+    spec:
+      containers:
+      - name: backend
+        # Image will be overridden by Kustomize overlays
+        # Expected format: <ECR_REGISTRY>/scrum-poker-backend:<VERSION>-<GIT_SHA>
+        # Example: 123456789012.dkr.ecr.us-east-1.amazonaws.com/scrum-poker-backend:v1.0.0-abc1234
+        image: <IMAGE_PLACEHOLDER>
+        imagePullPolicy: Always
+        ports:
+        - name: http
+          containerPort: 8080
+          protocol: TCP
+
+        # Environment variables from ConfigMap and Secret
+        envFrom:
+        - configMapRef:
+            name: scrum-poker-config
+        - secretRef:
+            name: scrum-poker-secrets
+
+        # JVM tuning for production
+        env:
+        - name: JAVA_OPTS
+          value: "-Xmx1g -Xms1g -XX:+UseG1GC -XX:MaxGCPauseMillis=200"
+        - name: QUARKUS_PROFILE
+          value: "prod"
+
+        # Resource requests and limits
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+
+        # Liveness probe - confirms JVM is responsive (no external dependencies)
+        livenessProbe:
+          httpGet:
+            path: /q/health/live
+            port: 8080
+            scheme: HTTP
+          initialDelaySeconds: 60
+          periodSeconds: 10
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
+
+        # Readiness probe - checks database, Redis, and essential services
+        readinessProbe:
+          httpGet:
+            path: /q/health/ready
+            port: 8080
+            scheme: HTTP
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
+
+        # Startup probe - allows for slower initial startup
+        startupProbe:
+          httpGet:
+            path: /q/health/live
+            port: 8080
+            scheme: HTTP
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 12  # 12 * 5s = 60s total startup time allowed
+
+      # Restart policy
+      restartPolicy: Always
+
+      # Security context (run as non-root)
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+
+      # Termination grace period for graceful shutdown
+      terminationGracePeriodSeconds: 30

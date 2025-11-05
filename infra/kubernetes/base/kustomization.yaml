@@ -1,0 +1,26 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Base Kubernetes resources for Scrum Poker backend application
+# These resources provide sensible defaults for all environments
+# Environment-specific values should be overridden in overlays (dev, staging, production)
+
+resources:
+  - deployment.yaml
+  - service.yaml
+  - ingress.yaml
+  - configmap.yaml
+  - secret.yaml
+  - hpa.yaml
+
+# Common labels applied to all resources
+commonLabels:
+  app: scrum-poker-backend
+  app.kubernetes.io/name: scrum-poker-backend
+  app.kubernetes.io/part-of: scrum-poker-platform
+  app.kubernetes.io/managed-by: kustomize
+
+# Common annotations
+commonAnnotations:
+  documentation: https://github.com/your-org/planning-poker
+  contact: devops@scrumpoker.com

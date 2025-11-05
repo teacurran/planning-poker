@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: scrum-poker-config
+data:
+  # Staging database connection (RDS staging instance)
+  DB_JDBC_URL: "jdbc:postgresql://scrum-poker-staging.us-east-1.rds.amazonaws.com:5432/scrumpoker"
+  DB_REACTIVE_URL: "postgresql://scrum-poker-staging.us-east-1.rds.amazonaws.com:5432/scrumpoker"
+
+  # Staging Redis connection (ElastiCache staging cluster)
+  REDIS_URL: "redis://scrum-poker-redis-staging.cache.amazonaws.com:6379"
+
+  # JWT issuer for staging environment
+  JWT_ISSUER: "https://staging.scrumpoker.com"
+
+  # SSO URLs for staging environment
+  SSO_SAML2_SP_ENTITY_ID: "https://staging.scrumpoker.com/saml2/metadata"
+  SSO_SAML2_ACS_URL: "https://staging.scrumpoker.com/api/v1/auth/sso/saml2/acs"
+  SSO_SAML2_SLO_URL: "https://staging.scrumpoker.com/api/v1/auth/sso/saml2/slo"
+
+  # Staging S3 bucket
+  S3_BUCKET_NAME: "scrum-poker-exports-staging"
+
+  # CORS origins for staging frontend
+  CORS_ORIGINS: "https://staging.scrumpoker.com"
+
+  # Staging logging configuration (matches production)
+  LOG_LEVEL: "INFO"
+  LOG_JSON_FORMAT: "true"  # Structured logging for log aggregation
+  DB_LOG_SQL: "false"

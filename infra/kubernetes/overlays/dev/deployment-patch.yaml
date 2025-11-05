@@ -1,0 +1,27 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scrum-poker-backend
+spec:
+  # Dev only needs 1 replica (no HA requirement)
+  replicas: 1
+
+  template:
+    spec:
+      containers:
+      - name: backend
+        # Reduced resource limits for dev environment
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+
+        # Dev-specific JVM options (smaller heap)
+        env:
+        - name: JAVA_OPTS
+          value: "-Xmx512m -Xms512m -XX:+UseG1GC -XX:MaxGCPauseMillis=200"
+        - name: QUARKUS_PROFILE
+          value: "prod"

@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: scrum-poker-config
+data:
+  # Development database connection (local or dev cluster)
+  DB_JDBC_URL: "jdbc:postgresql://postgres-dev.development.svc.cluster.local:5432/scrumpoker"
+  DB_REACTIVE_URL: "postgresql://postgres-dev.development.svc.cluster.local:5432/scrumpoker"
+
+  # Development Redis connection
+  REDIS_URL: "redis://redis-dev.development.svc.cluster.local:6379"
+
+  # JWT issuer for dev environment
+  JWT_ISSUER: "https://dev.scrumpoker.com"
+
+  # SSO URLs for dev environment
+  SSO_SAML2_SP_ENTITY_ID: "https://dev.scrumpoker.com/saml2/metadata"
+  SSO_SAML2_ACS_URL: "https://dev.scrumpoker.com/api/v1/auth/sso/saml2/acs"
+  SSO_SAML2_SLO_URL: "https://dev.scrumpoker.com/api/v1/auth/sso/saml2/slo"
+
+  # Dev S3 bucket
+  S3_BUCKET_NAME: "scrum-poker-exports-dev"
+
+  # CORS origins for local frontend development
+  CORS_ORIGINS: "http://localhost:3000,http://localhost:5173,https://dev.scrumpoker.com"
+
+  # Development logging configuration
+  LOG_LEVEL: "DEBUG"
+  LOG_JSON_FORMAT: "false"  # Human-readable logs for dev
+  DB_LOG_SQL: "true"  # Enable SQL logging in dev

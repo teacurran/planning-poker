@@ -1,0 +1,31 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Production overlay - full resources and production logging
+
+namespace: production
+
+resources:
+  - ../../base
+
+# Override image for production environment
+# Update with your production ECR registry and semantic version tag
+images:
+  - name: <IMAGE_PLACEHOLDER>
+    newName: <PRODUCTION_ECR_REGISTRY>/scrum-poker-backend
+    newTag: v1.0.0  # Replace with actual semantic version + git SHA (e.g., v1.0.0-abc1234)
+
+# Apply patches for production-specific configuration
+patchesStrategicMerge:
+  - configmap-patch.yaml
+
+# Add environment-specific labels
+commonLabels:
+  environment: production
+  tier: backend
+
+# Add production-specific annotations
+commonAnnotations:
+  monitoring: "enabled"
+  backup: "enabled"
+  alerts: "critical"

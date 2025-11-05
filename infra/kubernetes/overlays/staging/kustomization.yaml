@@ -1,0 +1,25 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Staging overlay - matches production specs for realistic testing
+
+namespace: staging
+
+resources:
+  - ../../base
+
+# Override image for staging environment
+# Update with your staging ECR registry and image tag
+images:
+  - name: <IMAGE_PLACEHOLDER>
+    newName: <STAGING_ECR_REGISTRY>/scrum-poker-backend
+    newTag: staging-latest
+
+# Apply patches for staging-specific configuration
+patchesStrategicMerge:
+  - configmap-patch.yaml
+
+# Add environment-specific labels
+commonLabels:
+  environment: staging
+  tier: backend

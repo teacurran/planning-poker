@@ -1,2 +1,18 @@
 .codemachine/memory
 node_modules/
+
+# macOS
+.DS_Store
+
+# IDE/editor
+.vscode/
+
+# Build artifacts
+frontend/dist/
+frontend/playwright-report/
+frontend/test-results/
+
+target/
+
+# Backups
+*.bak

@@ -1,0 +1,74 @@
+# Prerequisites: Kubernetes metrics-server must be installed in the cluster
+# Install with: kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+# Verify with: kubectl get deployment metrics-server -n kube-system
+
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: scrum-poker-backend
+  labels:
+    app: scrum-poker-backend
+    app.kubernetes.io/name: scrum-poker-backend
+    app.kubernetes.io/component: backend
+    app.kubernetes.io/part-of: scrum-poker-platform
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: scrum-poker-backend
+
+  # Replica scaling bounds
+  minReplicas: 2
+  maxReplicas: 10
+
+  # Scaling metrics
+  metrics:
+  # Primary metric: CPU utilization
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70  # Target 70% CPU across all pods
+
+  # TODO: Add custom WebSocket connection metric after Prometheus Adapter is configured
+  # Custom metrics require Prometheus Adapter to expose application metrics to Kubernetes Metrics API
+  # Configuration steps:
+  # 1. Install Prometheus Adapter: https://github.com/kubernetes-sigs/prometheus-adapter
+  # 2. Configure custom metric: scrumpoker_websocket_connections_total
+  # 3. Uncomment the configuration below
+  #
+  # Custom metric configuration (to be added in future):
+  # - type: Pods
+  #   pods:
+  #     metric:
+  #       name: scrumpoker_websocket_connections_total
+  #     target:
+  #       type: AverageValue
+  #       averageValue: "1000"  # Target 1000 concurrent WebSocket connections per pod
+
+  # Scaling behavior configuration
+  behavior:
+    # Scale-up behavior: Add pods when metric exceeds target for 2 minutes
+    scaleUp:
+      stabilizationWindowSeconds: 120  # Wait 2 minutes before scaling up
+      policies:
+      - type: Percent
+        value: 50  # Scale up by 50% of current replicas (e.g., 2 → 3, 4 → 6)
+        periodSeconds: 60
+      - type: Pods
+        value: 2  # Or add 2 pods at a time (whichever is smaller)
+        periodSeconds: 60
+      selectPolicy: Max  # Use whichever policy adds more pods
+
+    # Scale-down behavior: Remove pods when metric below 50% of target for 10 minutes
+    scaleDown:
+      stabilizationWindowSeconds: 600  # Wait 10 minutes before scaling down (conservative to avoid thrashing)
+      policies:
+      - type: Percent
+        value: 25  # Scale down by 25% of current replicas (e.g., 4 → 3, 8 → 6)
+        periodSeconds: 60
+      - type: Pods
+        value: 1  # Or remove 1 pod at a time (whichever is smaller)
+        periodSeconds: 60
+      selectPolicy: Min  # Use whichever policy removes fewer pods (more conservative)
