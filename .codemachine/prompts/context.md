@@ -29,9 +29,7 @@ This is the full specification of the task you must complete.
   ],
   "deliverables": "OrganizationSettingsPage showing org details, SsoConfigPage with OIDC/SAML2 configuration form, MemberManagementPage with member table and invite/remove actions, AuditLogPage with filterable event table, React Query hooks for organization API calls, Admin-only access (redirect non-admins to 403 page)",
   "acceptance_criteria": "OrganizationSettingsPage displays org name and member count, SsoConfigPage form submits to /organizations/{id}/sso endpoint, SSO test button validates configuration, MemberManagementPage lists current members, Invite member opens modal, calls POST /members, Remove member confirms action, calls DELETE /members/{userId}, AuditLogPage displays events with timestamp, action, user, Non-admin users cannot access org admin pages (403 or redirect)",
-  "dependencies": [
-    "I7.T5"
-  ],
+  "dependencies": ["I7.T5"],
   "parallelizable": false,
   "done": false
 }
@@ -43,7 +41,7 @@ This is the full specification of the task you must complete.
 
 The following are the relevant sections from the architecture and plan documents, which I found by analyzing the task description.
 
-### Context: Enterprise Requirements (from 01_Context_and_Drivers.md)
+### Context: enterprise-requirements (from 01_Context_and_Drivers.md)
 
 ```markdown
 <!-- anchor: enterprise-requirements -->
@@ -54,355 +52,154 @@ The following are the relevant sections from the architecture and plan documents
 - **Audit Logging:** Comprehensive event tracking for compliance and security monitoring
 ```
 
-### Context: Organization Management API Endpoints (from api/openapi.yaml, lines 73-270)
+### Context: authentication-mechanisms (from 05_Operational_Architecture.md)
 
-```yaml
-/api/v1/organizations:
-  post:
-    tags:
-      - Organizations
-    summary: Create organization workspace
-    description: |
-      Creates a new organization workspace. **Requires Enterprise tier subscription.**
-    operationId: createOrganization
-    requestBody:
-      required: true
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/CreateOrganizationRequest'
-    responses:
-      '201':
-        description: Organization created
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/OrganizationDTO'
+```markdown
+<!-- anchor: authentication-mechanisms -->
+##### Authentication Mechanisms
 
-/api/v1/organizations/{orgId}:
-  get:
-    tags:
-      - Organizations
-    summary: Get organization settings
-    description: |
-      Returns organization configuration, branding, and member count. Requires organization membership.
-    operationId: getOrganization
-    parameters:
-      - $ref: '#/components/parameters/OrgIdPath'
-    responses:
-      '200':
-        description: Organization retrieved
+**OAuth2 Social Login (Free/Pro Tiers):**
+- **Providers:** Google OAuth2, Microsoft Identity Platform
+- **Flow:** Authorization Code Flow with PKCE (Proof Key for Code Exchange) for browser-based clients
+- **Implementation:** Quarkus OIDC extension handling token exchange and validation
+- **Token Storage:** JWT access tokens (1-hour expiration) in browser `localStorage`, refresh tokens (30-day expiration) in `httpOnly` secure cookies
+- **User Provisioning:** Automatic user creation on first login with `oauth_provider` and `oauth_subject` as unique identifiers
+- **Profile Sync:** Email, display name, and avatar URL synced from OAuth provider on each login
 
-/api/v1/organizations/{orgId}/sso:
-  put:
-    tags:
-      - Organizations
-    summary: Configure OIDC/SAML2 SSO settings
-    description: |
-      Updates SSO configuration for organization. **Requires ADMIN role.**
-    operationId: updateSsoConfig
-    requestBody:
-      required: true
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/SsoConfigRequest'
+**Enterprise SSO (Enterprise Tier):**
+- **Protocols:** OIDC (OpenID Connect) and SAML2 support via Quarkus Security extensions
+- **Configuration:** Per-organization SSO settings stored in `Organization.sso_config` JSONB field (IdP endpoint, certificate, attribute mapping)
+- **Domain Enforcement:** Email domain verification ensures users with `@company.com` email automatically join organization workspace
+- **Just-In-Time (JIT) Provisioning:** User accounts created on first SSO login with organization membership pre-assigned
+- **Session Management:** SSO sessions synchronized with IdP via backchannel logout or session validation
 
-/api/v1/organizations/{orgId}/members:
-  post:
-    tags:
-      - Organizations
-    summary: Invite member to organization
-    description: |
-      Sends invitation email to join organization. **Requires ADMIN role.**
-    operationId: inviteMember
-    requestBody:
-      required: true
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/InviteMemberRequest'
-    responses:
-      '201':
-        description: Member invited
-
-/api/v1/organizations/{orgId}/members/{userId}:
-  delete:
-    tags:
-      - Organizations
-    summary: Remove member from organization
-    description: |
-      Removes user from organization. **Requires ADMIN role.** Cannot remove last admin.
-    operationId: removeMember
-    responses:
-      '204':
-        description: Member removed
-
-/api/v1/organizations/{orgId}/audit-logs:
-  get:
-    tags:
-      - Organizations
-    summary: Query audit trail
-    description: |
-      Returns paginated audit log entries for compliance. **Requires ADMIN role.**
-    operationId: getAuditLogs
-    parameters:
-      - $ref: '#/components/parameters/OrgIdPath'
-      - name: from
-        in: query
-        schema:
-          type: string
-          format: date-time
-        description: Start timestamp (ISO 8601 format)
-      - name: to
-        in: query
-        schema:
-          type: string
-          format: date-time
-        description: End timestamp (ISO 8601 format)
-      - name: action
-        in: query
-        schema:
-          type: string
-        description: Filter by action type
-      - name: page
-        in: query
-        schema:
-          type: integer
-          default: 0
-      - name: size
-        in: query
-        schema:
-          type: integer
-          default: 20
-    responses:
-      '200':
-        description: Audit logs retrieved
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/AuditLogListResponse'
+**Anonymous Play:**
+- **Identifier:** Client-generated UUID stored in browser `sessionStorage` for session continuity
+- **Room Association:** Anonymous participants linked to room via `RoomParticipant.anonymous_id`
+- **Feature Restrictions:** No session history access, no saved preferences, no administrative capabilities
+- **Data Lifecycle:** Anonymous session data purged 24 hours after room inactivity
 ```
 
-### Context: Organization DTOs (from api/openapi.yaml, lines 1963-2264)
+### Context: authorization-strategy (from 05_Operational_Architecture.md)
 
-```yaml
-OrganizationDTO:
-  type: object
-  required:
-    - orgId
-    - name
-    - domain
-    - createdAt
-  properties:
-    orgId:
-      type: string
-      format: uuid
-    name:
-      type: string
-      maxLength: 255
-    domain:
-      type: string
-      maxLength: 255
-    ssoConfig:
-      $ref: '#/components/schemas/SsoConfigDTO'
-    branding:
-      $ref: '#/components/schemas/BrandingDTO'
-    subscriptionId:
-      type: string
-      format: uuid
-      nullable: true
-    memberCount:
-      type: integer
-    createdAt:
-      type: string
-      format: date-time
-    updatedAt:
-      type: string
-      format: date-time
+```markdown
+<!-- anchor: authorization-strategy -->
+##### Authorization Strategy
 
-SsoConfigDTO:
-  type: object
-  description: SSO configuration (OIDC or SAML2)
-  properties:
-    protocol:
-      type: string
-      enum: [OIDC, SAML2]
-    issuer:
-      type: string
-      format: uri
-    clientId:
-      type: string
-    authorizationEndpoint:
-      type: string
-      format: uri
-    tokenEndpoint:
-      type: string
-      format: uri
-    jwksUri:
-      type: string
-      format: uri
-    samlEntityId:
-      type: string
-    samlSsoUrl:
-      type: string
-      format: uri
+**Role-Based Access Control (RBAC):**
+- **Roles:** `ANONYMOUS`, `USER`, `PRO_USER`, `ORG_ADMIN`, `ORG_MEMBER`
+- **Implementation:** Quarkus Security annotations (`@RolesAllowed`) on REST endpoints and service methods
+- **JWT Claims:** Access token includes `roles` array for authorization decisions
+- **Dynamic Role Mapping:** Subscription tier (`FREE`, `PRO`, `PRO_PLUS`, `ENTERPRISE`) mapped to roles during token generation
 
-BrandingDTO:
-  type: object
-  description: Organization branding customization
-  properties:
-    logoUrl:
-      type: string
-      format: uri
-      maxLength: 500
-    primaryColor:
-      type: string
-      pattern: '^#[0-9A-Fa-f]{6}$'
-    secondaryColor:
-      type: string
-      pattern: '^#[0-9A-Fa-f]{6}$'
+**Resource-Level Permissions:**
+- **Room Access:**
+  - `PUBLIC` rooms: Accessible to anyone with room ID
+  - `INVITE_ONLY` rooms: Requires room owner to whitelist participant (Pro+ tier)
+  - `ORG_RESTRICTED` rooms: Requires organization membership (Enterprise tier)
+- **Room Operations:**
+  - Host controls (reveal, reset, kick): Room creator or user with `HOST` role in `RoomParticipant`
+  - Configuration updates: Room owner only
+  - Vote casting: Participants with `VOTER` role (excludes `OBSERVER`)
+- **Report Access:**
+  - Free tier: Session summary only (no round-level detail)
+  - Pro tier: Full session history with round breakdown
+  - Enterprise tier: Organization-wide analytics with member filtering
 
-SsoConfigRequest:
-  type: object
-  required:
-    - protocol
-  properties:
-    protocol:
-      type: string
-      enum: [OIDC, SAML2]
-    issuer:
-      type: string
-      format: uri
-    clientId:
-      type: string
-    clientSecret:
-      type: string
-      format: password
-    authorizationEndpoint:
-      type: string
-      format: uri
-    tokenEndpoint:
-      type: string
-      format: uri
-    jwksUri:
-      type: string
-      format: uri
-    samlEntityId:
-      type: string
-    samlSsoUrl:
-      type: string
-      format: uri
-    samlCertificate:
-      type: string
+**Enforcement Points:**
+1. **API Gateway/Ingress:** JWT validation and signature verification
+2. **REST Controllers:** Role-based annotations reject unauthorized requests with `403 Forbidden`
+3. **WebSocket Handshake:** Token validation before connection upgrade
+4. **Service Layer:** Domain-level checks (e.g., room privacy mode enforcement, subscription feature gating)
+```
 
-OrgMemberDTO:
-  type: object
-  required:
-    - userId
-    - displayName
-    - email
-    - role
-    - joinedAt
-  properties:
-    userId:
-      type: string
-      format: uuid
-    displayName:
-      type: string
-    email:
-      type: string
-      format: email
-    avatarUrl:
-      type: string
-      format: uri
-      nullable: true
-    role:
-      $ref: '#/components/schemas/OrgRole'
-    joinedAt:
-      type: string
-      format: date-time
+### Context: data-model-overview-erd (from 03_System_Structure_and_Data.md)
 
-InviteMemberRequest:
-  type: object
-  required:
-    - email
-    - role
-  properties:
-    email:
-      type: string
-      format: email
-    role:
-      $ref: '#/components/schemas/OrgRole'
+```markdown
+<!-- anchor: data-model-overview-erd -->
+### 3.6. Data Model Overview & ERD
 
-AuditLogDTO:
-  type: object
-  required:
-    - logId
-    - action
-    - resourceType
-    - timestamp
-  properties:
-    logId:
-      type: string
-      format: uuid
-    orgId:
-      type: string
-      format: uuid
-      nullable: true
-    userId:
-      type: string
-      format: uuid
-      nullable: true
-    action:
-      type: string
-      maxLength: 100
-    resourceType:
-      type: string
-      maxLength: 50
-    resourceId:
-      type: string
-      maxLength: 255
-      nullable: true
-    ipAddress:
-      type: string
-      maxLength: 45
-      nullable: true
-    userAgent:
-      type: string
-      maxLength: 500
-      nullable: true
-    timestamp:
-      type: string
-      format: date-time
+#### Description
 
-AuditLogListResponse:
-  type: object
-  required:
-    - logs
-    - page
-    - size
-    - totalElements
-    - totalPages
-  properties:
-    logs:
-      type: array
-      items:
-        $ref: '#/components/schemas/AuditLogDTO'
-    page:
-      type: integer
-    size:
-      type: integer
-    totalElements:
-      type: integer
-    totalPages:
-      type: integer
+The data model follows a relational schema leveraging PostgreSQL's ACID properties for transactional consistency and JSONB columns for flexible configuration storage (room settings, deck definitions). The model is optimized for both transactional writes (vote casting, room creation) and analytical reads (session history, organizational reporting).
 
-OrgRole:
-  type: string
-  enum:
-    - ADMIN
-    - MEMBER
+**Design Principles:**
+1. **Normalized Core Entities:** Users, Rooms, Organizations follow 3NF to prevent update anomalies
+2. **Denormalized Read Models:** SessionSummary and VoteStatistics tables precompute aggregations for reporting performance
+3. **JSONB for Flexibility:** RoomConfig, DeckDefinition, UserPreferences stored as JSONB to support customization without schema migrations
+4. **Soft Deletes:** Critical entities (Users, Rooms) use `deleted_at` timestamp for audit trail and GDPR compliance
+5. **Partitioning Strategy:** SessionHistory and AuditLog partitioned by month for query performance and data lifecycle management
+
+#### Key Entities
+
+| Entity | Purpose | Key Attributes |
+|--------|---------|----------------|
+| **User** | Registered user account | `user_id` (PK), `email`, `oauth_provider`, `oauth_subject`, `display_name`, `avatar_url`, `subscription_tier`, `created_at` |
+| **UserPreference** | Saved user defaults | `user_id` (FK), `default_deck_type`, `default_room_config` (JSONB), `theme`, `notification_settings` (JSONB) |
+| **Organization** | Enterprise SSO workspace | `org_id` (PK), `name`, `domain`, `sso_config` (JSONB: OIDC/SAML2 settings), `branding` (JSONB), `subscription_id` (FK) |
+| **OrgMember** | User-organization membership | `org_id` (FK), `user_id` (FK), `role` (ADMIN/MEMBER), `joined_at` |
+| **Room** | Estimation session | `room_id` (PK, nanoid 6-char), `owner_id` (FK nullable for anonymous), `org_id` (FK nullable), `title`, `privacy_mode` (PUBLIC/INVITE_ONLY/ORG_RESTRICTED), `config` (JSONB: deck, rules, timer), `created_at`, `last_active_at` |
+| **RoomParticipant** | Active session participants | `room_id` (FK), `user_id` (FK nullable), `anonymous_id`, `display_name`, `role` (HOST/VOTER/OBSERVER), `connected_at` |
+| **Vote** | Individual estimation vote | `vote_id` (PK), `room_id` (FK), `round_number`, `participant_id`, `card_value`, `voted_at` |
+| **Round** | Estimation round within session | `round_id` (PK), `room_id` (FK), `round_number`, `story_title`, `started_at`, `revealed_at`, `average`, `median`, `consensus_reached` |
+| **SessionHistory** | Completed session record | `session_id` (PK), `room_id` (FK), `started_at`, `ended_at`, `total_rounds`, `total_stories`, `participants` (JSONB array), `summary_stats` (JSONB) |
+| **Subscription** | Stripe subscription record | `subscription_id` (PK), `stripe_subscription_id`, `entity_id` (user_id or org_id), `entity_type` (USER/ORG), `tier` (FREE/PRO/PRO_PLUS/ENTERPRISE), `status`, `current_period_end`, `canceled_at` |
+| **PaymentHistory** | Payment transaction log | `payment_id` (PK), `subscription_id` (FK), `stripe_invoice_id`, `amount`, `currency`, `status`, `paid_at` |
+| **AuditLog** | Compliance and security audit trail | `log_id` (PK), `org_id` (FK nullable), `user_id` (FK nullable), `action`, `resource_type`, `resource_id`, `ip_address`, `user_agent`, `timestamp` |
+```
+
+### Context: iteration-7 (from 02_Iteration_I7.md)
+
+```markdown
+<!-- anchor: iteration-7 -->
+### Iteration 7: Enterprise Features (SSO & Organizations)
+
+*   **Iteration ID:** `I7`
+
+*   **Goal:** Implement enterprise-tier features including SSO integration (OIDC/SAML2), organization management, member administration, org-level branding, and audit logging.
+
+*   **Prerequisites:** I3 (authentication), I5 (subscription tier enforcement)
+```
+
+### Context: task-i7-t6 (from 02_Iteration_I7.md)
+
+```markdown
+<!-- anchor: task-i7-t6 -->
+*   **Task 7.6: Create Frontend Organization Management Pages**
+    *   **Task ID:** `I7.T6`
+    *   **Description:** Implement React components for organization administration (Enterprise tier). `OrganizationSettingsPage`: display org name, domain, member count, branding preview, "Configure SSO" button. `SsoConfigPage`: form for OIDC settings (IdP URL, client ID, client secret) or SAML2 settings (IdP metadata URL, certificate upload), test SSO button. `MemberManagementPage`: table listing org members (name, email, role), "Invite Member" button, role change dropdown, remove button. `AuditLogPage`: audit event table (timestamp, user, action, resource, IP), date range filter, pagination. Conditional rendering based on user's org admin role.
+    *   **Agent Type Hint:** `FrontendAgent`
+    *   **Inputs:**
+        *   Organization management requirements
+        *   OpenAPI spec for organization endpoints
+        *   Enterprise tier UI patterns
+    *   **Input Files:**
+        *   `api/openapi.yaml` (organization endpoints)
+    *   **Target Files:**
+        *   `frontend/src/pages/org/OrganizationSettingsPage.tsx`
+        *   `frontend/src/pages/org/SsoConfigPage.tsx`
+        *   `frontend/src/pages/org/MemberManagementPage.tsx`
+        *   `frontend/src/pages/org/AuditLogPage.tsx`
+        *   `frontend/src/components/org/MemberTable.tsx`
+        *   `frontend/src/services/organizationApi.ts` (React Query hooks)
+    *   **Deliverables:**
+        *   OrganizationSettingsPage showing org details
+        *   SsoConfigPage with OIDC/SAML2 configuration form
+        *   MemberManagementPage with member table and invite/remove actions
+        *   AuditLogPage with filterable event table
+        *   React Query hooks for organization API calls
+        *   Admin-only access (redirect non-admins to 403 page)
+    *   **Acceptance Criteria:**
+        *   OrganizationSettingsPage displays org name and member count
+        *   SsoConfigPage form submits to /organizations/{id}/sso endpoint
+        *   SSO test button validates configuration
+        *   MemberManagementPage lists current members
+        *   Invite member opens modal, calls POST /members
+        *   Remove member confirms action, calls DELETE /members/{userId}
+        *   AuditLogPage displays events with timestamp, action, user
+        *   Non-admin users cannot access org admin pages (403 or redirect)
+    *   **Dependencies:** [I7.T5]
+    *   **Parallelizable:** No (depends on API)
 ```
 
 ---
@@ -413,212 +210,130 @@ The following analysis is based on my direct review of the current codebase. Use
 
 ### Relevant Existing Code
 
-*   **File:** `frontend/src/pages/DashboardPage.tsx`
-    *   **Summary:** This is a complete example of a React page component following the project's patterns. It demonstrates: React Query hooks for data fetching (`useUser`, `useRooms`), auth store usage for current user, loading skeletons with Tailwind animations, error handling with retry, responsive grid layouts, and empty state UI.
-    *   **Recommendation:** You MUST follow this exact pattern for all organization pages. Key patterns to replicate:
-        - Use React Query hooks from `apiHooks.ts` (you'll create organization-specific hooks)
-        - Show loading skeleton with `animate-pulse` while data fetches
-        - Display error state with retry button and error icon
-        - Use Tailwind responsive classes (`md:grid-cols-2`, `lg:grid-cols-3`)
-        - Container layout: `min-h-screen bg-gray-50 dark:bg-gray-900` → `container mx-auto px-4 py-8`
-        - Extract `userId` from `useAuthStore()` for API calls
+*   **File:** `backend/src/main/java/com/scrumpoker/api/rest/OrganizationController.java`
+    *   **Summary:** This file contains the complete REST API implementation for organization management. It provides 6 endpoints: create organization (POST /organizations), get organization (GET /organizations/{orgId}), update SSO config (PUT /organizations/{orgId}/sso), invite member (POST /organizations/{orgId}/members), remove member (DELETE /organizations/{orgId}/members/{userId}), and query audit logs (GET /organizations/{orgId}/audit-logs). All endpoints enforce proper authorization (requires ADMIN role for modifications, organization membership for reads).
+    *   **Recommendation:** You MUST NOT modify this file. Your frontend components should consume these existing endpoints exactly as specified. The controller uses `@RolesAllowed("USER")` and validates org admin access via the `requireOrgAdmin()` helper method. Your frontend MUST handle 403 Forbidden responses when non-admin users try to access admin-only pages.
+    *   **Critical Details:**
+        - Audit logs endpoint supports pagination with query params: `from`, `to`, `action`, `page`, `size`
+        - SSO config endpoint expects `SsoConfigRequest` body
+        - Member invite expects `InviteMemberRequest` with `email` and `role` fields
+        - Member removal is idempotent (returns 204 No Content on success)
+        - All endpoints return appropriate DTOs that match the OpenAPI spec
 
-*   **File:** `frontend/src/pages/SubscriptionSettingsPage.tsx`
-    *   **Summary:** This page demonstrates advanced patterns: modal dialogs using Headless UI (`Dialog`, `Transition`), confirmation modals with destructive actions, table components with pagination, date formatting with `date-fns`, utility functions for badge styling, and mutation hooks with optimistic updates.
-    *   **Recommendation:** You SHOULD use this as a reference for:
-        - `CancelConfirmationModal` pattern for your "Remove Member" confirmation dialog
-        - `PaymentHistoryTable` pattern for your `MemberTable` and `AuditLogPage` table
-        - Headless UI imports: `import { Dialog, Transition } from '@headlessui/react'`
-        - Hero Icons: `import { ... } from '@heroicons/react/24/outline'`
-        - Date formatting: `format(new Date(timestamp), 'MMMM d, yyyy')`
-        - Status badges and tier badges utility functions (create similar for org roles)
-
-*   **File:** `frontend/src/services/apiHooks.ts`
-    *   **Summary:** This file defines the standard pattern for React Query hooks. Key elements: query key factories for cache management, custom hooks wrapping `useQuery` and `useMutation`, error handling with `getErrorMessage`, stale time configuration (5 minutes), and enabled flags for conditional queries.
-    *   **Recommendation:** You MUST create `organizationApi.ts` following this pattern. Create these hooks:
-        ```typescript
-        // Query hooks
-        useOrganization(orgId: string) // GET /organizations/{orgId}
-        useOrgMembers(orgId: string) // GET /organizations/{orgId}/members (you'll need to add this endpoint or derive from org data)
-        useAuditLogs(orgId: string, filters: {...}, page: number, size: number) // GET /organizations/{orgId}/audit-logs
-
-        // Mutation hooks
-        useUpdateSsoConfig() // PUT /organizations/{orgId}/sso
-        useInviteMember() // POST /organizations/{orgId}/members
-        useRemoveMember() // DELETE /organizations/{orgId}/members/{userId}
+*   **File:** `frontend/src/services/organizationApi.ts`
+    *   **Summary:** This file provides complete React Query hooks for all organization API operations. It includes: `useOrganization(orgId)` for fetching org details, `useAuditLogs(orgId, filters)` for paginated audit logs, `useUpdateSsoConfig(orgId)` mutation for SSO updates, `useInviteMember(orgId)` mutation for inviting members, and `useRemoveMember(orgId)` mutation for removing members. All hooks automatically handle cache invalidation and error logging.
+    *   **Recommendation:** You MUST import and use these existing hooks in your page components. DO NOT create new hooks or make direct API calls. The hooks are already optimized with proper query keys, cache invalidation, stale time configuration, and error handling. All mutations automatically invalidate the organization cache to trigger refetches.
+    *   **Usage Pattern:**
+        ```tsx
+        // In your component:
+        const { data: org, isLoading, error } = useOrganization(orgId);
+        const updateSso = useUpdateSsoConfig(orgId);
+        const inviteMember = useInviteMember(orgId);
+        const removeMember = useRemoveMember(orgId);
+        const { data: auditLogs } = useAuditLogs(orgId, { page: 0, size: 20 });
         ```
-        - Use query key factory pattern: `queryKeys.organizations = { detail: (orgId) => ['organizations', orgId], members: (orgId) => [...], ... }`
-        - For mutations, return `{ mutate, mutateAsync, isPending, isSuccess, error }` from `useMutation`
-        - On success, invalidate relevant query keys: `queryClient.invalidateQueries({ queryKey: queryKeys.organizations.detail(orgId) })`
+
+*   **File:** `frontend/src/types/organization.ts`
+    *   **Summary:** This file defines all TypeScript interfaces for organization-related data, matching the OpenAPI specification exactly. It includes: `OrganizationDTO`, `OrgMemberDTO`, `AuditLogDTO`, `AuditLogListResponse`, `SsoConfigDTO`, `SsoConfigRequest`, `InviteMemberRequest`, `BrandingDTO`, `OrgRole` enum, `SsoProtocol` enum, and `AuditLogFilters`.
+    *   **Recommendation:** You MUST import types from this file for all props, state, and function signatures. DO NOT create duplicate type definitions. These types ensure type safety and match the backend DTOs exactly.
+
+*   **File:** `frontend/src/pages/org/OrganizationSettingsPage.tsx`
+    *   **Summary:** THIS FILE ALREADY EXISTS AND IS COMPLETE. It displays organization overview with name, domain, member count, SSO status, branding preview, and navigation tabs. It includes loading skeleton, error states, and Enterprise tier check. It provides quick action buttons to navigate to members, SSO, and audit logs pages.
+    *   **Recommendation:** You MUST NOT modify this file. It is already fully implemented and tested. Your other three page components (SsoConfigPage, MemberManagementPage, AuditLogPage) should follow the same design patterns, styling conventions, and navigation structure established in this file.
+    *   **Design Patterns to Follow:**
+        - Loading state: Full-page skeleton with animated pulse for all cards
+        - Error state: Red banner with error icon, error message, and retry button
+        - Enterprise tier check: Yellow banner redirecting to pricing if not Enterprise
+        - Navigation tabs: Border-bottom style with active blue underline
+        - Card layout: Grid with white cards on gray-50 background, dark mode support
+        - Tailwind classes: Consistent spacing, colors, typography
+
+*   **File:** `frontend/src/pages/org/AuditLogPage.tsx`
+    *   **Summary:** THIS FILE ALREADY EXISTS AND IS COMPLETE. It displays a paginated table of audit log entries with timestamp, user, action, resource type, and IP address. It includes date range filtering, action type filtering, and pagination controls. It uses the `useAuditLogs` hook and handles loading/error states.
+    *   **Recommendation:** This file is complete. You do not need to modify it. Use it as a reference for table layouts and pagination patterns.
+
+*   **File:** `frontend/src/pages/org/MemberManagementPage.tsx`
+    *   **Summary:** THIS FILE ALREADY EXISTS AND IS COMPLETE. It displays the member table using the `MemberTable` component, with invite member modal and remove member confirmation dialog. It uses the `useInviteMember` and `useRemoveMember` hooks.
+    *   **Recommendation:** This file is complete. You do not need to modify it.
+
+*   **File:** `frontend/src/pages/org/SsoConfigPage.tsx`
+    *   **Summary:** THIS FILE ALREADY EXISTS AND IS COMPLETE. It provides a form for configuring OIDC or SAML2 SSO settings with protocol toggle, input fields for IdP URL, client ID, client secret (OIDC) or metadata URL and certificate (SAML2), and a test SSO button. It uses the `useUpdateSsoConfig` hook.
+    *   **Recommendation:** This file is complete. You do not need to modify it.
+
+*   **File:** `frontend/src/components/org/MemberTable.tsx`
+    *   **Summary:** This file provides a reusable table component for displaying organization members. It shows member avatar, name, email, role badge (with conditional colors: purple for ADMIN, gray for MEMBER), joined date, and remove button. It includes loading spinner and empty state. It uses Heroicons for icons and date-fns for date formatting.
+    *   **Recommendation:** This component is complete and used by `MemberManagementPage`. You do not need to modify it.
 
 *   **File:** `frontend/src/stores/authStore.ts`
-    *   **Summary:** Zustand store managing authentication state. Contains `user` object with subscription tier, access tokens, and auth methods. The user object includes `subscriptionTier` field which you'll use to check for Enterprise access.
-    *   **Recommendation:** You MUST check `user.subscriptionTier === 'ENTERPRISE'` before rendering org admin pages. If not Enterprise, show an upgrade prompt or redirect to pricing page. Also, you need to track the user's organization memberships and admin status. Consider extending authStore or creating a separate `orgStore` to track:
-        ```typescript
-        interface OrgStore {
-          currentOrgId: string | null;
-          isOrgAdmin: boolean;
-          setCurrentOrg: (orgId: string, isAdmin: boolean) => void;
-        }
+    *   **Summary:** This Zustand store manages authentication state including `user`, `accessToken`, `refreshToken`, and `isAuthenticated`. It persists to localStorage and provides `setAuth()`, `clearAuth()`, and `loadAuthFromStorage()` actions. The `user` object includes `subscriptionTier` which you MUST use to check for Enterprise tier access.
+    *   **Recommendation:** You MUST import `useAuthStore` to access the current user and check subscription tier. Use `const { user } = useAuthStore()` to get user data, then check `user?.subscriptionTier === 'ENTERPRISE'` to enforce Enterprise-only access to org admin pages.
+
+*   **File:** `frontend/src/App.tsx`
+    *   **Summary:** This is the main app routing configuration using React Router. It currently defines routes for home, login, dashboard, pricing, billing, reports, and room pages. It wraps routes in `PrivateRoute` for authentication checks.
+    *   **Recommendation:** You MUST add routes for the organization admin pages to this file. Add routes with paths like `/org/:orgId/settings`, `/org/:orgId/members`, `/org/:orgId/sso`, and `/org/:orgId/audit-logs`. Wrap them in `PrivateRoute` to require authentication. The routes are MISSING from this file and you MUST add them.
+    *   **Pattern to follow:**
+        ```tsx
+        <Route
+          path="/org/:orgId/settings"
+          element={
+            <PrivateRoute>
+              <OrganizationSettingsPage />
+            </PrivateRoute>
+          }
+        />
         ```
-
-*   **File:** `frontend/src/components/subscription/UpgradeModal.tsx`
-    *   **Summary:** Modal component triggered when users hit feature gates (403 errors). Shows tier comparison and upgrade CTA.
-    *   **Recommendation:** You SHOULD integrate this modal into your organization pages. When a non-Enterprise user tries to access org features, show this modal. Also handle non-admin users differently (they have Enterprise, but lack admin role in specific org) - show different error message: "Requires organization admin role".
-
-*   **File:** `backend/src/main/java/com/scrumpoker/api/rest/OrganizationController.java`
-    *   **Summary:** The complete backend REST controller with all 6 organization endpoints implemented. This defines the exact API contract your frontend must call.
-    *   **Recommendation:** Your API calls MUST match these endpoint signatures:
-        - `POST /api/v1/organizations` - Create org (Enterprise tier only)
-        - `GET /api/v1/organizations/{orgId}` - Get org details
-        - `PUT /api/v1/organizations/{orgId}/sso` - Update SSO config (admin only)
-        - `POST /api/v1/organizations/{orgId}/members` - Invite member (admin only)
-        - `DELETE /api/v1/organizations/{orgId}/members/{userId}` - Remove member (admin only)
-        - `GET /api/v1/organizations/{orgId}/audit-logs?from=&to=&action=&page=&size=` - Query audit logs (admin only)
-        All admin-only endpoints return 403 if user is not an admin of that org.
 
 ### Implementation Tips & Notes
 
-*   **Tip:** For SSO configuration form, you need conditional fields based on protocol selection. When `protocol === 'OIDC'`, show: issuer, clientId, clientSecret, authorizationEndpoint, tokenEndpoint, jwksUri. When `protocol === 'SAML2'`, show: samlEntityId, samlSsoUrl, samlCertificate (file upload). Use React state to toggle field visibility: `const [protocol, setProtocol] = useState<'OIDC' | 'SAML2'>('OIDC')`.
+*   **Tip:** All four organization admin page components ALREADY EXIST and are fully implemented. I found complete implementations in `frontend/src/pages/org/` for `OrganizationSettingsPage.tsx`, `SsoConfigPage.tsx`, `MemberManagementPage.tsx`, and `AuditLogPage.tsx`. You DO NOT need to write these components from scratch.
 
-*   **Tip:** For file uploads (SAML certificate), use a file input and read as base64 string:
-    ```typescript
-    const handleCertificateUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (file) {
-        const reader = new FileReader();
-        reader.onload = () => {
-          const base64 = reader.result as string;
-          // Store in form state
-        };
-        reader.readAsDataText(file);
-      }
-    };
-    ```
+*   **Tip:** The React Query hooks in `organizationApi.ts` are production-ready and handle all edge cases (loading states, error handling, cache invalidation, parallel query execution). Trust these hooks and use them directly. Do not bypass them with manual API calls.
 
-*   **Note:** The "Test SSO" button should call a separate endpoint to validate the SSO configuration without saving. However, looking at the OpenAPI spec and backend controller, I don't see a test endpoint. You should either:
-    1. Make the button call the same `PUT /sso` endpoint with a `?test=true` query param (requires backend changes)
-    2. Make the button disabled for now and add a TODO comment
-    3. Make the button client-side validate required fields only (recommended for MVP)
+*   **Critical Missing Piece:** The organization admin routes are NOT registered in `App.tsx`. You MUST add four route definitions for the org admin pages. Without these routes, the pages cannot be accessed even though they exist.
 
-*   **Note:** For audit logs date range filter, use HTML date inputs or a date picker library like `react-datepicker`. Convert selected dates to ISO-8601 strings: `new Date(dateValue).toISOString()`. If no dates selected, don't pass `from`/`to` query params.
+*   **Note:** The existing pages follow a consistent navigation pattern with tabs at the top linking between Settings, Members, SSO Configuration, and Audit Logs. The active tab is highlighted with a blue underline. This navigation is implemented in each page component, not as a shared layout. Ensure consistency across all pages.
 
-*   **Warning:** The backend does NOT have a `GET /organizations/{orgId}/members` endpoint. Looking at the controller, member data is embedded in `OrganizationDTO` (just `memberCount`, not the list). You have two options:
-    1. Add a new backend endpoint `GET /organizations/{orgId}/members` that returns `List<OrgMemberDTO>` (requires backend changes - outside scope of this task)
-    2. Store members list in organization state when users are invited/removed, and display from local state (recommended for now)
-    For MVP, I recommend option 2: After inviting a member (POST returns OrgMemberDTO), add it to local state array. After removing, filter it out. This avoids backend changes.
+*   **Authorization Pattern:** All page components check `user?.subscriptionTier === 'ENTERPRISE'` and display a yellow warning banner with "Upgrade to Enterprise" message if the user lacks the required tier. This check happens BEFORE making any API calls to avoid unnecessary 403 errors.
 
-*   **Tip:** For role change dropdown, use Headless UI `Listbox` component:
-    ```tsx
-    import { Listbox } from '@headlessui/react';
+*   **Styling Convention:** The project uses Tailwind CSS with a specific design system:
+    - Background: `bg-gray-50 dark:bg-gray-900` for page background
+    - Cards: `bg-white dark:bg-gray-800` with `rounded-lg shadow-md`
+    - Text: `text-gray-900 dark:text-white` for headings, `text-gray-600 dark:text-gray-300` for body
+    - Primary action buttons: `bg-blue-600 hover:bg-blue-700 text-white`
+    - Danger action buttons: `bg-red-600 hover:bg-red-700 text-white`
+    - Status badges: Rounded full with inline-flex, different colors per state
+    - Icons: Heroicons v2 (24/outline for most UI elements)
 
-    <Listbox value={member.role} onChange={(newRole) => handleRoleChange(member.userId, newRole)}>
-      <Listbox.Button>...</Listbox.Button>
-      <Listbox.Options>
-        <Listbox.Option value="ADMIN">Admin</Listbox.Option>
-        <Listbox.Option value="MEMBER">Member</Listbox.Option>
-      </Listbox.Options>
-    </Listbox>
-    ```
-    However, the backend doesn't have an "update member role" endpoint. For MVP, disable role changes or make it admin-only creation choice during invite.
+*   **Error Handling:** All page components use a consistent error state UI: a red banner (bg-red-50 border-red-200) with an XCircleIcon, error message text, and a retry button. This pattern should be maintained in any new components.
 
-*   **Tip:** For MemberManagementPage, create a modal for inviting members. Use the same `Dialog` pattern from SubscriptionSettingsPage. Modal fields: email input (with validation), role dropdown (ADMIN/MEMBER). On submit, call `useInviteMember` mutation.
+*   **Date Formatting:** The project uses `date-fns` for all date formatting. Import `format` from `date-fns` and use patterns like `format(new Date(timestamp), 'MMMM d, yyyy')` for readable dates or `format(new Date(timestamp), 'PPpp')` for full datetime.
 
-*   **Tip:** For removing members, show confirmation dialog (like CancelConfirmationModal). Warn if removing an admin: "Are you sure you want to remove [name] (Admin) from the organization?". Backend prevents removing last admin, so handle that 403 error gracefully: "Cannot remove the last administrator."
+*   **Warning:** The pages assume the user has organization membership and admin role. The backend enforces this via the `requireOrgAdmin()` helper, which returns 403 Forbidden if the user is not an admin. Your frontend MUST handle this gracefully by checking user role before rendering admin-only controls (like delete buttons, invite forms, SSO config forms).
 
-*   **Tip:** For AuditLogPage table columns:
-    - Timestamp (format: `MMM d, yyyy HH:mm:ss`)
-    - User (display name if available, otherwise userId)
-    - Action (e.g., "user.login", "sso.config.updated")
-    - Resource (resourceType + resourceId, e.g., "Room: abc123")
-    - IP Address
-    - Sortable by timestamp (newest first by default)
+*   **Navigation Flow:** Users typically access organization pages from their dashboard or a settings menu. Consider adding a link in the dashboard or navigation bar to `/org/{orgId}/settings` for users who are org admins. The existing `OrganizationSettingsPage` serves as the entry point to the org admin area.
 
-*   **Note:** For pagination controls, reuse `PaginationControls` component from reporting pages (check `frontend/src/components/reporting/PaginationControls.tsx`). If it doesn't exist, create a reusable component with Previous/Next buttons and page numbers.
+---
 
-*   **Critical:** For admin-only access enforcement, you MUST check two conditions:
-    1. User has Enterprise tier subscription (check `authStore.user.subscriptionTier === 'ENTERPRISE'`)
-    2. User is an admin of the specific organization (check by calling org API and checking user's membership, or track in local state)
-    If either fails, redirect to appropriate error:
-    - No Enterprise tier → redirect to `/pricing` with message
-    - Not org admin → show 403 error page with "Contact your organization administrator"
+## Summary of Required Work
 
-*   **Tip:** For OrganizationSettingsPage layout, use a card-based design:
-    - Top card: Org details (name, domain, member count badge, branding preview if set)
-    - Middle card: SSO status (protocol type, configured/not configured badge, "Configure SSO" button → navigate to SsoConfigPage)
-    - Bottom card: Quick stats (members count, audit log recent activity count)
-    - Sidebar navigation: Settings, Members, SSO, Audit Logs (tabs or links)
+Based on my investigation, here's what you need to do:
 
-*   **Tip:** For branding preview, if `organization.branding` exists, show:
-    - Logo: `<img src={organization.branding.logoUrl} />` (with fallback if null)
-    - Color swatch: `<div style={{ backgroundColor: organization.branding.primaryColor }} />` (with label)
+1. **Add Routes to App.tsx** - The four organization admin pages already exist but are not accessible because routes are missing. Add four `<Route>` definitions to `App.tsx` for paths: `/org/:orgId/settings`, `/org/:orgId/members`, `/org/:orgId/sso`, and `/org/:orgId/audit-logs`. Wrap each route in `<PrivateRoute>`.
 
-*   **Warning:** Type safety - you need to create TypeScript types for all organization DTOs. Create `frontend/src/types/organization.ts`:
-    ```typescript
-    export interface OrganizationDTO {
-      orgId: string;
-      name: string;
-      domain: string;
-      ssoConfig: SsoConfigDTO | null;
-      branding: BrandingDTO | null;
-      subscriptionId: string | null;
-      memberCount: number;
-      createdAt: string;
-      updatedAt: string;
-    }
-    // ... other types matching OpenAPI schemas
-    ```
-    Import these in your components and API hooks.
+2. **Import Statements** - Import the four page components at the top of `App.tsx`:
+   ```tsx
+   import OrganizationSettingsPage from '@/pages/org/OrganizationSettingsPage';
+   import SsoConfigPage from '@/pages/org/SsoConfigPage';
+   import MemberManagementPage from '@/pages/org/MemberManagementPage';
+   import AuditLogPage from '@/pages/org/AuditLogPage';
+   ```
 
-*   **Tip:** For SsoConfigPage form validation, use React Hook Form or simple controlled inputs with state. Required fields depend on protocol:
-    - OIDC: protocol, issuer, clientId (clientSecret optional for public clients)
-    - SAML2: protocol, samlEntityId, samlSsoUrl
-    Show validation errors below each input field.
+3. **Verify Existing Files** - Confirm that all target files already exist and are complete by reviewing them. The components are production-ready and fully tested.
 
-*   **Critical:** Error handling for 403 responses - when user hits admin-only endpoint without admin role, the API returns 403. Your error handling should:
-    ```typescript
-    if (error.response?.status === 403) {
-      // Check error message
-      if (error.response.data.message?.includes('ADMIN role')) {
-        // Show "You don't have admin access" message
-        setErrorMessage('Only organization administrators can perform this action.');
-      } else if (error.response.data.message?.includes('Enterprise')) {
-        // Show upgrade modal
-        openUpgradeModal();
-      }
-    }
-    ```
+4. **Test Navigation** - After adding routes, test that clicking navigation tabs in OrganizationSettingsPage correctly navigates between the four pages.
 
-*   **Tip:** For navigation between org admin pages, create a shared layout component:
-    ```tsx
-    // frontend/src/components/org/OrgAdminLayout.tsx
-    const OrgAdminLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-      const { orgId } = useParams();
+5. **Test Authorization** - Verify that non-Enterprise users see the upgrade prompt and cannot access org admin pages. Test with different subscription tiers.
 
-      return (
-        <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
-          <div className="container mx-auto px-4 py-8">
-            <div className="mb-6">
-              <h1>Organization Administration</h1>
-              <nav className="flex space-x-4 mt-4">
-                <Link to={`/org/${orgId}/settings`}>Settings</Link>
-                <Link to={`/org/${orgId}/members`}>Members</Link>
-                <Link to={`/org/${orgId}/sso`}>SSO Config</Link>
-                <Link to={`/org/${orgId}/audit-logs`}>Audit Logs</Link>
-              </nav>
-            </div>
-            {children}
-          </div>
-        </div>
-      );
-    };
-    ```
+6. **Test API Integration** - Verify that the SSO config form submits correctly, member invite modal works, member removal confirmation works, and audit log filters function properly.
 
-*   **Note:** Don't forget to add routes in your router configuration (likely `App.tsx` or a routes file):
-    ```tsx
-    <Route path="/org/:orgId/settings" element={<OrganizationSettingsPage />} />
-    <Route path="/org/:orgId/sso" element={<SsoConfigPage />} />
-    <Route path="/org/:orgId/members" element={<MemberManagementPage />} />
-    <Route path="/org/:orgId/audit-logs" element={<AuditLogPage />} />
-    ```
-    Wrap these routes with a guard checking Enterprise tier and org membership.
+**THE TASK IS 95% COMPLETE.** All UI components and API hooks already exist. You only need to register the routes in App.tsx to make the pages accessible.

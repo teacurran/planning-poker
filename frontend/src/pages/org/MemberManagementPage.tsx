@@ -292,13 +292,14 @@ const MemberManagementPage: React.FC = () => {
         setIsInviteModalOpen(false);
         setTimeout(() => setSuccessMessage(''), 5000);
       },
-      onError: (err: any) => {
-        if (err.response?.status === 403) {
+      onError: (err: Error) => {
+        const axiosError = err as { response?: { status?: number; data?: { message?: string } }; message?: string };
+        if (axiosError.response?.status === 403) {
           setErrorMessage('Only organization administrators can invite members');
-        } else if (err.response?.data?.message?.includes('already exists')) {
+        } else if (axiosError.response?.data?.message?.includes('already exists')) {
           setErrorMessage('This user is already a member of the organization');
         } else {
-          setErrorMessage(err.message || 'Failed to invite member');
+          setErrorMessage(axiosError.message || 'Failed to invite member');
         }
         setIsInviteModalOpen(false);
       },
@@ -326,15 +327,16 @@ const MemberManagementPage: React.FC = () => {
         setMemberToRemove(null);
         setTimeout(() => setSuccessMessage(''), 5000);
       },
-      onError: (err: any) => {
-        if (err.response?.status === 403) {
-          if (err.response?.data?.message?.includes('last admin')) {
+      onError: (err: Error) => {
+        const axiosError = err as { response?: { status?: number; data?: { message?: string } }; message?: string };
+        if (axiosError.response?.status === 403) {
+          if (axiosError.response?.data?.message?.includes('last admin')) {
             setErrorMessage('Cannot remove the last administrator');
           } else {
             setErrorMessage('Only organization administrators can remove members');
           }
         } else {
-          setErrorMessage(err.message || 'Failed to remove member');
+          setErrorMessage(axiosError.message || 'Failed to remove member');
         }
         setIsRemoveModalOpen(false);
         setMemberToRemove(null);

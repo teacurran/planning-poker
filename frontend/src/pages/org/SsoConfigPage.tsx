@@ -6,7 +6,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import {
-  BuildingOfficeIcon,
   ShieldCheckIcon,
   CheckCircleIcon,
   XCircleIcon,
@@ -112,14 +111,15 @@ const SsoConfigPage: React.FC = () => {
         setSuccessMessage('SSO configuration updated successfully');
         setTimeout(() => setSuccessMessage(''), 5000);
       },
-      onError: (err: any) => {
-        if (err.response?.status === 403) {
+      onError: (err: Error) => {
+        const axiosError = err as { response?: { status?: number }; message?: string };
+        if (axiosError.response?.status === 403) {
           setValidationErrors({
             submit: 'Only organization administrators can configure SSO',
           });
         } else {
           setValidationErrors({
-            submit: err.message || 'Failed to update SSO configuration',
+            submit: axiosError.message || 'Failed to update SSO configuration',
           });
         }
       },
