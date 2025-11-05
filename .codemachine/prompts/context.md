@@ -61,31 +61,14 @@ The following are the relevant sections from the architecture and plan documents
 - **Auto-scaling:** Kubernetes HPA based on CPU/memory and custom WebSocket connection metrics
 ```
 
-### Context: performance-testing (from 03_Verification_and_Glossary.md)
+### Context: key-assumptions (from 01_Context_and_Drivers.md)
 
 ```markdown
-**Scope:** Validate non-functional requirements (latency, throughput, scalability)
+### 1.4. Key Assumptions
 
-**Framework:** k6 (load testing), Apache JMeter (alternative)
-
-**Scenarios:**
-1. **Concurrent Sessions:** 500 rooms with 10 participants each (5,000 WebSocket connections)
-2. **Vote Storm:** All participants in 100 rooms vote within 10-second window
-3. **API Load:** 1,000 requests/second to REST endpoints (room creation, user queries)
-4. **Subscription Checkout:** 100 concurrent Stripe checkout sessions
-
-**Metrics:**
-- **Latency:** p50, p95, p99 for REST and WebSocket messages
-- **Throughput:** Requests per second, WebSocket messages per second
-- **Error Rate:** <1% errors under target load
-- **Resource Usage:** CPU, memory, database connections
-
-**Acceptance Criteria:**
-- p95 latency <200ms for WebSocket messages under 500-room load
-- p95 latency <500ms for REST API endpoints
-- No database connection pool exhaustion
-- Application auto-scales (HPA adds pods) under sustained load
-- Performance benchmarks documented in `docs/performance-benchmarks.md`
+1. **User Base:** Primary target is small to medium Agile teams (2-12 concurrent users per session), with peak concurrency of ~500 simultaneous sessions
+2. **Geographic Distribution:** Initial deployment targets North America and Europe with <100ms latency requirements within regions
+3. **Session Duration:** Average estimation session lasts 30-60 minutes with 10-20 estimation rounds
 ```
 
 ---
@@ -96,312 +79,175 @@ The following analysis is based on my direct review of the current codebase. Use
 
 ### Relevant Existing Code
 
+*   **File:** `scripts/load-test-voting.js`
+    *   **Summary:** This file contains a comprehensive k6 load test script for WebSocket voting scenarios. It tests 500 concurrent rooms with 10 participants each (5,000 WebSocket connections total). The script includes heartbeat handling, vote casting, message latency tracking, and custom metrics (ws_message_latency, vote_e2e_latency, ws_connection_success, message_errors).
+    *   **Recommendation:** This script is **ALREADY COMPLETE** and functional. You DO NOT need to recreate it. The script includes proper WebSocket lifecycle management (join, vote, heartbeat), latency measurement using pending request tracking, and comprehensive threshold definitions matching the NFRs (p95<200ms, connection success >99%, error rate <1%).
+    *   **Action Required:** You MUST execute this script and analyze the results. Use `k6 run scripts/load-test-voting.js` for full load or `k6 run -e VUS=500 -e ROOMS=50 scripts/load-test-voting.js` for scaled-down testing.
+
+*   **File:** `scripts/load-test-api.js`
+    *   **Summary:** This file contains a comprehensive k6 load test script for REST API scenarios including room creation, listing, participant management, and subscription checkout. It includes two main scenarios: `api_load` (ramping arrival rate up to 100 req/s) and `subscription_checkout` (100 checkouts per minute).
+    *   **Recommendation:** This script is **ALREADY COMPLETE** and functional. You DO NOT need to recreate it. The script includes proper custom metrics (room_creation_latency, subscription_checkout_latency), threshold definitions (p95<500ms for REST), and both individual endpoint tests and user journey tests.
+    *   **Action Required:** You MUST execute this script and analyze the results. Use `k6 run scripts/load-test-api.js` for full test.
+
+*   **File:** `scripts/analyze-database-performance.sql`
+    *   **Summary:** This file contains SQL queries for analyzing database performance including active connections, slow queries (using pg_stat_statements), most called queries, missing indexes, table bloat, and cache hit ratios.
+    *   **Recommendation:** This script is READY TO USE. You SHOULD run it against your database during and after load testing to identify bottlenecks.
+    *   **Action Required:** Execute with `psql -U scrum_poker -d scrum_poker_db -f scripts/analyze-database-performance.sql` to gather performance data.
+
+*   **File:** `scripts/analyze-redis-performance.sh`
+    *   **Summary:** This is a bash script that connects to Redis and extracts performance metrics including memory usage, connected clients, hit/miss ratio, command statistics, and slow log entries.
+    *   **Recommendation:** This script is READY TO USE for Redis monitoring during load tests.
+    *   **Action Required:** Execute `./scripts/analyze-redis-performance.sh` during load testing to capture Redis metrics.
+
+*   **File:** `scripts/README.md`
+    *   **Summary:** Comprehensive documentation for running k6 load tests, including prerequisites, environment variables, monitoring guidance, result analysis, troubleshooting steps, and a complete performance benchmarking workflow (7 steps: baseline → capture → analyze → optimize → validate → compare → document).
+    *   **Recommendation:** FOLLOW THIS GUIDE EXACTLY when executing load tests. It provides the complete workflow that you MUST follow to complete this task.
+    *   **Action Required:** Use this as your primary reference for test execution procedure.
+
 *   **File:** `backend/src/main/resources/application.properties`
-    *   **Summary:** This file contains the complete application configuration including database connection pooling, Redis settings, and logging configuration. Current settings:
-        - Database pool: `quarkus.datasource.reactive.max-size=${DB_POOL_MAX_SIZE:20}` (default 20 connections)
-        - Redis pool: `quarkus.redis.max-pool-size=${REDIS_POOL_MAX_SIZE:20}` (default 20 connections)
-        - No JVM heap size or GC tuning parameters currently configured
-    *   **Recommendation:** You MUST update this file to add JVM tuning parameters and potentially increase connection pool sizes for production load. For standard JVM mode (not native), JVM settings should be passed via environment variables or documented in deployment configurations. Add a comment section explaining recommended production JVM settings.
+    *   **Summary:** This file contains production-ready configuration with extensive documentation (394 lines). Key performance-related configurations already present:
+        - Database connection pool: `quarkus.datasource.reactive.max-size=20` with production notes recommending 50-100 (lines 17-20)
+        - Redis connection pool: `quarkus.redis.max-pool-size=20` with production notes recommending 50-100 (lines 55-56)
+        - HTTP thread pool: `quarkus.thread-pool.max-threads=200` (line 207)
+        - **JVM tuning parameters FULLY DOCUMENTED** in comments (lines 339-393) including:
+          * Heap size recommendations: `-Xms1g -Xmx1g`
+          * G1GC configuration: `-XX:+UseG1GC -XX:MaxGCPauseMillis=200`
+          * GC logging, metaspace, heap dump settings
+          * Kubernetes deployment YAML example with JAVA_OPTS
+          * Container memory limits (1.5GB)
+          * Performance monitoring guidance
+          * Scaling guidance for >10,000 connections
+    *   **Recommendation:** The configuration ALREADY INCLUDES comprehensive JVM tuning documentation. You DO NOT need to add JVM settings to this file - they are passed via JAVA_OPTS environment variable in Kubernetes/Docker. The documentation is complete (lines 339-393).
+    *   **Action Required:** Based on load test results, you may need to ADJUST the configurable parameters (DB_POOL_MAX_SIZE, REDIS_POOL_MAX_SIZE, QUARKUS_THREAD_POOL_MAX) via environment variables. Read the extensive production tuning comments already in the file. For local testing, set JAVA_OPTS before starting Quarkus.
 
-*   **File:** `backend/src/main/resources/db/migration/V3__create_indexes.sql`
-    *   **Summary:** This file contains comprehensive index definitions for all tables with 40+ indexes. Notable indexes include:
-        - `idx_vote_round_participant` covering index with INCLUDE clause for vote aggregation during reveal
-        - `idx_vote_round_voted` covering index ordered by voted_at with card_value included
-        - `idx_room_owner_created` for user's room queries with partial index WHERE deleted_at IS NULL
-        - Partitioned table indexes for SessionHistory and AuditLog
-        - Comprehensive indexes for all foreign key relationships
-    *   **Recommendation:** These indexes are already well-designed for the current schema. You SHOULD run EXPLAIN ANALYZE on critical queries (vote reveal, room listing, participant lookup) to verify they are being used effectively. Focus particularly on queries that may cause N+1 issues or sequential scans. The indexes appear complete, so you likely won't need to add new ones unless testing reveals specific bottlenecks.
-
-*   **File:** `backend/src/main/java/com/scrumpoker/repository/VoteRepository.java`
-    *   **Summary:** Contains reactive Panache repository with custom finder methods. Key query patterns:
-        - `findByRoundId()`: **CRITICAL PATH** for vote reveal - uses `round.roundId = ?1 order by votedAt`
-        - `findByRoomIdAndRoundNumber()`: Alternative query with room + round number
-        - `findByRoundIdAndParticipantId()`: Used for duplicate vote detection (upsert logic)
-        - All methods return reactive types (Uni<>, Multi<>) for non-blocking I/O
-    *   **Recommendation:** You MUST use EXPLAIN ANALYZE on the `findByRoundId()` query under load to verify the `idx_vote_round_voted` covering index is being used. The query should show "Index Scan using idx_vote_round_voted" or ideally "Index Only Scan". If you see "Seq Scan", there's a problem with query planning. The covering index includes card_value, so the query should be fully satisfied from the index without table access.
-
-*   **File:** `backend/src/main/java/com/scrumpoker/api/websocket/RoomWebSocketHandler.java`
-    *   **Summary:** WebSocket endpoint implementation managing connection lifecycle, heartbeat protocol, and message routing. Key characteristics:
-        - JWT authentication on connection
-        - Heartbeat interval: 30 seconds, timeout: 60 seconds (constants defined at lines 65-66)
-        - Join timeout: 10 seconds (line 64) - sessions must send room.join.v1 or be disconnected
-        - Uses ConnectionRegistry for thread-safe session management
-        - Scheduled cleanup tasks for stale connections and pending joins
-        - All handlers use reactive patterns with Uni/Multi
-    *   **Recommendation:** This is a **CRITICAL PERFORMANCE HOTSPOT**. Under 5,000 concurrent WebSocket connections, the heartbeat scheduled tasks will execute frequently. You SHOULD monitor:
-        1. The number of active sessions in ConnectionRegistry during load testing
-        2. The execution time of scheduled cleanup tasks (heartbeat checks, join timeouts)
-        3. CPU usage spikes correlating with heartbeat intervals
-        If heartbeat overhead is too high, consider increasing intervals: heartbeat to 60s, timeout to 120s. This reduces overhead at the cost of slower stale connection detection.
-
-*   **File:** `backend/pom.xml`
-    *   **Summary:** Maven POM with Quarkus 3.15.1 and all reactive extensions. Java 17 target. Notable dependencies:
-        - quarkus-hibernate-reactive-panache (reactive database)
-        - quarkus-reactive-pg-client (non-blocking PostgreSQL)
-        - quarkus-redis-client (reactive Redis)
-        - quarkus-websockets (WebSocket support)
-        - quarkus-micrometer & quarkus-micrometer-registry-prometheus (metrics)
-        - quarkus-smallrye-fault-tolerance (circuit breakers, retry)
-    *   **Recommendation:** All necessary dependencies are present for production workload. You do NOT need to add k6 as a dependency (it's a standalone CLI tool). Ensure builds use `-Dquarkus.package.type=uber-jar` for simplified containerization. For JVM tuning, you'll document the recommended JAVA_OPTS environment variables rather than changing POM configuration.
+*   **File:** `docs/performance-benchmarks.md`
+    *   **Summary:** This document (currently 430+ lines) provides a comprehensive template for performance testing results with sections for executive summary, test environment, baseline results, bottleneck analysis, optimizations applied, validation results, and production recommendations. Currently contains placeholders marked "[To be filled after testing]" and a "Testing Status" section noting scripts are created but actual tests need to be run.
+    *   **Recommendation:** This document structure is COMPLETE and ready for you to populate with actual test results. The template already includes all necessary sections.
+    *   **Action Required:** You MUST fill in the placeholder sections with your actual test results, including hardware specs, software versions, baseline metrics, identified bottlenecks, optimizations applied, and validation results.
 
 ### Implementation Tips & Notes
 
-*   **Tip #1 - k6 Script Structure:** The directory `scripts/` does not currently exist. You MUST create it to store the k6 load test scripts. k6 uses JavaScript (ES6+ modules) with k6-specific APIs. For WebSocket testing, import the `ws` module. Example structure:
-    ```javascript
-    import http from 'k6/http';
-    import ws from 'k6/ws';
-    import { check } from 'k6';
+*   **Tip #1 - Load Test Scripts Are Complete:** The project has **ALREADY** created production-grade load test scripts (`load-test-voting.js`, `load-test-api.js`) with proper metrics, thresholds, comprehensive testing documentation (`scripts/README.md`), and analysis scripts (`analyze-database-performance.sql`, `analyze-redis-performance.sh`). You DO NOT need to write new test scripts from scratch. Your focus should be on EXECUTING the existing scripts, ANALYZING the results, and OPTIMIZING based on findings.
 
-    export let options = {
-      scenarios: {
-        voting_load: {
-          executor: 'ramping-vus',
-          startVUs: 0,
-          stages: [
-            { duration: '2m', target: 500 },  // ramp up to 500 VUs
-            { duration: '5m', target: 500 },  // sustain 500 VUs
-            { duration: '1m', target: 0 }     // ramp down
-          ]
-        }
-      },
-      thresholds: {
-        'ws_message_duration': ['p(95)<200'],  // p95 < 200ms
-        'http_req_duration': ['p(95)<500'],    // p95 < 500ms
-        'http_req_failed': ['rate<0.01']       // <1% error rate
-      }
-    };
-    ```
+*   **Tip #2 - Follow the 7-Step Workflow:** The `scripts/README.md` file (lines 229-273) documents a complete 7-step workflow you MUST follow:
+    1. **Baseline Test**: Run k6 scripts with current configuration, output to JSON files
+    2. **Capture Metrics**: Save k6 output, take Grafana screenshots, run database/Redis analysis scripts
+    3. **Analyze Bottlenecks**: Review latency percentiles, identify errors, check resource utilization, run EXPLAIN ANALYZE on slow queries
+    4. **Apply Optimizations**: Increase pool sizes, add indexes if needed, tune JVM settings
+    5. **Validation Test**: Re-run k6 scripts with optimized configuration
+    6. **Compare Results**: Before/after comparison of latency, error rate, resource utilization
+    7. **Document**: Update docs/performance-benchmarks.md with all findings
 
-*   **Tip #2 - WebSocket k6 Pattern:** For voting scenario, each VU (virtual user) should:
-    1. **Authenticate:** POST to `/api/v1/auth/...` to obtain JWT token (or use a pre-generated test token)
-    2. **Connect WebSocket:** `ws.connect('ws://localhost:8080/ws/room/{roomId}?token={jwt}', ...)`
-    3. **Send join message:** Within 10 seconds, send `{"type": "room.join.v1", "requestId": "...", "payload": {...}}`
-    4. **Cast votes:** Send `vote.cast.v1` messages at regular intervals
-    5. **Measure latency:** Track time from sending vote to receiving `vote.recorded.v1` event
-    6. **Handle disconnection:** Test reconnection logic
+*   **Tip #3 - System Prerequisites:** Before running load tests, you MUST ensure (from `scripts/README.md`):
+    1. k6 is installed (`brew install k6` on macOS)
+    2. File descriptor limits are raised: `ulimit -n 65536`
+    3. Application is running and healthy: `curl http://localhost:8080/q/health/ready`
+    4. PostgreSQL has pg_stat_statements extension: `CREATE EXTENSION IF NOT EXISTS pg_stat_statements;`
+    5. Grafana dashboards from I8.T2 are accessible for real-time monitoring
 
-*   **Tip #3 - Database Query Analysis Process:** To identify slow queries, use this workflow:
-    1. Enable query logging: Set `%dev.quarkus.hibernate-orm.log.sql=true` (already configured in application.properties line 257)
-    2. Run load test and capture slow query logs
-    3. For each slow query, run EXPLAIN ANALYZE in PostgreSQL:
-       ```sql
-       EXPLAIN (ANALYZE, BUFFERS)
-       SELECT * FROM vote WHERE round_id = 'some-uuid' ORDER BY voted_at;
-       ```
-    4. Look for:
-       - "Seq Scan" (bad - means index not used)
-       - "Index Scan" or "Index Only Scan" (good)
-       - "Buffers: shared hit=" with high hit rate (good cache utilization)
-       - Actual execution time should be <10ms for indexed queries
-    5. If Seq Scan is found, investigate: is the index present? Is query written correctly? Are statistics up to date (`ANALYZE` command)?
-
-*   **Tip #4 - Redis Monitoring Commands:** During load testing, monitor Redis performance with these commands:
-    ```
-    INFO stats          # Get hit/miss ratio, total commands
-    INFO memory         # Memory usage, fragmentation
-    INFO clients        # Connected clients count
-    SLOWLOG GET 10      # Recent slow commands
-    ```
-    You want to see:
-    - Hit rate >90% (keyspace_hits / (keyspace_hits + keyspace_misses))
-    - Memory usage stable and not near maxmemory
-    - No commands in slowlog taking >100ms
-
-*   **Tip #5 - Connection Pool Sizing Formula:** For database connection pool sizing under high load:
-    - **Formula:** `pool_size = Tn × (Cm - 1) + 1` where Tn = number of CPU cores, Cm = number of concurrent requests
-    - **Simplified for reactive:** Since reactive queries are non-blocking, you need fewer connections than in blocking model. Start with `2 × num_cores + effective_parallelism`.
-    - **For this workload:** With 500 concurrent rooms and 10 participants = 5,000 connections. During vote reveal, assume 10% of participants vote simultaneously = 500 queries. With avg query time 10ms (0.01s), you need ~5-10 connections for steady state. However, for burst traffic (all 5,000 vote at once), increase to 50-100 connections to buffer the spike.
-    - **Current setting:** 20 connections is probably too low. Try 50-100 for load testing.
-
-*   **Tip #6 - JVM Tuning Recommendations:** For production Quarkus application with 5,000 WebSocket connections:
-    - **Heap Size:** 1GB minimum (`-Xms1g -Xmx1g`). With 5,000 connections, estimate ~200KB per connection = 1GB for connection state alone, plus application objects.
-    - **GC Algorithm:** G1GC is recommended for large heaps (`-XX:+UseG1GC`). Set max GC pause target: `-XX:MaxGCPauseMillis=200` (200ms).
-    - **GC Logging:** Enable for troubleshooting: `-Xlog:gc*:file=/tmp/gc.log:time:filecount=5,filesize=10M`
-    - **Thread Pool:** Quarkus manages worker threads automatically, but you can tune: `-Dquarkus.thread-pool.core-threads=8 -Dquarkus.thread-pool.max-threads=200`
-    - **Document these in application.properties comments or in docs/performance-benchmarks.md under "JVM Configuration" section.**
-
-*   **Tip #7 - k6 Script Environment Variables:** Make your k6 scripts configurable via environment variables so they can run against different environments:
-    ```javascript
-    const BASE_URL = __ENV.BASE_URL || 'http://localhost:8080';
-    const WS_URL = __ENV.WS_URL || 'ws://localhost:8080';
-    const VUS = __ENV.VUS || '500';
-    const DURATION = __ENV.DURATION || '5m';
-    ```
-    Run with: `k6 run -e BASE_URL=http://staging.example.com -e VUS=100 scripts/load-test-voting.js`
-
-*   **Tip #8 - File Descriptor Limits:** k6 creating 5,000 WebSocket connections will require 5,000+ file descriptors (each socket is a file descriptor on Unix). On macOS/Linux, the default limit is often 256 or 1024. You MUST increase it before running tests:
+*   **Tip #4 - Start with Scaled-Down Testing:** For local testing, the full 5,000 WebSocket connection load may overwhelm your development machine. The scripts support environment variables for scaling down:
     ```bash
-    ulimit -n 65536  # Increase to 65,536 for current shell session
+    # Run with 50 rooms instead of 500 (500 connections instead of 5,000)
+    k6 run -e VUS=500 -e ROOMS=50 scripts/load-test-voting.js
     ```
-    For permanent change on Linux, edit `/etc/security/limits.conf`:
+    Start small, verify it works, then scale up gradually.
+
+*   **Tip #5 - Database Connection Pool Sizing:** The current default (20 connections) is documented as too small for production load. The application.properties comments (lines 13-16) recommend 50-100 connections for sustained load with 5,000 concurrent WebSocket connections. Set via environment variable:
+    ```bash
+    export DB_POOL_MAX_SIZE=50
+    ./mvnw quarkus:dev
     ```
-    * soft nofile 65536
-    * hard nofile 65536
+
+*   **Tip #6 - Redis Connection Pool Sizing:** Similarly, the Redis pool default (20) is too small. Comments (lines 52-55) recommend 50-100 connections. Set via environment variable:
+    ```bash
+    export REDIS_POOL_MAX_SIZE=50
     ```
 
-*   **Warning #1 - Local Testing Limitations:** Running load tests generating 5,000 WebSocket connections on a local development machine may not give accurate results. The machine itself may become the bottleneck (CPU, network, file descriptors). For reliable performance testing, you SHOULD:
-    - **Option A:** Run load tests from a separate machine with higher specs
-    - **Option B:** Deploy application to staging environment (Kubernetes cluster) and run tests against it
-    - **Option C:** Scale down test parameters for local testing (e.g., 100 rooms instead of 500) and extrapolate results
-
-*   **Warning #2 - Redis Pub/Sub Bottleneck:** With Redis Pub/Sub broadcasting messages to 5,000 clients across multiple application nodes, Redis itself can become a bottleneck. Monitor Redis CPU usage during tests. If Redis CPU saturates at 100%, consider:
-    - Using Redis cluster mode for horizontal scaling
-    - Reducing message payload sizes
-    - Batching message broadcasts where possible
-
-*   **Warning #3 - PostgreSQL Connection Exhaustion:** Even with connection pooling, under extreme load you might see "FATAL: sorry, too many clients already" errors from PostgreSQL. This means the database max_connections limit is reached. Default PostgreSQL max_connections is 100. With multiple application pods, each with a pool of 50-100 connections, you could easily exceed this. Solutions:
-    - Increase PostgreSQL max_connections (requires database restart): `max_connections = 300`
-    - Use PgBouncer connection pooler in transaction mode (more complex setup)
-    - Reduce per-pod connection pool size (trade-off: may increase query queuing delays)
-
-*   **Note #1 - Existing Indexes Are Comprehensive:** After reviewing V3__create_indexes.sql, I can confirm the indexing strategy is already comprehensive. The file contains 40+ indexes covering:
-    - All foreign key relationships
-    - All WHERE clause filters (privacy_mode, deleted_at, status, etc.)
-    - All ORDER BY columns
-    - Covering indexes with INCLUDE clauses for vote and room queries
-    - Partial indexes for active records (WHERE deleted_at IS NULL)
-    Unless EXPLAIN ANALYZE reveals specific sequential scans, you likely won't need to add new indexes. Your focus should be on verifying they are being used.
-
-*   **Note #2 - Redis Pipelining Opportunity:** The codebase uses Redis for Pub/Sub (RoomEventPublisher) and presumably for session caching. I haven't seen explicit pipelining usage in the code. For batch operations (e.g., fetching multiple session states), pipelining can reduce latency. Example with Quarkus Redis client:
-    ```java
-    redisAPI.batch(Arrays.asList(
-        Request.cmd(Command.GET).arg("key1"),
-        Request.cmd(Command.GET).arg("key2"),
-        Request.cmd(Command.GET).arg("key3")
-    ))
+*   **Tip #7 - JVM Configuration for Local Testing:** The JVM tuning is documented in application.properties lines 339-393. For local testing, set JAVA_OPTS before starting the application:
+    ```bash
+    export JAVA_OPTS="-Xms1g -Xmx1g -XX:+UseG1GC -XX:MaxGCPauseMillis=200"
+    ./mvnw quarkus:dev
     ```
-    If you identify batch Redis operations during analysis, add pipelining as an optimization.
 
-*   **Note #3 - Performance Benchmarks Document Structure:** The task requires documenting results in `docs/performance-benchmarks.md`. This document MUST include:
-    1. **Test Environment:**
-       - Hardware specs (CPU cores, RAM, disk type)
-       - Software versions (Quarkus, PostgreSQL, Redis versions)
-       - Deployment configuration (local, staging, production-like)
-    2. **Test Scenarios:**
-       - Description of each scenario (VUs, duration, ramp-up)
-       - k6 command used to execute
-    3. **Results Tables:**
-       - Scenario | p50 | p95 | p99 | RPS | Error Rate | Resource Utilization
-       - One table per scenario (voting, API, checkouts)
-    4. **Bottleneck Analysis:**
-       - What components were bottlenecks? (DB, Redis, CPU, network?)
-       - Evidence (metrics, logs, profiler output)
-    5. **Optimizations Applied:**
-       - Before/after comparison for each optimization
-       - Specific configuration changes made
-    6. **Recommendations:**
-       - Production configuration recommendations
-       - Scaling guidance (when to add pods, when to scale DB)
+*   **Warning #1 - Local Testing Limitations:** Running load tests generating 5,000 WebSocket connections on a local development machine may not give accurate results. The machine itself may become the bottleneck. For reliable performance testing, you SHOULD either:
+    - **Option A:** Run load tests from a separate machine
+    - **Option B:** Deploy to staging environment and test against it
+    - **Option C:** Scale down test parameters for local testing and extrapolate results (this is acceptable for this task)
 
-*   **Note #4 - Monitoring During Load Tests:** You SHOULD have Grafana dashboards (from I8.T2) open during load testing to observe:
-    - Application Overview dashboard: request rate, error rate, latency trends
-    - WebSocket Metrics dashboard: connection count, message throughput
-    - Business Metrics dashboard: active sessions, voting activity
-    - Infrastructure dashboard: pod CPU/memory, DB connection pool, Redis metrics
-    This real-time monitoring helps identify bottlenecks as they occur.
+*   **Warning #2 - Database Indexes Already Comprehensive:** The migration file `V3__create_indexes.sql` already contains 40+ indexes covering all foreign keys, WHERE clauses, ORDER BY columns, and covering indexes. Unless EXPLAIN ANALYZE reveals specific sequential scans during load testing, you likely won't need to add new indexes. The existing indexes are well-designed.
 
-### Implementation Strategy
+*   **Warning #3 - Monitoring Is Essential:** During load testing, you MUST monitor in real-time using:
+    - Grafana dashboards (from I8.T2) showing application metrics
+    - k6 console output showing VUs, request rate, latency, errors
+    - `scripts/analyze-database-performance.sql` for database metrics
+    - `scripts/analyze-redis-performance.sh` for Redis metrics
 
-Follow this phased approach to complete the task:
+    This allows you to identify bottlenecks as they occur.
 
-**Phase 1: Setup & Preparation**
-1. Create `scripts/` directory
-2. Write k6 script for Scenario 1 (voting load)
-3. Write k6 script for Scenario 2 (API load)
-4. Write k6 script for Scenario 3 (WebSocket reconnection storm)
-5. Increase local file descriptor limits if testing locally
-6. Verify Grafana dashboards are accessible for monitoring
+*   **Note #1 - Scenario 3 Missing:** The task description mentions "scenario 3 (WebSocket reconnection storm)" but this script does NOT currently exist in `scripts/`. The existing scripts only cover voting load and API load. You may need to create a third script testing reconnection behavior, or acknowledge that only scenarios 1 and 2 are covered by the existing comprehensive scripts.
 
-**Phase 2: Baseline Testing**
-1. Run Scenario 1 at 10% scale (50 rooms, 500 connections) to validate script works
-2. Run Scenario 1 at full scale (500 rooms, 5,000 connections)
-3. Run Scenario 2 (API load)
-4. Run Scenario 3 (reconnection storm)
-5. Capture baseline metrics (p50, p95, p99, error rates, resource utilization)
-6. Save k6 JSON output and Grafana screenshots
+*   **Note #2 - Performance Benchmarks Template Complete:** The `docs/performance-benchmarks.md` file already has a complete structure with:
+    - Executive Summary section with NFR targets listed
+    - Testing Status section noting scripts are created
+    - Test Environment section with placeholders
+    - Test Scenarios, Baseline Results, Bottleneck Analysis, Optimizations, Validation, Production Recommendations sections
+    - Your task is to EXECUTE the tests and POPULATE the placeholders with actual results.
 
-**Phase 3: Analysis & Optimization**
-1. Analyze results: identify bottlenecks (CPU? DB? Redis? Network?)
-2. Run EXPLAIN ANALYZE on slow database queries
-3. Check Redis INFO stats for cache hit rate
-4. Review application logs for errors or warnings
-5. Apply optimizations based on findings:
-   - Increase connection pool sizes if exhaustion detected
-   - Add JVM tuning if memory issues found
-   - Optimize queries if slow queries identified
-   - Adjust heartbeat intervals if WebSocket overhead is high
-6. Document each optimization applied
+*   **Note #3 - Authentication Simplification:** Both k6 scripts include comments about authentication being simplified for load testing (lines 131-149 in load-test-voting.js, lines 123-127 in load-test-api.js). The scripts currently use a placeholder test token or skip auth. For more realistic testing, you may want to:
+    - Create a test endpoint that issues JWT tokens without full OAuth flow
+    - OR pre-generate valid JWT tokens and use them in tests
+    - OR accept that authentication overhead isn't included in the performance baseline
 
-**Phase 4: Validation & Documentation**
-1. Re-run load tests after optimizations
-2. Compare before/after metrics
-3. Verify acceptance criteria met (p95 latencies, no pool exhaustion, etc.)
-4. Create `docs/performance-benchmarks.md` with full report
-5. Update application.properties with comments about production tuning
-6. Commit changes (k6 scripts, config updates, documentation)
+*   **Note #4 - Redis Hit Rate Measurement:** The acceptance criteria require "Redis hit rate >90% for session cache". However, the current application primarily uses Redis for Pub/Sub (WebSocket events) and refresh token storage, not traditional session caching. The hit rate metric may not be directly applicable. You should clarify what "session cache" means in this context or measure hit rate for refresh token lookups.
+
+### Expected Bottlenecks & Optimization Path
+
+Based on the architecture and configuration, here's the likely optimization path you'll follow:
+
+1. **First Run (Baseline)**: Likely failures due to connection pool exhaustion
+   - **Symptom**: "FATAL: sorry, too many clients already" from PostgreSQL
+   - **Fix**: Increase DB_POOL_MAX_SIZE from 20 to 50-100
+   - **Fix**: Increase REDIS_POOL_MAX_SIZE from 20 to 50-100
+
+2. **Second Run**: May see memory pressure or GC pauses
+   - **Symptom**: High GC pause times in logs, or heap exhaustion
+   - **Fix**: Set JAVA_OPTS with proper heap size (-Xms1g -Xmx1g)
+   - **Fix**: Enable G1GC with MaxGCPauseMillis=200
+
+3. **Third Run**: May see slow database queries
+   - **Symptom**: p95 latency >200ms for WebSocket messages
+   - **Fix**: Run EXPLAIN ANALYZE on slow queries
+   - **Fix**: Verify indexes are being used (should already be present)
+
+4. **Final Validation**: All thresholds should pass
+   - p95 latency <200ms for WebSocket
+   - p95 latency <500ms for REST API
+   - No connection pool exhaustion
+   - Stable memory usage
 
 ### Acceptance Criteria Checklist
 
 Before marking this task complete, verify:
-- [ ] All three k6 scenarios created and executable
-- [ ] Baseline tests run and results captured (JSON + screenshots)
-- [ ] Database EXPLAIN ANALYZE performed on critical queries (vote reveal, room list)
-- [ ] Connection pool sizes reviewed and optimized if needed
-- [ ] JVM settings documented in application.properties or deployment docs
-- [ ] Load test achieves 500 concurrent sessions (or scaled equivalent)
-- [ ] p95 latency <200ms for WebSocket messages under load
-- [ ] p95 latency <500ms for REST API endpoints under load
-- [ ] Database connection pool doesn't exhaust (no "too many clients" errors)
-- [ ] Redis hit rate >90% for session cache (from INFO stats)
-- [ ] No memory leaks (heap usage stable during sustained load, check via JVM metrics)
-- [ ] Performance benchmarks document created with:
-   - [ ] Test environment specifications
+- [ ] k6 load-test-voting.js executed successfully (or scaled-down equivalent)
+- [ ] k6 load-test-api.js executed successfully
+- [ ] Baseline test results captured (k6 JSON output saved)
+- [ ] Database performance analyzed (analyze-database-performance.sql run)
+- [ ] Redis performance analyzed (analyze-redis-performance.sh run)
+- [ ] Bottlenecks identified and documented
+- [ ] Optimizations applied (connection pools, JVM settings, etc.)
+- [ ] Validation tests run after optimizations
+- [ ] Before/after comparison documented
+- [ ] docs/performance-benchmarks.md populated with:
+   - [ ] Test environment specifications (hardware, software versions)
    - [ ] All scenario descriptions
-   - [ ] Results tables with latencies, throughput, error rates
-   - [ ] Bottleneck analysis section
-   - [ ] Optimizations applied with before/after comparison
-   - [ ] Production recommendations
-
-### Quick Reference: Common k6 WebSocket Pattern
-
-```javascript
-import ws from 'k6/ws';
-import { check } from 'k6';
-
-export default function() {
-  const url = 'ws://localhost:8080/ws/room/ABC123?token=jwt_token_here';
-  const res = ws.connect(url, null, function(socket) {
-    socket.on('open', () => {
-      console.log('Connected');
-      // Must send join message within 10 seconds
-      socket.send(JSON.stringify({
-        type: 'room.join.v1',
-        requestId: 'req-' + Date.now(),
-        payload: { displayName: 'Test User', role: 'VOTER' }
-      }));
-    });
-
-    socket.on('message', (data) => {
-      const msg = JSON.parse(data);
-      check(msg, { 'received valid message': (m) => m.type !== undefined });
-    });
-
-    socket.on('close', () => console.log('Disconnected'));
-    socket.on('error', (e) => console.error('Error:', e));
-
-    // Cast a vote after joining
-    socket.setTimeout(() => {
-      socket.send(JSON.stringify({
-        type: 'vote.cast.v1',
-        requestId: 'vote-' + Date.now(),
-        payload: { cardValue: '5' }
-      }));
-    }, 1000);
-
-    // Keep connection open for 60 seconds
-    socket.setTimeout(() => socket.close(), 60000);
-  });
-
-  check(res, { 'status is 101': (r) => r && r.status === 101 });
-}
-```
+   - [ ] Baseline results tables (latencies, throughput, error rates)
+   - [ ] Bottleneck analysis section completed
+   - [ ] Optimizations applied with before/after metrics
+   - [ ] Production configuration recommendations
+- [ ] Acceptance criteria validated:
+   - [ ] Load test achieves 500 concurrent sessions (or proportional scaled version)
+   - [ ] p95 latency <200ms for WebSocket messages
+   - [ ] p95 latency <500ms for REST API endpoints
+   - [ ] No database connection pool exhaustion
+   - [ ] No memory leaks (heap usage stable)
+   - [ ] Redis hit rate >90% (if applicable) or caveat documented

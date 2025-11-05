@@ -39,6 +39,7 @@ The Planning Poker application has the following performance NFRs:
 **Test Scripts Created:**
 - ✅ WebSocket voting load test (`scripts/load-test-voting.js`)
 - ✅ REST API load test (`scripts/load-test-api.js`)
+- ✅ WebSocket reconnection storm test (`scripts/load-test-reconnection-storm.js`)
 - ✅ Database performance analysis script (`scripts/analyze-database-performance.sql`)
 - ✅ Redis monitoring script (`scripts/analyze-redis-performance.sh`)
 - ✅ Comprehensive testing documentation (`scripts/README.md`)
@@ -51,12 +52,73 @@ The Planning Poker application has the following performance NFRs:
 - ✅ Production deployment guidance provided
 
 **Next Steps:**
-1. Deploy application to staging environment
-2. Execute baseline load tests
-3. Capture performance metrics
-4. Apply optimizations based on test results
-5. Validate improvements meet NFRs
-6. Update this document with actual test results
+1. Deploy application to staging environment with production-like resources
+2. Start all infrastructure services (PostgreSQL, Redis, Grafana)
+3. Install k6 on load test client machine
+4. Execute baseline load tests (all 3 scenarios)
+5. Capture performance metrics (k6 output, Grafana, database analysis)
+6. Analyze bottlenecks using collected data
+7. Apply optimizations based on identified bottlenecks
+8. Re-run validation tests with optimized configuration
+9. Compare before/after metrics and document improvements
+10. Update this document with actual test results
+
+**Environment Requirements for Load Testing:**
+- **Staging/Production-like Environment:** Local development machines may not support 5,000+ connections
+- **Separate Load Test Client:** Run k6 from a different machine to avoid resource contention
+- **Monitoring Infrastructure:** Grafana, Prometheus, and logging must be operational
+- **Database with Extensions:** PostgreSQL with pg_stat_statements extension enabled
+- **Sufficient Resources:** Match production specs (CPU, memory, network bandwidth)
+
+**Pre-Test Checklist:**
+- [ ] k6 installed on load test client: `k6 version`
+- [ ] Application health check passes: `curl http://<app-url>/q/health/ready`
+- [ ] PostgreSQL accessible and pg_stat_statements enabled
+- [ ] Redis accessible and responding to PING
+- [ ] Grafana dashboards loading and showing metrics
+- [ ] File descriptor limit raised: `ulimit -n 65536`
+- [ ] Docker containers running (if using containers)
+- [ ] Environment variables set (DB_POOL_MAX_SIZE, REDIS_POOL_MAX_SIZE, JAVA_OPTS)
+
+**Execution Commands:**
+
+```bash
+# 1. Execute WebSocket Voting Test (Scenario 1)
+# For production-scale: 5,000 connections
+k6 run --out json=results-voting-baseline.json scripts/load-test-voting.js
+
+# For local/staging-scale: 500 connections
+k6 run -e VUS=500 -e ROOMS=50 --out json=results-voting-baseline.json scripts/load-test-voting.js
+
+# 2. Execute REST API Test (Scenario 2)
+k6 run --out json=results-api-baseline.json scripts/load-test-api.js
+
+# 3. Execute Reconnection Storm Test (Scenario 3)
+# For production-scale: 1,000 reconnections/min
+k6 run --out json=results-reconnection-baseline.json scripts/load-test-reconnection-storm.js
+
+# For local/staging-scale: 100 reconnections/min
+k6 run -e RECONNECTIONS_PER_MIN=100 --out json=results-reconnection-baseline.json scripts/load-test-reconnection-storm.js
+
+# 4. Run Database Analysis (during or after tests)
+psql -U scrum_poker -d scrum_poker_db -f scripts/analyze-database-performance.sql > db-analysis-baseline.txt
+
+# 5. Run Redis Monitoring (during tests)
+./scripts/analyze-redis-performance.sh > redis-analysis-baseline.txt
+
+# 6. Extract p95 latencies from k6 JSON output
+cat results-voting-baseline.json | jq -r 'select(.type=="Point" and .metric=="ws_message_latency") | .data.value' | \
+  awk '{all[NR] = $0} END {asort(all); print "p95:", all[int(NR*0.95)]}'
+```
+
+**Post-Test Analysis:**
+1. Review k6 summary output for threshold pass/fail
+2. Extract latency percentiles (p50, p95, p99) from JSON results
+3. Analyze Grafana dashboards for resource utilization spikes
+4. Review database slow queries from pg_stat_statements
+5. Check Redis hit rate and slow log
+6. Correlate errors in application logs with load test timestamps
+7. Document findings in "Bottleneck Analysis" section below
 
 ---
 
@@ -235,7 +297,51 @@ k6 run --out json=results-api-baseline.json scripts/load-test-api.js
 k6 run -e SCENARIO=api_load scripts/load-test-api.js
 ```
 
-### Scenario 3: Database Query Performance
+### Scenario 3: WebSocket Reconnection Storm Test
+
+**Objective:** Validate WebSocket connection resilience, reconnection handling, and timeout mechanisms under rapid connect/disconnect patterns.
+
+**Test Script:** `scripts/load-test-reconnection-storm.js`
+
+**Load Profile:**
+- **Target Reconnections:** 1,000 reconnections per minute
+- **Test Duration:** 5 minutes
+- **Concurrent VUs:** ~50 (calculated as reconnections_per_min / 20)
+
+**Reconnection Scenarios:**
+- **Normal Reconnections (50%):** Connect → Join → Stay 2-5s → Disconnect
+- **Rapid Connect/Disconnect (30%):** Connect → No Join → Disconnect after 0.5s (tests join timeout)
+- **Message Exchange (15%):** Connect → Join → Vote → Disconnect
+- **Heartbeat Timeout (5%):** Connect → Join → Ignore heartbeat pings (tests heartbeat timeout)
+
+**Metrics Collected:**
+- Connection establishment latency (p50, p95, p99)
+- Reconnection success rate (target: >95%)
+- Join timeout enforcement rate
+- Heartbeat timeout trigger rate
+- Post-reconnect message latency
+- Connection errors
+
+**Thresholds:**
+```javascript
+thresholds: {
+  'connection_establishment_latency': ['p(95)<1000', 'p(99)<2000'],
+  'reconnection_success': ['rate>0.95'],
+  'post_reconnect_message_latency': ['p(95)<300', 'p(99)<500'],
+  'join_timeout_enforced': ['rate>0.5']
+}
+```
+
+**Execution:**
+```bash
+# Full reconnection storm (1,000 reconnections/min)
+k6 run --out json=results-reconnection-baseline.json scripts/load-test-reconnection-storm.js
+
+# Scaled down for local testing (100 reconnections/min)
+k6 run -e RECONNECTIONS_PER_MIN=100 scripts/load-test-reconnection-storm.js
+```
+
+### Scenario 4: Database Query Performance
 
 **Objective:** Identify slow queries and verify index usage for critical operations.
 
@@ -272,7 +378,7 @@ k6 run -e SCENARIO=api_load scripts/load-test-api.js
 psql -U scrum_poker -d scrum_poker_db -f scripts/analyze-database-performance.sql > db-analysis.txt
 ```
 
-### Scenario 4: Redis Performance Monitoring
+### Scenario 5: Redis Performance Monitoring
 
 **Objective:** Monitor Redis cache hit rate, memory usage, and command performance.
 
@@ -362,6 +468,41 @@ psql -U scrum_poker -d scrum_poker_db -f scripts/analyze-database-performance.sq
 
 **Key Observations:**
 - [To be filled after testing]
+
+### Scenario 3: WebSocket Reconnection Storm Test - Baseline
+
+**Test Date:** [To be filled]
+
+**Load Profile Achieved:**
+- Target Reconnections/Min: [e.g., 1,000]
+- Total Reconnections: [e.g., 5,000]
+- Test Duration: [e.g., 5 minutes]
+
+**Performance Metrics:**
+
+| Metric | p50 | p95 | p99 | Target | Status |
+|--------|-----|-----|-----|--------|--------|
+| Connection Establishment Latency (ms) | [TBF] | [TBF] | [TBF] | p95 <1000ms | ⏳ |
+| Post-Reconnect Message Latency (ms) | [TBF] | [TBF] | [TBF] | p95 <300ms | ⏳ |
+| Reconnection Success Rate | - | - | - | >95% | ⏳ |
+| Join Timeout Enforcement Rate | - | - | - | >50% | ⏳ |
+| Heartbeat Timeout Trigger Rate | - | - | - | Measured | ⏳ |
+
+**Connection Statistics:**
+
+| Metric | Count | Rate |
+|--------|-------|------|
+| Connections Established | [TBF] | [TBF/min] |
+| Connections Dropped | [TBF] | [TBF/min] |
+| Reconnections Attempted | [TBF] | [TBF/min] |
+| Reconnections Succeeded | [TBF] | [TBF/min] |
+| Connection Errors | [TBF] | [TBF/min] |
+
+**Key Observations:**
+- [To be filled after testing]
+- Example: "Join timeout correctly enforced after 10s for connections without join message"
+- Example: "Heartbeat timeout triggered after 60s of no heartbeat pong responses"
+- Example: "Connection establishment averaged 50ms under load"
 
 ---
 
@@ -1082,6 +1223,7 @@ groups:
 
 - **WebSocket Voting Test:** `scripts/load-test-voting.js`
 - **REST API Test:** `scripts/load-test-api.js`
+- **WebSocket Reconnection Storm Test:** `scripts/load-test-reconnection-storm.js`
 - **Database Analysis:** `scripts/analyze-database-performance.sql`
 - **Redis Monitoring:** `scripts/analyze-redis-performance.sh`
 - **Documentation:** `scripts/README.md`

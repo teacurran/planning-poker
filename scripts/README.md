@@ -113,6 +113,49 @@ k6 run -e BASE_URL=https://staging.example.com scripts/load-test-api.js
 - `BASE_URL`: Base HTTP URL (default: `http://localhost:8080`)
 - `SCENARIO`: Run specific scenario: `api_load`, `subscription_checkout`, or `all` (default: `all`)
 
+### 3. WebSocket Reconnection Storm Test (`load-test-reconnection-storm.js`)
+
+Tests WebSocket connection resilience under rapid connect/disconnect/reconnect patterns, validates connection handling, timeout mechanisms, and state recovery.
+
+**NFR Targets:**
+- Support 1,000+ reconnections per minute
+- Connection establishment time <1s under load
+- Successful reconnection rate >95%
+- Heartbeat timeout mechanism (60s) enforced
+- Join timeout (10s) enforced
+
+**Test Scenarios:**
+- 50% Normal reconnections (connect, join, stay 2-5s, disconnect)
+- 30% Rapid connect/disconnect (no join message to test join timeout)
+- 15% Reconnect with message exchange (connect, join, vote, disconnect)
+- 5% Heartbeat timeout tests (join but ignore heartbeat pings)
+
+**Run full-scale test:**
+```bash
+k6 run scripts/load-test-reconnection-storm.js
+```
+
+**Run scaled-down for local testing (100 reconnections/min):**
+```bash
+k6 run -e RECONNECTIONS_PER_MIN=100 scripts/load-test-reconnection-storm.js
+```
+
+**Custom environment:**
+```bash
+k6 run -e BASE_URL=https://staging.example.com -e WS_URL=wss://staging.example.com scripts/load-test-reconnection-storm.js
+```
+
+**Output results to JSON:**
+```bash
+k6 run --out json=results-reconnection.json scripts/load-test-reconnection-storm.js
+```
+
+**Environment Variables:**
+- `BASE_URL`: Base HTTP URL (default: `http://localhost:8080`)
+- `WS_URL`: WebSocket URL (default: `ws://localhost:8080`)
+- `RECONNECTIONS_PER_MIN`: Target reconnections per minute (default: `1000`)
+- `TEST_DURATION`: Test duration (default: `5m`)
+
 ## Monitoring During Tests
 
 ### Real-time Metrics
