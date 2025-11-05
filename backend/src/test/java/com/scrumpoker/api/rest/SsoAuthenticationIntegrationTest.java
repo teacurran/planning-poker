@@ -105,23 +105,17 @@ public class SsoAuthenticationIntegrationTest {
         }));
 
         // Setup default mock behavior for successful authentication
-        SsoUserInfo successUserInfo = new SsoUserInfo(
-            TEST_SSO_SUBJECT,
-            TEST_USER_EMAIL,
-            TEST_USER_NAME,
-            "oidc",
-            null // Will be set to actual org ID in test
-        );
         when(ssoAdapter.authenticate(anyString(), anyString(), any(), any()))
             .thenAnswer(invocation -> {
                 UUID orgId = invocation.getArgument(3);
-                return Uni.createFrom().item(new SsoUserInfo(
+                SsoUserInfo userInfo = new SsoUserInfo(
                     TEST_SSO_SUBJECT,
                     TEST_USER_EMAIL,
                     TEST_USER_NAME,
                     "oidc",
                     orgId
-                ));
+                );
+                return Uni.createFrom().item(userInfo);
             });
     }
 
@@ -143,20 +137,22 @@ public class SsoAuthenticationIntegrationTest {
         request.email = TEST_USER_EMAIL;
 
         // When: Call SSO callback endpoint
-        given()
-            .contentType(ContentType.JSON)
-            .body(request)
-            .header("X-Forwarded-For", "192.168.1.100")
-            .header("User-Agent", "Mozilla/5.0 Test Browser")
-        .when()
-            .post("/api/v1/auth/sso/callback")
-        .then()
-            .statusCode(200)
-            .body("accessToken", notNullValue())
-            .body("refreshToken", notNullValue())
-            .body("user.email", equalTo(TEST_USER_EMAIL))
-            .body("user.displayName", equalTo(TEST_USER_NAME))
-            .body("user.subscriptionTier", equalTo("FREE"));
+        asserter.execute(() ->
+            given()
+                .contentType(ContentType.JSON)
+                .body(request)
+                .header("X-Forwarded-For", "192.168.1.100")
+                .header("User-Agent", "Mozilla/5.0 Test Browser")
+            .when()
+                .post("/api/v1/auth/sso/callback")
+            .then()
+                .statusCode(200)
+                .body("accessToken", notNullValue())
+                .body("refreshToken", notNullValue())
+                .body("user.email", equalTo(TEST_USER_EMAIL))
+                .body("user.displayName", equalTo(TEST_USER_NAME))
+                .body("user.subscriptionTier", equalTo("FREE"))
+        );
 
         // Then: Verify user was created via JIT provisioning
         asserter.assertThat(() -> Panache.withTransaction(() ->
@@ -249,17 +245,19 @@ public class SsoAuthenticationIntegrationTest {
         request.email = TEST_USER_EMAIL;
 
         // When: Call SSO callback endpoint (second login)
-        given()
-            .contentType(ContentType.JSON)
-            .body(request)
-            .header("X-Forwarded-For", "10.0.0.50")
-            .header("User-Agent", "Chrome Test")
-        .when()
-            .post("/api/v1/auth/sso/callback")
-        .then()
-            .statusCode(200)
-            .body("accessToken", notNullValue())
-            .body("user.email", equalTo(TEST_USER_EMAIL));
+        asserter.execute(() ->
+            given()
+                .contentType(ContentType.JSON)
+                .body(request)
+                .header("X-Forwarded-For", "10.0.0.50")
+                .header("User-Agent", "Chrome Test")
+            .when()
+                .post("/api/v1/auth/sso/callback")
+            .then()
+                .statusCode(200)
+                .body("accessToken", notNullValue())
+                .body("user.email", equalTo(TEST_USER_EMAIL))
+        );
 
         // Then: Verify no duplicate org membership was created
         asserter.assertThat(() -> Panache.withTransaction(() ->
@@ -346,13 +344,14 @@ public class SsoAuthenticationIntegrationTest {
         when(ssoAdapter.authenticate(anyString(), anyString(), any(), any()))
             .thenAnswer(invocation -> {
                 UUID orgId = invocation.getArgument(3);
-                return Uni.createFrom().item(new SsoUserInfo(
+                SsoUserInfo mismatchUserInfo = new SsoUserInfo(
                     "oidc-subject-mismatch",
                     "hacker@evil.com",  // Different domain than organization
                     "Hacker User",
                     "oidc",
                     orgId
-                ));
+                );
+                return Uni.createFrom().item(mismatchUserInfo);
             });
 
         // Request with acmecorp.com email
