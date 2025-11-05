@@ -116,7 +116,8 @@ A lightweight, real-time Scrum Poker app for Agile estimation sessions with **2â
 - **Database:** PostgreSQL or MongoDB for persistent data (users, rooms, results)  
 - **Cache/Message Bus:** Redis or RabbitMQ for event propagation between app nodes  
 - **WebSockets:** Stateless sessions with token-based affinity  
-- **Auth:** OAuth2 (Google, Microsoft), OIDC/SAML2 for SSO orgs  
+- **Auth:** OAuth2 (Google, Microsoft), OIDC for SSO orgs  
+    - All auth should be handled with Quarkus Auth and Quarkus Security
 - **Deployment:** Containerized (Docker + K8s) with load balancer  
 - **Payments:** Stripe API + Webhooks for subscription management  
 - **Hosting:** Cloud or local cluster (scales horizontally)  

@@ -8,7 +8,6 @@ import com.scrumpoker.api.rest.dto.TokenResponse;
 import com.scrumpoker.api.rest.dto.UserDTO;
 import com.scrumpoker.api.rest.mapper.UserMapper;
 import com.scrumpoker.domain.organization.AuditLogService;
-import com.scrumpoker.domain.organization.Organization;
 import com.scrumpoker.domain.organization.OrgRole;
 import com.scrumpoker.domain.organization.OrganizationService;
 import com.scrumpoker.domain.user.User;
@@ -16,20 +15,19 @@ import com.scrumpoker.domain.user.UserService;
 import com.scrumpoker.integration.oauth.OAuth2Adapter;
 import com.scrumpoker.integration.oauth.OAuthUserInfo;
 import com.scrumpoker.integration.sso.SsoAdapter;
-import com.scrumpoker.integration.sso.SsoUserInfo;
 import com.scrumpoker.repository.OrganizationRepository;
 import com.scrumpoker.security.JwtTokenService;
 import com.scrumpoker.security.TokenPair;
 import io.smallrye.mutiny.Uni;
 import jakarta.annotation.security.PermitAll;
 import jakarta.inject.Inject;
-import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.Context;
+import jakarta.ws.rs.core.HttpHeaders;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import org.eclipse.microprofile.openapi.annotations.Operation;
@@ -38,8 +36,6 @@ import org.eclipse.microprofile.openapi.annotations.media.Schema;
 import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
 import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 import org.jboss.logging.Logger;
-
-import java.time.Instant;
 
 /**
  * REST controller for authentication endpoints.
@@ -365,7 +361,7 @@ public class AuthController {
      * </p>
      *
      * @param request SSO callback request with code, protocol, redirectUri, codeVerifier
-     * @param httpRequest HTTP servlet request for extracting IP and user agent
+     * @param headers HTTP headers for extracting IP and user agent
      * @return 200 OK with TokenResponse (access token, refresh token, user profile)
      *         or 400 Bad Request if validation fails
      *         or 401 Unauthorized if SSO authentication fails or domain mismatch
@@ -388,7 +384,7 @@ public class AuthController {
     @APIResponse(responseCode = "500", description = "Internal server error",
             content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
     public Uni<Response> ssoCallback(@Valid final SsoCallbackRequest request,
-                                      @Context final HttpServletRequest httpRequest) {
+                                      @Context final HttpHeaders headers) {
         LOG.infof("Processing SSO callback for protocol: %s", request.protocol);
 
         // Validate inputs (additional layer beyond bean validation)
@@ -402,12 +398,14 @@ public class AuthController {
         }
 
         // Extract IP address and user agent for audit logging
+        final String xForwardedFor = headers.getHeaderString("X-Forwarded-For");
+        final String xRealIp = headers.getHeaderString("X-Real-IP");
         final String ipAddress = AuditLogService.extractIpAddress(
-                httpRequest.getHeader("X-Forwarded-For"),
-                httpRequest.getHeader("X-Real-IP"),
-                httpRequest.getRemoteAddr()
+                xForwardedFor,
+                xRealIp,
+                null  // remoteAddr not available via HttpHeaders
         );
-        final String userAgent = httpRequest.getHeader("User-Agent");
+        final String userAgent = headers.getHeaderString("User-Agent");
 
         // OIDC requires redirectUri and codeVerifier
         if ("oidc".equalsIgnoreCase(request.protocol)) {

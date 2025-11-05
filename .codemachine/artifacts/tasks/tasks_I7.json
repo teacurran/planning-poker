@@ -57,7 +57,7 @@
     "acceptance_criteria": "OIDC callback creates user on first login, User auto-assigned to organization matching email domain, SAML2 callback works similarly, JWT tokens returned with org membership in claims, Existing user login skips provisioning, returns tokens, Audit log records SSO login with user ID and org ID",
     "dependencies": ["I7.T1", "I7.T2", "I7.T3"],
     "parallelizable": false,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I7.T5",

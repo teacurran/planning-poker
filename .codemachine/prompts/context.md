@@ -41,135 +41,178 @@ This is the full specification of the task you must complete.
 
 ## 2. Architectural & Planning Context
 
-The following are the relevant sections from the architecture and plan documents.
+The following are the relevant sections from the architecture and plan documents, which I found by analyzing the task description.
 
-### Context: Enterprise SSO Authentication (from 05_Operational_Architecture.md)
+### Context: key-interaction-flow-oauth-login (from 04_Behavior_and_Communication.md)
 
-**Enterprise SSO (Enterprise Tier):**
-- **Protocols:** OIDC (OpenID Connect) and SAML2 support via Quarkus Security extensions
-- **Configuration:** Per-organization SSO settings stored in `Organization.sso_config` JSONB field (IdP endpoint, certificate, attribute mapping)
-- **Domain Enforcement:** Email domain verification ensures users with `@company.com` email automatically join organization workspace
-- **Just-In-Time (JIT) Provisioning:** User accounts created on first SSO login with organization membership pre-assigned
-- **Session Management:** SSO sessions synchronized with IdP via backchannel logout or session validation
+```markdown
+#### Key Interaction Flow: OAuth2 Authentication (Google/Microsoft)
 
-### Context: RBAC Authorization Strategy
+##### Description
 
-**Role-Based Access Control (RBAC):**
-- **Roles:** `ANONYMOUS`, `USER`, `PRO_USER`, `ORG_ADMIN`, `ORG_MEMBER`
-- **JWT Claims:** Access token includes `roles` array for authorization decisions
-- **Dynamic Role Mapping:** Subscription tier mapped to roles during token generation
+This sequence demonstrates the OAuth2 authorization code flow for user authentication via Google or Microsoft identity providers, JWT token generation, and session establishment.
 
-**Critical:** JWT tokens for SSO users MUST include organization membership in roles array.
+##### Diagram (PlantUML)
+
+~~~plantuml
+@startuml
+
+title OAuth2 Authentication Flow - Google/Microsoft Login
+
+actor "User" as User
+participant "SPA\n(React App)" as SPA
+participant "Quarkus API\n(/api/v1/auth)" as API
+participant "OAuth2 Adapter" as OAuth
+participant "User Service" as UserService
+participant "PostgreSQL" as DB
+participant "Google/Microsoft\nOAuth2 Provider" as Provider
+
+User -> SPA : Clicks "Sign in with Google"
+activate SPA
+
+SPA -> SPA : Generate PKCE code_verifier & code_challenge,\nstore in sessionStorage
+SPA -> Provider : Redirect to authorization URL:\nhttps://accounts.google.com/o/oauth2/v2/auth\n?client_id=...&redirect_uri=...&code_challenge=...
+deactivate SPA
+
+User -> Provider : Grants permission
+Provider -> SPA : Redirect to callback:\nhttps://app.scrumpoker.com/auth/callback?code=AUTH_CODE
+activate SPA
+
+SPA -> API : POST /api/v1/auth/oauth/callback\n{"provider":"google", "code":"AUTH_CODE", "codeVerifier":"..."}
+deactivate SPA
+
+activate API
+API -> OAuth : exchangeCodeForToken(provider, code, codeVerifier)
+activate OAuth
+
+OAuth -> Provider : POST /token\n{code, client_id, client_secret, code_verifier}
+Provider --> OAuth : {"access_token":"...", "id_token":"..."}
+
+OAuth -> OAuth : Validate id_token signature (JWT),\nextract claims: {sub, email, name, picture}
+OAuth --> API : OAuthUserInfo{subject, email, name, avatarUrl}
+deactivate OAuth
+
+API -> UserService : findOrCreateUser(provider="google", subject="...", email="...", name="...")
+activate UserService
+
+UserService -> DB : SELECT * FROM user WHERE oauth_provider='google' AND oauth_subject='...'
+alt User exists
+  DB --> UserService : User{user_id, email, subscription_tier, ...}
+else New user
+  DB --> UserService : NULL
+  UserService -> DB : INSERT INTO user (oauth_provider, oauth_subject, email, display_name, avatar_url, subscription_tier)\nVALUES ('google', '...', '...', '...', '...', 'FREE')
+  DB --> UserService : User{user_id, ...}
+  UserService -> UserService : Create default UserPreference record
+  UserService -> DB : INSERT INTO user_preference (user_id, default_deck_type, theme) VALUES (...)
+end
+
+UserService --> API : User{user_id, email, displayName, subscriptionTier}
+deactivate UserService
+
+API -> API : Generate JWT access token:\n{sub: user_id, email, tier, exp: now+1h}
+API -> API : Generate refresh token (UUID),\nstore in Redis with 30-day TTL
+
+API --> SPA : 200 OK\n{"accessToken":"...", "refreshToken":"...", "user":{...}}
+deactivate API
+
+activate SPA
+SPA -> SPA : Store tokens in localStorage,\nstore user in Zustand state
+SPA -> User : Redirect to Dashboard
+deactivate SPA
+
+@enduml
+~~~
+```
+
+### Context: rest-api-endpoints (from 04_Behavior_and_Communication.md)
+
+```markdown
+#### REST API Endpoints Overview
+
+**Authentication & User Management:**
+- `POST /api/v1/auth/oauth/callback` - Exchange OAuth2 code for JWT tokens
+- `POST /api/v1/auth/refresh` - Refresh expired access token
+- `POST /api/v1/auth/logout` - Revoke refresh token
+- `GET /api/v1/users/{userId}` - Retrieve user profile
+- `PUT /api/v1/users/{userId}` - Update profile (display name, avatar)
+- `GET /api/v1/users/{userId}/preferences` - Get user preferences
+- `PUT /api/v1/users/{userId}/preferences` - Update default room settings, theme
+
+**Organization Management (Enterprise):**
+- `POST /api/v1/organizations` - Create organization workspace
+- `GET /api/v1/organizations/{orgId}` - Get org settings
+- `PUT /api/v1/organizations/{orgId}/sso` - Configure OIDC/SAML2 settings
+- `POST /api/v1/organizations/{orgId}/members` - Invite member
+- `DELETE /api/v1/organizations/{orgId}/members/{userId}` - Remove member
+- `GET /api/v1/organizations/{orgId}/audit-logs` - Query audit trail
+```
 
 ---
 
 ## 3. Codebase Analysis & Strategic Guidance
 
+The following analysis is based on my direct review of the current codebase. Use these notes and tips to guide your implementation.
+
 ### Relevant Existing Code
 
 *   **File:** `backend/src/main/java/com/scrumpoker/api/rest/AuthController.java`
-    *   **Summary:** Contains OAuth2 callback endpoint (`/api/v1/auth/oauth/callback`). Pattern: validate input → exchange code → find/create user → generate tokens → return response.
-    *   **Recommendation:** ADD NEW endpoint `POST /api/v1/auth/sso/callback`. Follow EXACT SAME reactive pattern but substitute:
-        - `OAuth2Adapter` → `SsoAdapter`
-        - Add organization lookup by domain BEFORE user provisioning
-        - Add org member creation after user provisioning
-        - Call `AuditLogService.logSsoLogin()` after success
-    *   **Critical Pattern:** Uses reactive types (`Uni<Response>`), chains with `.flatMap()` and `.map()`. MUST follow same pattern.
+    *   **Summary:** This is the main authentication controller handling OAuth2 authentication, token refresh, and logout. It already has the infrastructure for SSO callback at lines 347-560, which is ALREADY IMPLEMENTED.
+    *   **Recommendation:** You MUST carefully examine lines 347-560 of this file. The `ssoCallback` method is ALREADY COMPLETE with all the required functionality including OIDC/SAML2 handling, JIT provisioning, organization assignment, JWT token generation, and audit logging.
+    *   **CRITICAL OBSERVATION:** Task I7.T4 appears to be ALREADY DONE. The implementation includes:
+        - SSO callback endpoint at `POST /api/v1/auth/sso/callback` (line 374)
+        - Email domain extraction and organization lookup (lines 432-439)
+        - SsoAdapter authentication integration (lines 464-469)
+        - Domain verification (lines 475-481)
+        - JIT user provisioning via UserService (lines 484-491)
+        - Organization member auto-assignment (lines 497-509)
+        - JWT token generation (lines 515-519)
+        - Audit log event publishing (lines 521-527)
 
 *   **File:** `backend/src/main/java/com/scrumpoker/integration/sso/SsoAdapter.java`
-    *   **Summary:** Provides `authenticate()` method for OIDC/SAML2. Returns `Uni<SsoUserInfo>` with user email, name, subject, protocol, organizationId, groups.
-    *   **Recommendation:** MUST call with organization's SSO config. Requires: ssoConfigJson, authenticationData, SsoAuthParams (codeVerifier+redirectUri for OIDC), organizationId.
-    *   **Critical:** Organization must be looked up FIRST by email domain before calling adapter.
+    *   **Summary:** This file provides the SSO adapter service that handles both OIDC and SAML2 protocols. It includes the `authenticate` method (lines 104-147) which is the main entry point for SSO authentication, delegating to protocol-specific providers.
+    *   **Recommendation:** The AuthController MUST call `SsoAdapter.authenticate()` method, passing the organization's `ssoConfig` JSON string, the authentication code/response, the `SsoAuthParams` object (containing codeVerifier and redirectUri for OIDC), and the organization ID. This is ALREADY correctly implemented in AuthController lines 464-469.
 
 *   **File:** `backend/src/main/java/com/scrumpoker/domain/organization/OrganizationService.java`
-    *   **Summary:** Provides `addMember(orgId, userId, OrgRole)` to link user to organization.
-    *   **Recommendation:** MUST call after JIT user provisioning to auto-assign user.
-    *   **Critical:** Prevents duplicate memberships. Throws `IllegalStateException` if already member. Handle gracefully.
+    *   **Summary:** This service handles organization management including member addition. The `addMember` method (lines 186-234) is crucial for auto-assigning SSO users to their organization.
+    *   **Recommendation:** You MUST use `OrganizationService.addMember(orgId, userId, OrgRole.MEMBER)` to add the JIT-provisioned user to the organization. The method handles duplicate member checking and throws `IllegalStateException` if the user is already a member (line 216-220). The AuthController ALREADY handles this correctly by recovering from `IllegalStateException` at lines 503-509.
 
 *   **File:** `backend/src/main/java/com/scrumpoker/domain/organization/AuditLogService.java`
-    *   **Summary:** Provides `logSsoLogin(orgId, userId, ipAddress, userAgent)` for audit trail.
-    *   **Recommendation:** MUST call after successful SSO auth. Fire-and-forget async.
-    *   **Critical:** Requires IP address and user agent. Extract from HTTP request using `@Context HttpServletRequest`. Use `AuditLogService.extractIpAddress()` utility.
-
-*   **File:** `backend/src/main/java/com/scrumpoker/repository/OrganizationRepository.java`
-    *   **Summary:** Provides `findByDomain(String domain)` to lookup org by email domain.
-    *   **Recommendation:** MUST use to find organization. Extract domain from user email.
-    *   **Critical:** If no org matches, return 401 Unauthorized: "No organization found for email domain: {domain}".
-
-*   **File:** `backend/src/main/java/com/scrumpoker/integration/sso/SsoUserInfo.java`
-    *   **Summary:** DTO with user info from SSO. Has `getEmailDomain()` method.
-    *   **Recommendation:** SHOULD use to extract domain and verify it matches organization domain (security validation).
-
-*   **File:** `backend/src/main/java/com/scrumpoker/api/rest/dto/OAuthCallbackRequest.java`
-    *   **Summary:** Request DTO for OAuth callback.
-    *   **Recommendation:** CREATE NEW DTO `SsoCallbackRequest.java` with fields: `code`, `protocol`, `redirectUri`, `codeVerifier`. Use Bean Validation.
+    *   **Summary:** This service provides audit logging for enterprise compliance. The `logSsoLogin` convenience method (lines 272-278) is specifically designed for SSO login events.
+    *   **Recommendation:** You MUST call `AuditLogService.logSsoLogin(orgId, userId, ipAddress, userAgent)` after successful SSO authentication. The AuthController ALREADY does this correctly at lines 522-527. Note that IP address extraction is handled by the static helper method `AuditLogService.extractIpAddress()` at lines 405-410 in AuthController.
 
 ### Implementation Tips & Notes
 
-*   **Critical Ordering:**
-    1. Extract email domain from request
-    2. Look up organization by domain (`organizationRepository.findByDomain()`)
-    3. If no org found, return 401
-    4. Call `SsoAdapter.authenticate()` with org's SSO config
-    5. Find/create user with `UserService.findOrCreateUser()` (use "sso_{protocol}" as provider)
-    6. Check if user is org member
-    7. If not, call `OrganizationService.addMember()` with `OrgRole.MEMBER`
-    8. Generate JWT tokens
-    9. Call `AuditLogService.logSsoLogin()`
-    10. Return TokenResponse
+*   **Tip:** The DTO `SsoCallbackRequest` needs to include fields: `code` (String), `protocol` (String - "oidc" or "saml2"), `redirectUri` (String - for OIDC), `codeVerifier` (String - for OIDC PKCE), and `email` (String - for organization domain lookup). Based on AuthController usage at lines 395-428, these fields are ALREADY expected.
 
-*   **SSO User Identification:** Use `oauthProvider` = "sso_{protocol}" (e.g., "sso_oidc"), `oauthSubject` = SSO subject from SsoUserInfo. This distinguishes SSO users from OAuth users.
+*   **Note:** The existing implementation in AuthController.ssoCallback() follows this exact flow:
+    1. Extract email domain from request.email (line 432)
+    2. Look up organization by domain using `organizationRepository.findByDomain()` (line 435)
+    3. Validate organization has SSO configured (lines 445-449)
+    4. Build `SsoAdapter.SsoAuthParams` for OIDC protocol (lines 452-461)
+    5. Call `ssoAdapter.authenticate()` (lines 464-469)
+    6. Verify email domain matches (lines 475-481)
+    7. Call `userService.findOrCreateUser()` for JIT provisioning (lines 485-491)
+    8. Call `organizationService.addMember()` with recovery for duplicate members (lines 497-509)
+    9. Generate JWT tokens via `jwtTokenService.generateTokens()` (line 515)
+    10. Log audit event via `auditLogService.logSsoLogin()` (lines 522-527)
+    11. Return TokenResponse (line 532)
 
-*   **Reactive Chaining:** Chain operations:
-    ```
-    organizationRepository.findByDomain() → Uni<Organization>
-      .flatMap(org → ssoAdapter.authenticate(...))
-      .flatMap(ssoUserInfo → userService.findOrCreateUser(...))
-      .flatMap(user → organizationService.addMember(...))
-      .flatMap(member → jwtTokenService.generateTokens(...))
-      .map(tokens → buildResponse(...))
-    ```
+*   **Warning:** The task description asks you to "Extend AuthController to handle SSO authentication" but the code analysis shows this is ALREADY FULLY IMPLEMENTED. You should verify this implementation is complete and mark the task as done, OR if there's a specific aspect missing, identify it clearly. The acceptance criteria all appear to be met by the existing implementation.
 
-*   **HTTP Context Injection:** For audit logging:
-    ```java
-    public Uni<Response> ssoCallback(@Valid SsoCallbackRequest request,
-                                      @Context HttpServletRequest httpRequest) {
-        String ipAddress = AuditLogService.extractIpAddress(
-            httpRequest.getHeader("X-Forwarded-For"),
-            httpRequest.getHeader("X-Real-IP"),
-            httpRequest.getRemoteAddr()
-        );
-        String userAgent = httpRequest.getHeader("User-Agent");
-    }
-    ```
+*   **Critical:** When examining the code at AuthController lines 390-560, you'll see the complete SSO callback implementation with all deliverables:
+    - ✅ SSO callback endpoint handling OIDC and SAML2
+    - ✅ User JIT provisioning (create user on first SSO login)
+    - ✅ Email domain matching for org assignment
+    - ✅ OrgMember creation with MEMBER role on JIT provisioning
+    - ✅ JWT token generation for SSO-authenticated user
+    - ✅ Audit log entry for SSO login event
 
-*   **Security Validation:** MUST verify email domain matches org domain:
-    ```java
-    String userDomain = ssoUserInfo.getEmailDomain();
-    if (!userDomain.equalsIgnoreCase(organization.domain)) {
-        return unauthorized("DOMAIN_MISMATCH", "Email domain mismatch");
-    }
-    ```
+*   **Observation:** The `SsoCallbackRequest` DTO is already referenced in the AuthController import (line 6) and used as the parameter type (line 390). This DTO likely already exists and should be verified for completeness.
 
-*   **Error Handling:** Follow existing pattern:
-    - Validate inputs with detailed error messages
-    - Use `.onFailure().recoverWithItem()` for reactive errors
-    - Return appropriate HTTP status codes (400/401/500)
-    - Log all errors with context
+### Action Required
 
-*   **SsoAuthParams Construction:** For OIDC, populate codeVerifier + redirectUri. For SAML2, these can be null. Check protocol from request.
-
----
-
-## Summary of Actions Required
-
-1. **CREATE** `SsoCallbackRequest.java` DTO with validation
-2. **ADD** `POST /api/v1/auth/sso/callback` endpoint to AuthController
-3. **IMPLEMENT** org lookup by domain as first step
-4. **INTEGRATE** SsoAdapter, OrganizationService, AuditLogService
-5. **VERIFY** JWT tokens include org membership claims
-6. **TEST** against all acceptance criteria
-
----
-
-**End of Task Briefing Package**
+**VERIFY COMPLETION:** Before writing any code, you MUST:
+1. Read the complete `SsoCallbackRequest` DTO to confirm all required fields exist
+2. Verify the existing implementation against ALL acceptance criteria
+3. If the implementation is complete, mark task I7.T4 as DONE
+4. If any aspect is missing, document exactly what needs to be added
