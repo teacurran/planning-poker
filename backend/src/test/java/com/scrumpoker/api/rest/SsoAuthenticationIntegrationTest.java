@@ -20,7 +20,11 @@ import io.quarkus.test.junit.TestProfile;
 import io.quarkus.test.vertx.RunOnVertxContext;
 import io.quarkus.test.vertx.UniAsserter;
 import io.restassured.http.ContentType;
+import io.smallrye.common.vertx.VertxContext;
 import io.smallrye.mutiny.Uni;
+import io.vertx.core.Context;
+import io.vertx.core.Promise;
+import io.vertx.core.Vertx;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -47,6 +51,9 @@ import static org.hamcrest.Matchers.*;
 @QuarkusTest
 @TestProfile(SsoAuthenticationIntegrationTest.SsoTestProfile.class)
 public class SsoAuthenticationIntegrationTest {
+
+    @Inject
+    Vertx vertx;
 
     @Inject
     MockSsoAdapter mockSsoAdapter;
@@ -124,8 +131,7 @@ public class SsoAuthenticationIntegrationTest {
     // ========================================
 
     @Test
-    @RunOnVertxContext
-    public void testOidcSsoCallback_FirstLogin_CreatesUserAndAssignsToOrg(UniAsserter asserter) {
+    public void testOidcSsoCallback_FirstLogin_CreatesUserAndAssignsToOrg() {
         // Given: MockSsoAdapter will return successful authentication (default behavior)
 
         // Create SSO callback request
@@ -136,9 +142,7 @@ public class SsoAuthenticationIntegrationTest {
         request.codeVerifier = "mock-code-verifier-12345";
         request.email = TEST_USER_EMAIL;
 
-        // When: Call SSO callback endpoint
-        // Note: REST Assured HTTP calls should NOT be wrapped in asserter.execute()
-        // because they are blocking calls that can deadlock when run on Vert.x event loop
+        // When: Call SSO callback endpoint (blocking HTTP call - runs on test thread, NOT on Vert.x event loop)
         given()
             .contentType(ContentType.JSON)
             .body(request)
@@ -155,58 +159,52 @@ public class SsoAuthenticationIntegrationTest {
             .body("user.subscriptionTier", equalTo("FREE"));
 
         // Then: Verify user was created via JIT provisioning
-        asserter.assertThat(() -> Panache.withTransaction(() ->
+        User user = runInVertxContext(() -> Panache.withTransaction(() ->
             userRepository.findByOAuthProviderAndSubject("sso_oidc", TEST_SSO_SUBJECT)
-        ), foundUser -> {
-            User user = (User) foundUser;
-            assertThat(user).isNotNull();
-            assertThat(user.email).isEqualTo(TEST_USER_EMAIL);
-            assertThat(user.displayName).isEqualTo(TEST_USER_NAME);
-            assertThat(user.oauthProvider).isEqualTo("sso_oidc");
-            assertThat(user.oauthSubject).isEqualTo(TEST_SSO_SUBJECT);
-            assertThat(user.subscriptionTier).isEqualTo(SubscriptionTier.FREE);
-        });
+        ));
+
+        assertThat(user).isNotNull();
+        assertThat(user.email).isEqualTo(TEST_USER_EMAIL);
+        assertThat(user.displayName).isEqualTo(TEST_USER_NAME);
+        assertThat(user.oauthProvider).isEqualTo("sso_oidc");
+        assertThat(user.oauthSubject).isEqualTo(TEST_SSO_SUBJECT);
+        assertThat(user.subscriptionTier).isEqualTo(SubscriptionTier.FREE);
 
         // And: Verify user was assigned to organization
-        asserter.assertThat(() -> Panache.withTransaction(() ->
+        OrgMember member = runInVertxContext(() -> Panache.withTransaction(() ->
             userRepository.findByOAuthProviderAndSubject("sso_oidc", TEST_SSO_SUBJECT)
-                .flatMap(user -> orgMemberRepository.findByOrgIdAndUserId(testOrganization.orgId, user.userId))
-        ), foundMember -> {
-            OrgMember member = (OrgMember) foundMember;
-            assertThat(member).isNotNull();
-            assertThat(member.role).isEqualTo(OrgRole.MEMBER);
-            assertThat(member.organization.orgId).isEqualTo(testOrganization.orgId);
-        });
+                .flatMap(u -> orgMemberRepository.findByOrgIdAndUserId(testOrganization.orgId, u.userId))
+        ));
+
+        assertThat(member).isNotNull();
+        assertThat(member.role).isEqualTo(OrgRole.MEMBER);
+        assertThat(member.organization.orgId).isEqualTo(testOrganization.orgId);
 
         // And: Verify audit log entry was created (with small delay for async processing)
-        asserter.execute(() -> {
-            try {
-                Thread.sleep(500); // Give async audit logging time to complete
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-        });
+        try {
+            Thread.sleep(500); // Give async audit logging time to complete
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
 
-        asserter.assertThat(() -> Panache.withTransaction(() ->
+        AuditLog auditLog = runInVertxContext(() -> Panache.withTransaction(() ->
             auditLogRepository.listAll()
                 .map(logs -> logs.stream()
                     .filter(log -> "SSO_LOGIN".equals(log.action))
                     .findFirst()
                     .orElse(null))
-        ), foundLog -> {
-            AuditLog auditLog = (AuditLog) foundLog;
-            assertThat(auditLog).isNotNull();
-            assertThat(auditLog.action).isEqualTo("SSO_LOGIN");
-            assertThat(auditLog.resourceType).isEqualTo("USER");
-            assertThat(auditLog.organization.orgId).isEqualTo(testOrganization.orgId);
-            assertThat(auditLog.ipAddress).isEqualTo("192.168.1.100");
-            assertThat(auditLog.userAgent).isEqualTo("Mozilla/5.0 Test Browser");
-        });
+        ));
+
+        assertThat(auditLog).isNotNull();
+        assertThat(auditLog.action).isEqualTo("SSO_LOGIN");
+        assertThat(auditLog.resourceType).isEqualTo("USER");
+        assertThat(auditLog.organization.orgId).isEqualTo(testOrganization.orgId);
+        assertThat(auditLog.ipAddress).isEqualTo("192.168.1.100");
+        assertThat(auditLog.userAgent).isEqualTo("Mozilla/5.0 Test Browser");
     }
 
     @Test
-    @RunOnVertxContext
-    public void testOidcSsoCallback_ReturningUser_DoesNotDuplicateOrgMembership(UniAsserter asserter) {
+    public void testOidcSsoCallback_ReturningUser_DoesNotDuplicateOrgMembership() {
         // Given: Create existing user and org membership
         User existingUser = new User();
         existingUser.email = TEST_USER_EMAIL;
@@ -215,12 +213,12 @@ public class SsoAuthenticationIntegrationTest {
         existingUser.oauthSubject = TEST_SSO_SUBJECT;
         existingUser.subscriptionTier = SubscriptionTier.FREE;
 
-        asserter.execute(() -> Panache.withTransaction(() ->
+        runInVertxContext(() -> Panache.withTransaction(() ->
             userRepository.persist(existingUser)
         ));
 
         // Create existing org membership
-        asserter.execute(() -> Panache.withTransaction(() ->
+        runInVertxContext(() -> Panache.withTransaction(() ->
             userRepository.findById(existingUser.userId)
                 .flatMap(user -> organizationRepository.findById(testOrganization.orgId)
                     .flatMap(org -> {
@@ -244,9 +242,7 @@ public class SsoAuthenticationIntegrationTest {
         request.codeVerifier = "mock-code-verifier-67890";
         request.email = TEST_USER_EMAIL;
 
-        // When: Call SSO callback endpoint (second login)
-        // Note: REST Assured HTTP calls should NOT be wrapped in asserter.execute()
-        // because they are blocking calls that can deadlock when run on Vert.x event loop
+        // When: Call SSO callback endpoint (second login) - blocking HTTP call runs on test thread
         given()
             .contentType(ContentType.JSON)
             .body(request)
@@ -260,16 +256,15 @@ public class SsoAuthenticationIntegrationTest {
             .body("user.email", equalTo(TEST_USER_EMAIL));
 
         // Then: Verify no duplicate org membership was created
-        asserter.assertThat(() -> Panache.withTransaction(() ->
+        Long count = runInVertxContext(() -> Panache.withTransaction(() ->
             orgMemberRepository.listAll()
                 .map(members -> members.stream()
                     .filter(m -> m.user.userId.equals(existingUser.userId))
                     .filter(m -> m.organization.orgId.equals(testOrganization.orgId))
                     .count())
-        ), foundCount -> {
-            Long count = (Long) foundCount;
-            assertThat(count).isEqualTo(1L); // Still only 1 membership
-        });
+        ));
+
+        assertThat(count).isEqualTo(1L); // Still only 1 membership
     }
 
     @Test
@@ -388,6 +383,34 @@ public class SsoAuthenticationIntegrationTest {
     // ========================================
     // Helper Methods
     // ========================================
+
+    /**
+     * Executes a reactive Uni operation in a Vert.x duplicated context and blocks until completion.
+     * This allows running reactive Panache operations from regular test methods (without @RunOnVertxContext).
+     *
+     * @param <T> The type of result returned by the Uni
+     * @param supplier The Uni supplier to execute
+     * @return The result of the Uni operation
+     */
+    private <T> T runInVertxContext(java.util.function.Supplier<Uni<T>> supplier) {
+        // Create a duplicated context (safe/isolated for Hibernate Reactive Panache)
+        Context context = VertxContext.getOrCreateDuplicatedContext(vertx);
+
+        // Create a Promise to capture the result
+        Promise<T> promise = Promise.promise();
+
+        // Run the Uni supplier on the duplicated context
+        context.runOnContext(v -> {
+            supplier.get()
+                .subscribe().with(
+                    result -> promise.complete(result),
+                    error -> promise.fail(error)
+                );
+        });
+
+        // Block and wait for the result
+        return promise.future().toCompletionStage().toCompletableFuture().join();
+    }
 
     /**
      * Creates a sample OIDC configuration JSON string for test organization.
