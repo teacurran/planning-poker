@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.scrumpoker.domain.room.Room;
 import com.scrumpoker.domain.room.RoomNotFoundException;
 import com.scrumpoker.domain.room.RoomService;
+import com.scrumpoker.logging.LoggingConstants;
 import com.scrumpoker.security.JwtClaims;
 import com.scrumpoker.security.JwtTokenService;
 import io.quarkus.logging.Log;
@@ -14,6 +15,7 @@ import jakarta.inject.Inject;
 import jakarta.websocket.*;
 import jakarta.websocket.server.PathParam;
 import jakarta.websocket.server.ServerEndpoint;
+import org.jboss.logging.MDC;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -116,10 +118,19 @@ public class RoomWebSocketHandler {
      */
     @OnOpen
     public void onOpen(Session session, @PathParam("roomId") String roomId) {
-        Log.infof("WebSocket connection attempt: session %s, room %s", session.getId(), roomId);
+        // Generate correlation ID for this WebSocket session
+        String correlationId = UUID.randomUUID().toString();
+        session.getUserProperties().put(LoggingConstants.WS_CORRELATION_ID_PROPERTY, correlationId);
 
-        // Extract JWT token from query parameter (optional for anonymous users)
-        String token = extractTokenFromQuery(session);
+        // Set correlation ID in MDC for logging
+        MDC.put(LoggingConstants.CORRELATION_ID, correlationId);
+        MDC.put(LoggingConstants.ROOM_ID, roomId);
+
+        try {
+            Log.infof("WebSocket connection attempt: session %s, room %s", session.getId(), roomId);
+
+            // Extract JWT token from query parameter (optional for anonymous users)
+            String token = extractTokenFromQuery(session);
 
         if (token == null || token.isBlank()) {
             // Anonymous connection - validate room only
@@ -199,6 +210,10 @@ public class RoomWebSocketHandler {
                             }
                         }
                 );
+        } finally {
+            // Clean up MDC after onOpen processing
+            MDC.clear();
+        }
     }
 
     /**
@@ -225,15 +240,28 @@ public class RoomWebSocketHandler {
     public void onClose(Session session, CloseReason closeReason) {
         String sessionId = session.getId();
         String userId = (String) session.getUserProperties().get(USER_ID_KEY);
+        String correlationId = (String) session.getUserProperties().get(LoggingConstants.WS_CORRELATION_ID_PROPERTY);
         String roomId = connectionRegistry.removeConnection(session);
 
-        // Clean up pending join timeout
-        pendingJoins.remove(sessionId);
+        // Set correlation ID in MDC for logging
+        if (correlationId != null) {
+            MDC.put(LoggingConstants.CORRELATION_ID, correlationId);
+        }
+        if (roomId != null) {
+            MDC.put(LoggingConstants.ROOM_ID, roomId);
+        }
+        if (userId != null) {
+            MDC.put(LoggingConstants.USER_ID, userId);
+        }
 
-        // Clean up session tracking
-        sessionIdToSession.remove(sessionId);
+        try {
+            // Clean up pending join timeout
+            pendingJoins.remove(sessionId);
 
-        if (roomId != null && userId != null) {
+            // Clean up session tracking
+            sessionIdToSession.remove(sessionId);
+
+            if (roomId != null && userId != null) {
             // Broadcast participant_left event to remaining participants
             String reason = mapCloseReasonToString(closeReason);
             WebSocketMessage leftMessage = WebSocketMessage.createParticipantLeft(
@@ -243,11 +271,15 @@ public class RoomWebSocketHandler {
             );
             connectionRegistry.broadcastToRoom(roomId, leftMessage);
 
-            Log.infof("WebSocket connection closed: user %s, room %s, session %s, reason: %s (%s)",
-                    userId, roomId, sessionId, closeReason.getReasonPhrase(), closeReason.getCloseCode());
-        } else {
-            Log.infof("WebSocket connection closed: session %s (not fully initialized), reason: %s",
-                    sessionId, closeReason.getReasonPhrase());
+                Log.infof("WebSocket connection closed: user %s, room %s, session %s, reason: %s (%s)",
+                        userId, roomId, sessionId, closeReason.getReasonPhrase(), closeReason.getCloseCode());
+            } else {
+                Log.infof("WebSocket connection closed: session %s (not fully initialized), reason: %s",
+                        sessionId, closeReason.getReasonPhrase());
+            }
+        } finally {
+            // Clean up MDC
+            MDC.clear();
         }
     }
 
@@ -267,10 +299,21 @@ public class RoomWebSocketHandler {
         String sessionId = session.getId();
         String userId = (String) session.getUserProperties().get(USER_ID_KEY);
         String roomId = (String) session.getUserProperties().get(ROOM_ID_KEY);
+        String correlationId = (String) session.getUserProperties().get(LoggingConstants.WS_CORRELATION_ID_PROPERTY);
 
-        Log.debugf("Received message from session %s: %s", sessionId, messageText);
+        // Set correlation ID in MDC for all log entries during message processing
+        if (correlationId != null) {
+            MDC.put(LoggingConstants.CORRELATION_ID, correlationId);
+        }
+        if (roomId != null) {
+            MDC.put(LoggingConstants.ROOM_ID, roomId);
+        }
+        if (userId != null) {
+            MDC.put(LoggingConstants.USER_ID, userId);
+        }
 
         try {
+            Log.debugf("Received message from session %s: %s", sessionId, messageText);
             // Parse message envelope
             WebSocketMessage message = objectMapper.readValue(messageText, WebSocketMessage.class);
 
@@ -324,6 +367,9 @@ public class RoomWebSocketHandler {
             Log.errorf(e, "Failed to process message from session %s: %s", sessionId, messageText);
             sendError(session, UUID.randomUUID().toString(), 4004, "VALIDATION_ERROR",
                     "Invalid message format: " + e.getMessage());
+        } finally {
+            // Clean up MDC after message processing
+            MDC.clear();
         }
     }
 
@@ -356,19 +402,36 @@ public class RoomWebSocketHandler {
         String sessionId = session.getId();
         String userId = (String) session.getUserProperties().get(USER_ID_KEY);
         String roomId = (String) session.getUserProperties().get(ROOM_ID_KEY);
+        String correlationId = (String) session.getUserProperties().get(LoggingConstants.WS_CORRELATION_ID_PROPERTY);
 
-        Log.errorf(throwable, "WebSocket error: session %s, user %s, room %s",
-                sessionId, userId, roomId);
+        // Set correlation ID in MDC for logging
+        if (correlationId != null) {
+            MDC.put(LoggingConstants.CORRELATION_ID, correlationId);
+        }
+        if (roomId != null) {
+            MDC.put(LoggingConstants.ROOM_ID, roomId);
+        }
+        if (userId != null) {
+            MDC.put(LoggingConstants.USER_ID, userId);
+        }
 
         try {
-            if (session.isOpen()) {
-                session.close(new CloseReason(
-                        CloseReason.CloseCodes.UNEXPECTED_CONDITION,
-                        "Internal error: " + throwable.getMessage()
-                ));
+            Log.errorf(throwable, "WebSocket error: session %s, user %s, room %s",
+                    sessionId, userId, roomId);
+
+            try {
+                if (session.isOpen()) {
+                    session.close(new CloseReason(
+                            CloseReason.CloseCodes.UNEXPECTED_CONDITION,
+                            "Internal error: " + throwable.getMessage()
+                    ));
+                }
+            } catch (IOException e) {
+                Log.errorf(e, "Failed to close session %s after error", sessionId);
             }
-        } catch (IOException e) {
-            Log.errorf(e, "Failed to close session %s after error", sessionId);
+        } finally {
+            // Clean up MDC
+            MDC.clear();
         }
     }
 
