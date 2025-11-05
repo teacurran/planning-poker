@@ -122,15 +122,17 @@ public class RoomWebSocketHandler {
         String correlationId = UUID.randomUUID().toString();
         session.getUserProperties().put(LoggingConstants.WS_CORRELATION_ID_PROPERTY, correlationId);
 
-        // Set correlation ID in MDC for logging
+        // Set correlation ID in MDC for initial logging
         MDC.put(LoggingConstants.CORRELATION_ID, correlationId);
         MDC.put(LoggingConstants.ROOM_ID, roomId);
 
-        try {
-            Log.infof("WebSocket connection attempt: session %s, room %s", session.getId(), roomId);
+        Log.infof("WebSocket connection attempt: session %s, room %s", session.getId(), roomId);
 
-            // Extract JWT token from query parameter (optional for anonymous users)
-            String token = extractTokenFromQuery(session);
+        // Clear MDC immediately - each async callback will set its own MDC
+        MDC.clear();
+
+        // Extract JWT token from query parameter (optional for anonymous users)
+        String token = extractTokenFromQuery(session);
 
         if (token == null || token.isBlank()) {
             // Anonymous connection - validate room only
@@ -139,31 +141,47 @@ public class RoomWebSocketHandler {
             roomService.findById(roomId)
                     .subscribe().with(
                             room -> {
-                                // Room exists, allow anonymous connection
-                                // Generate anonymous user ID for this session
-                                String anonymousUserId = "anon_" + UUID.randomUUID().toString();
+                                // Set MDC for this callback's execution
+                                MDC.put(LoggingConstants.CORRELATION_ID, correlationId);
+                                MDC.put(LoggingConstants.ROOM_ID, roomId);
 
-                                // Store anonymous user ID and room ID in session properties
-                                session.getUserProperties().put(USER_ID_KEY, anonymousUserId);
-                                session.getUserProperties().put(ROOM_ID_KEY, roomId);
-                                session.getUserProperties().put("anonymous", true);
+                                try {
+                                    // Room exists, allow anonymous connection
+                                    // Generate anonymous user ID for this session
+                                    String anonymousUserId = "anon_" + UUID.randomUUID().toString();
 
-                                // Track session for join timeout enforcement
-                                sessionIdToSession.put(session.getId(), session);
+                                    // Store anonymous user ID and room ID in session properties
+                                    session.getUserProperties().put(USER_ID_KEY, anonymousUserId);
+                                    session.getUserProperties().put(ROOM_ID_KEY, roomId);
+                                    session.getUserProperties().put("anonymous", true);
 
-                                // Register connection in registry
-                                connectionRegistry.addConnection(roomId, session);
+                                    // Track session for join timeout enforcement
+                                    sessionIdToSession.put(session.getId(), session);
 
-                                // Schedule join timeout (client must send room.join.v1 within 10 seconds)
-                                scheduleJoinTimeout(session);
+                                    // Register connection in registry
+                                    connectionRegistry.addConnection(roomId, session);
 
-                                Log.infof("Anonymous WebSocket connection established: user %s, room %s, session %s",
-                                        anonymousUserId, roomId, session.getId());
+                                    // Schedule join timeout (client must send room.join.v1 within 10 seconds)
+                                    scheduleJoinTimeout(session);
+
+                                    Log.infof("Anonymous WebSocket connection established: user %s, room %s, session %s",
+                                            anonymousUserId, roomId, session.getId());
+                                } finally {
+                                    MDC.clear();
+                                }
                             },
                             failure -> {
-                                Log.errorf(failure, "Failed to establish anonymous WebSocket connection for session %s", session.getId());
-                                closeWithError(session, 4001, "ROOM_NOT_FOUND",
-                                        "Room does not exist or has been deleted");
+                                // Set MDC for this error callback's execution
+                                MDC.put(LoggingConstants.CORRELATION_ID, correlationId);
+                                MDC.put(LoggingConstants.ROOM_ID, roomId);
+
+                                try {
+                                    Log.errorf(failure, "Failed to establish anonymous WebSocket connection for session %s", session.getId());
+                                    closeWithError(session, 4001, "ROOM_NOT_FOUND",
+                                            "Room does not exist or has been deleted");
+                                } finally {
+                                    MDC.clear();
+                                }
                             }
                     );
             return;
@@ -180,40 +198,54 @@ public class RoomWebSocketHandler {
                         validationResult -> {
                             // Success: both token and room are valid
                             JwtClaims claims = validationResult.claims;
+                            String userId = claims.userId().toString();
 
-                            // Store user ID and room ID in session properties
-                            session.getUserProperties().put(USER_ID_KEY, claims.userId().toString());
-                            session.getUserProperties().put(ROOM_ID_KEY, roomId);
-                            session.getUserProperties().put("anonymous", false);
+                            // Set MDC for this callback's execution
+                            MDC.put(LoggingConstants.CORRELATION_ID, correlationId);
+                            MDC.put(LoggingConstants.ROOM_ID, roomId);
+                            MDC.put(LoggingConstants.USER_ID, userId);
 
-                            // Track session for join timeout enforcement
-                            sessionIdToSession.put(session.getId(), session);
+                            try {
+                                // Store user ID and room ID in session properties
+                                session.getUserProperties().put(USER_ID_KEY, userId);
+                                session.getUserProperties().put(ROOM_ID_KEY, roomId);
+                                session.getUserProperties().put("anonymous", false);
 
-                            // Register connection in registry
-                            connectionRegistry.addConnection(roomId, session);
+                                // Track session for join timeout enforcement
+                                sessionIdToSession.put(session.getId(), session);
 
-                            // Schedule join timeout (client must send room.join.v1 within 10 seconds)
-                            scheduleJoinTimeout(session);
+                                // Register connection in registry
+                                connectionRegistry.addConnection(roomId, session);
 
-                            Log.infof("Authenticated WebSocket connection established: user %s, room %s, session %s",
-                                    claims.userId(), roomId, session.getId());
+                                // Schedule join timeout (client must send room.join.v1 within 10 seconds)
+                                scheduleJoinTimeout(session);
+
+                                Log.infof("Authenticated WebSocket connection established: user %s, room %s, session %s",
+                                        claims.userId(), roomId, session.getId());
+                            } finally {
+                                MDC.clear();
+                            }
                         },
                         failure -> {
-                            // Failure: either token invalid or room not found
-                            Log.errorf(failure, "Failed to establish WebSocket connection for session %s", session.getId());
+                            // Set MDC for this error callback's execution
+                            MDC.put(LoggingConstants.CORRELATION_ID, correlationId);
+                            MDC.put(LoggingConstants.ROOM_ID, roomId);
 
-                            if (failure instanceof RoomNotFoundException) {
-                                closeWithError(session, 4001, "ROOM_NOT_FOUND",
-                                        "Room does not exist or has been deleted");
-                            } else {
-                                closeWithError(session, 4000, "UNAUTHORIZED", "Invalid or expired JWT token");
+                            try {
+                                // Failure: either token invalid or room not found
+                                Log.errorf(failure, "Failed to establish WebSocket connection for session %s", session.getId());
+
+                                if (failure instanceof RoomNotFoundException) {
+                                    closeWithError(session, 4001, "ROOM_NOT_FOUND",
+                                            "Room does not exist or has been deleted");
+                                } else {
+                                    closeWithError(session, 4000, "UNAUTHORIZED", "Invalid or expired JWT token");
+                                }
+                            } finally {
+                                MDC.clear();
                             }
                         }
                 );
-        } finally {
-            // Clean up MDC after onOpen processing
-            MDC.clear();
-        }
     }
 
     /**
