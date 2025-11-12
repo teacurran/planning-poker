@@ -1,7 +1,6 @@
 # Planning Poker
 
-![Backend CI](https://github.com/YOUR_GITHUB_ORG/planning-poker/workflows/Backend%20CI/badge.svg)
-![Frontend CI](https://github.com/YOUR_GITHUB_ORG/planning-poker/workflows/Frontend%20CI/badge.svg)
+# This is a prompt-enginnered codebase
 
 A real-time Scrum Planning Poker application built with Quarkus Reactive, Hibernate Reactive with Panache, Vue.js 3, and PrimeVue.
 
