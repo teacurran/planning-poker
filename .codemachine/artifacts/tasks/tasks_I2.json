@@ -87,7 +87,7 @@
     "acceptance_criteria": "*   GET /api/v1/users/{userId} returns 200 with UserDTO\n        *   PUT /api/v1/users/{userId} updates profile, returns 200\n        *   GET preferences returns UserPreferenceDTO with JSONB fields\n        *   PUT preferences updates JSONB settings correctly\n        *   Authorization prevents user A from accessing user B's data (403 Forbidden)\n        *   DTOs match OpenAPI schemas",
     "dependencies": [],
     "parallelizable": true,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I2.T7",

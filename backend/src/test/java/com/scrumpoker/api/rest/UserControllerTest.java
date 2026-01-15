@@ -47,6 +47,7 @@ public class UserControllerTest {
         // Clean up test data before each test
         asserter.execute(() -> Panache.withTransaction(() -> userPreferenceRepository.deleteAll()));
         asserter.execute(() -> Panache.withTransaction(() -> userRepository.deleteAll()));
+        TestSecurityIdentityAugmentor.setTestUserId(TestSecurityIdentityAugmentor.TEST_USER_ID);
     }
 
     // ========================================
@@ -59,9 +60,7 @@ public class UserControllerTest {
         // Create a test user
         User testUser = createTestUser("testuser@example.com", "google", "google-123");
 
-        asserter.execute(() -> Panache.withTransaction(() ->
-            userRepository.persist(testUser)
-        ));
+        persistUserAndAuthenticate(testUser, asserter);
 
         // Retrieve user profile
         asserter.execute(() ->
@@ -80,7 +79,7 @@ public class UserControllerTest {
 
     @Test
     public void testGetUserProfile_UserNotFound_Returns404() {
-        UUID nonExistentUserId = UUID.randomUUID();
+        UUID nonExistentUserId = TestSecurityIdentityAugmentor.TEST_USER_ID;
 
         given()
         .when()
@@ -102,9 +101,7 @@ public class UserControllerTest {
         // Create a test user
         User testUser = createTestUser("updateuser@example.com", "google", "google-update");
 
-        asserter.execute(() -> Panache.withTransaction(() ->
-            userRepository.persist(testUser)
-        ));
+        persistUserAndAuthenticate(testUser, asserter);
 
         // Update profile
         UpdateProfileRequest updateRequest = new UpdateProfileRequest();
@@ -142,9 +139,7 @@ public class UserControllerTest {
         User testUser = createTestUser("displayonly@example.com", "google", "google-display");
         testUser.avatarUrl = "https://example.com/original.png";
 
-        asserter.execute(() -> Panache.withTransaction(() ->
-            userRepository.persist(testUser)
-        ));
+        persistUserAndAuthenticate(testUser, asserter);
 
         // Update only display name
         UpdateProfileRequest updateRequest = new UpdateProfileRequest();
@@ -171,9 +166,7 @@ public class UserControllerTest {
         User testUser = createTestUser("avataronly@example.com", "google", "google-avatar");
         testUser.displayName = "Original Name";
 
-        asserter.execute(() -> Panache.withTransaction(() ->
-            userRepository.persist(testUser)
-        ));
+        persistUserAndAuthenticate(testUser, asserter);
 
         // Update only avatar URL
         UpdateProfileRequest updateRequest = new UpdateProfileRequest();
@@ -199,9 +192,7 @@ public class UserControllerTest {
         // Create a test user
         User testUser = createTestUser("longname@example.com", "google", "google-long");
 
-        asserter.execute(() -> Panache.withTransaction(() ->
-            userRepository.persist(testUser)
-        ));
+        persistUserAndAuthenticate(testUser, asserter);
 
         // Try to update with display name > 100 characters
         UpdateProfileRequest updateRequest = new UpdateProfileRequest();
@@ -220,7 +211,7 @@ public class UserControllerTest {
 
     @Test
     public void testUpdateUserProfile_UserNotFound_Returns404() {
-        UUID nonExistentUserId = UUID.randomUUID();
+        UUID nonExistentUserId = TestSecurityIdentityAugmentor.TEST_USER_ID;
 
         UpdateProfileRequest updateRequest = new UpdateProfileRequest();
         updateRequest.displayName = "New Name";
@@ -246,9 +237,7 @@ public class UserControllerTest {
         // Create a test user
         User testUser = createTestUser("prefuser@example.com", "google", "google-pref");
 
-        asserter.execute(() -> Panache.withTransaction(() ->
-            userRepository.persist(testUser)
-        ));
+        persistUserAndAuthenticate(testUser, asserter);
 
         // Create preferences for the user (fetch user within same transaction to avoid detached entity)
         asserter.execute(() -> Panache.withTransaction(() ->
@@ -276,7 +265,7 @@ public class UserControllerTest {
     @Test
     @RunOnVertxContext
     public void testGetUserPreferences_UserNotFound_Returns404(UniAsserter asserter) {
-        UUID nonExistentUserId = UUID.randomUUID();
+        UUID nonExistentUserId = TestSecurityIdentityAugmentor.TEST_USER_ID;
 
         // Try to get preferences for non-existent user
         given()
@@ -294,9 +283,7 @@ public class UserControllerTest {
         // Create a test user without preferences
         User testUser = createTestUser("nopref@example.com", "google", "google-nopref");
 
-        asserter.execute(() -> Panache.withTransaction(() ->
-            userRepository.persist(testUser)
-        ));
+        persistUserAndAuthenticate(testUser, asserter);
 
         // Get preferences - should return defaults (created by UserService)
         asserter.execute(() ->
@@ -320,9 +307,7 @@ public class UserControllerTest {
         // Create a test user
         User testUser = createTestUser("updatepref@example.com", "google", "google-updatepref");
 
-        asserter.execute(() -> Panache.withTransaction(() ->
-            userRepository.persist(testUser)
-        ));
+        persistUserAndAuthenticate(testUser, asserter);
 
         // Create initial preferences (fetch user within transaction)
         asserter.execute(() -> Panache.withTransaction(() ->
@@ -374,9 +359,7 @@ public class UserControllerTest {
         // Create a test user
         User testUser = createTestUser("jsonbtest@example.com", "google", "google-jsonb");
 
-        asserter.execute(() -> Panache.withTransaction(() ->
-            userRepository.persist(testUser)
-        ));
+        persistUserAndAuthenticate(testUser, asserter);
 
         // Create initial preferences (fetch user within transaction)
         asserter.execute(() -> Panache.withTransaction(() ->
@@ -449,9 +432,7 @@ public class UserControllerTest {
         // Create a test user with existing preferences
         User testUser = createTestUser("partial@example.com", "google", "google-partial");
 
-        asserter.execute(() -> Panache.withTransaction(() ->
-            userRepository.persist(testUser)
-        ));
+        persistUserAndAuthenticate(testUser, asserter);
 
         asserter.execute(() -> Panache.withTransaction(() ->
             userRepository.findById(testUser.userId).flatMap(user -> {
@@ -479,7 +460,7 @@ public class UserControllerTest {
 
     @Test
     public void testUpdateUserPreferences_UserNotFound_Returns404() {
-        UUID nonExistentUserId = UUID.randomUUID();
+        UUID nonExistentUserId = TestSecurityIdentityAugmentor.TEST_USER_ID;
 
         UpdateUserPreferenceRequest updateRequest = new UpdateUserPreferenceRequest();
         updateRequest.theme = "light";
@@ -496,14 +477,39 @@ public class UserControllerTest {
     }
 
     // ========================================
-    // Authorization Tests (Future - Iteration 3)
+    // Authorization Tests
     // ========================================
 
-    // NOTE: Authorization (403 Forbidden) tests are not implemented yet.
-    // These will be added in Iteration 3 when JWT authentication is implemented.
-    // Expected behavior:
-    // - Users should only be able to update their own profile (403 if accessing another user's profile)
-    // - Users should only be able to view/update their own preferences (403 for other users)
+    @Test
+    public void testGetUserProfile_OtherUser_Returns403() {
+        UUID otherUserId = UUID.randomUUID();
+
+        given()
+        .when()
+            .get("/api/v1/users/" + otherUserId)
+        .then()
+            .statusCode(403)
+            .body("error", equalTo("FORBIDDEN"))
+            .body("message", containsString("access their own profile"));
+    }
+
+    @Test
+    public void testUpdateUserPreferences_OtherUser_Returns403() {
+        UUID otherUserId = UUID.randomUUID();
+
+        UpdateUserPreferenceRequest updateRequest = new UpdateUserPreferenceRequest();
+        updateRequest.theme = "light";
+
+        given()
+            .contentType(ContentType.JSON)
+            .body(updateRequest)
+        .when()
+            .put("/api/v1/users/" + otherUserId + "/preferences")
+        .then()
+            .statusCode(403)
+            .body("error", equalTo("FORBIDDEN"))
+            .body("message", containsString("preferences"));
+    }
 
     // ========================================
     // Helper Methods
@@ -521,6 +527,13 @@ public class UserControllerTest {
         user.displayName = "Test User";
         user.subscriptionTier = SubscriptionTier.FREE;
         return user;
+    }
+
+    private void persistUserAndAuthenticate(User user, UniAsserter asserter) {
+        asserter.execute(() -> Panache.withTransaction(() ->
+            userRepository.persist(user)
+                .invoke(persisted -> TestSecurityIdentityAugmentor.setTestUserId(persisted.userId))
+        ));
     }
 
     /**

@@ -2,8 +2,8 @@ package com.scrumpoker.api.rest;
 
 import com.scrumpoker.api.rest.dto.*;
 import com.scrumpoker.api.rest.mapper.UserMapper;
-import com.scrumpoker.domain.user.UserPreferenceConfig;
 import com.scrumpoker.domain.user.UserService;
+import com.scrumpoker.security.SecurityContextImpl;
 import io.smallrye.mutiny.Uni;
 import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
@@ -31,11 +31,18 @@ import java.util.UUID;
 @Tag(name = "Users", description = "User profile and preferences management endpoints")
 public class UserController {
 
+    private static final String ROLE_USER = "USER";
+    private static final String ROLE_ADMIN = "ADMIN";
+    private static final String ROLE_ORG_ADMIN = "ORG_ADMIN";
+
     @Inject
     UserService userService;
 
     @Inject
     UserMapper userMapper;
+
+    @Inject
+    SecurityContextImpl securityContext;
 
     /**
      * GET /api/v1/users/{userId} - Retrieve user profile
@@ -44,6 +51,7 @@ public class UserController {
      */
     @GET
     @Path("/users/{userId}")
+    @RolesAllowed({ROLE_USER, ROLE_ADMIN, ROLE_ORG_ADMIN})
     @Operation(summary = "Retrieve user profile",
         description = "Returns public profile information for a user. Users can view their own full profile or other users' public profiles.")
     @APIResponse(responseCode = "200", description = "User profile retrieved",
@@ -58,8 +66,7 @@ public class UserController {
             @Parameter(description = "User UUID", required = true)
             @PathParam("userId") UUID userId) {
 
-        // TODO: Add authentication check when JWT is implemented in Iteration 3
-        // For now, allow any user to view any profile
+        authorizeUserAccess(userId);
 
         return userService.getUserById(userId)
             .onItem().transform(user -> {
@@ -77,7 +84,7 @@ public class UserController {
      */
     @PUT
     @Path("/users/{userId}")
-    @RolesAllowed("USER") // Will be enforced when auth is implemented in Iteration 3
+    @RolesAllowed({ROLE_USER, ROLE_ADMIN, ROLE_ORG_ADMIN})
     @Operation(summary = "Update user profile",
         description = "Updates display name and avatar URL. Users can only update their own profile.")
     @APIResponse(responseCode = "200", description = "Profile updated successfully",
@@ -97,8 +104,7 @@ public class UserController {
             @PathParam("userId") UUID userId,
             @Valid UpdateProfileRequest request) {
 
-        // TODO: Verify authenticated user can only update their own profile when auth is implemented (Iteration 3)
-        // TODO: Return 403 Forbidden if user tries to update another user's profile
+        authorizeUserAccess(userId);
 
         return userService.updateProfile(userId, request.displayName, request.avatarUrl)
             .onItem().transform(user -> {
@@ -117,7 +123,7 @@ public class UserController {
      */
     @GET
     @Path("/users/{userId}/preferences")
-    @RolesAllowed("USER") // Will be enforced when auth is implemented in Iteration 3
+    @RolesAllowed({ROLE_USER, ROLE_ADMIN, ROLE_ORG_ADMIN})
     @Operation(summary = "Get user preferences",
         description = "Returns saved user preferences including default room settings, theme, and notification preferences.")
     @APIResponse(responseCode = "200", description = "Preferences retrieved",
@@ -134,8 +140,7 @@ public class UserController {
             @Parameter(description = "User UUID", required = true)
             @PathParam("userId") UUID userId) {
 
-        // TODO: Verify authenticated user can only access their own preferences when auth is implemented (Iteration 3)
-        // TODO: Return 403 Forbidden if user tries to access another user's preferences
+        authorizeUserAccess(userId);
 
         return userService.getPreferences(userId)
             .onItem().transform(preference -> {
@@ -153,7 +158,7 @@ public class UserController {
      */
     @PUT
     @Path("/users/{userId}/preferences")
-    @RolesAllowed("USER") // Will be enforced when auth is implemented in Iteration 3
+    @RolesAllowed({ROLE_USER, ROLE_ADMIN, ROLE_ORG_ADMIN})
     @Operation(summary = "Update user preferences",
         description = "Updates user preferences for default room configuration, theme, and notifications.")
     @APIResponse(responseCode = "200", description = "Preferences updated",
@@ -173,11 +178,7 @@ public class UserController {
             @PathParam("userId") UUID userId,
             @Valid UpdateUserPreferenceRequest request) {
 
-        // TODO: Verify authenticated user can only update their own preferences when auth is implemented (Iteration 3)
-        // TODO: Return 403 Forbidden if user tries to update another user's preferences
-
-        // Convert request DTO to UserPreferenceConfig
-        UserPreferenceConfig config = userMapper.toConfig(request);
+        authorizeUserAccess(userId);
 
         return userService.updatePreferences(userId, request.theme, request.defaultDeckType,
                 request.defaultRoomConfig, request.notificationSettings, userMapper)
@@ -187,5 +188,36 @@ public class UserController {
             });
         // UserNotFoundException is handled by UserNotFoundExceptionMapper
         // IllegalArgumentException is handled by IllegalArgumentExceptionMapper
+    }
+
+    private void authorizeUserAccess(UUID targetUserId) {
+        if (targetUserId == null) {
+            throw new BadRequestException("User ID is required");
+        }
+
+        if (hasAdminPrivileges()) {
+            return;
+        }
+
+        UUID currentUserId = requireAuthenticatedUser();
+        if (!currentUserId.equals(targetUserId)) {
+            throw new ForbiddenException("Users can only access their own profile and preferences unless they are an admin");
+        }
+    }
+
+    private UUID requireAuthenticatedUser() {
+        try {
+            UUID currentUserId = securityContext.getCurrentUserId();
+            if (currentUserId == null) {
+                throw new NotAuthorizedException("Authentication is required");
+            }
+            return currentUserId;
+        } catch (IllegalStateException ex) {
+            throw new NotAuthorizedException("Authentication is required");
+        }
+    }
+
+    private boolean hasAdminPrivileges() {
+        return securityContext.hasRole(ROLE_ADMIN) || securityContext.hasRole(ROLE_ORG_ADMIN);
     }
 }

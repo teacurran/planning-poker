@@ -11,6 +11,7 @@ import jakarta.enterprise.inject.Alternative;
 
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Test-only security identity augmentor for integration tests.
@@ -26,11 +27,26 @@ import java.util.UUID;
 public class TestSecurityIdentityAugmentor implements SecurityIdentityAugmentor {
 
     public static final UUID TEST_USER_ID = UUID.fromString("00000000-0000-0000-0000-000000000001");
+    private static final AtomicReference<UUID> CURRENT_USER_ID = new AtomicReference<>(TEST_USER_ID);
+
+    public static void setTestUserId(UUID userId) {
+        if (userId == null) {
+            CURRENT_USER_ID.set(TEST_USER_ID);
+        } else {
+            CURRENT_USER_ID.set(userId);
+        }
+    }
 
     @Override
     public Uni<SecurityIdentity> augment(SecurityIdentity identity, AuthenticationRequestContext context) {
+        UUID principalIdValue = CURRENT_USER_ID.get();
+        if (principalIdValue == null) {
+            principalIdValue = TEST_USER_ID;
+        }
+        final UUID principalId = principalIdValue;
+
         JwtClaims claims = new JwtClaims(
-            TEST_USER_ID,
+            principalId,
             "test-user@example.com",
             List.of("USER"),
             "PRO"
@@ -38,7 +54,7 @@ public class TestSecurityIdentityAugmentor implements SecurityIdentityAugmentor 
 
         return Uni.createFrom().item(QuarkusSecurityIdentity.builder()
             .setAnonymous(false)
-            .setPrincipal(() -> TEST_USER_ID.toString())
+            .setPrincipal(() -> principalId.toString())
             .addRole("USER")
             .addAttribute("jwt.claims", claims)
             .build());
