@@ -1,4 +1,8 @@
 .codemachine/memory
+.codemachine/logs
+.codemachine/prompts
+.codemachine/agents
+.codemachine/template.json
 node_modules/
 
 # macOS
