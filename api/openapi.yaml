@@ -570,6 +570,52 @@ paths:
         '500':
           $ref: '#/components/responses/InternalServerError'
 
+  /api/v1/subscriptions/plans:
+    get:
+      tags:
+        - Subscriptions
+      summary: List available subscription plans
+      description: |
+        Returns metadata for each subscription tier including pricing, feature limits, and export capabilities.
+        Public endpoint for displaying pricing tables.
+      operationId: listSubscriptionPlans
+      security: []  # Public
+      responses:
+        '200':
+          description: Subscription plans retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubscriptionPlanListResponse'
+              example:
+                plans:
+                  - tier: "FREE"
+                    monthlyPrice: 0
+                    maxActiveRooms: 5
+                    historyDays: 30
+                    features:
+                      - "Basic decks"
+                      - "30-day history"
+                  - tier: "PRO"
+                    monthlyPrice: 15
+                    maxActiveRooms: 50
+                    historyDays: 90
+                    features:
+                      - "Advanced reports"
+                      - "CSV export"
+                  - tier: "ENTERPRISE"
+                    monthlyPrice: 50
+                    maxActiveRooms: -1
+                    historyDays: -1
+                    features:
+                      - "SSO"
+                      - "Audit logs"
+                      - "Dedicated support"
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
   /api/v1/billing/invoices:
     get:
       tags:
@@ -760,6 +806,52 @@ paths:
   # ORGANIZATION MANAGEMENT ENDPOINTS
   # ===========================================
   /api/v1/organizations:
+    get:
+      tags:
+        - Organizations
+      summary: List organizations for current user
+      description: |
+        Returns paginated list of organizations the requesting user has access to. Enterprise admins can filter by tier.
+      operationId: listOrganizations
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/SizeParam'
+        - name: tier
+          in: query
+          schema:
+            $ref: '#/components/schemas/SubscriptionTier'
+          description: Filter organizations by subscription tier (Enterprise admins only)
+          example: "ENTERPRISE"
+      responses:
+        '200':
+          description: Organization list retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrganizationListResponse'
+              example:
+                organizations:
+                  - orgId: "123e4567-e89b-12d3-a456-426614174000"
+                    name: "Acme Corporation"
+                    domain: "acme.com"
+                    memberCount: 42
+                    subscriptionId: "550e8400-e29b-41d4-a716-446655440000"
+                    createdAt: "2025-01-01T00:00:00Z"
+                    updatedAt: "2025-01-10T15:30:00Z"
+                    branding:
+                      logoUrl: "https://cdn.acme.com/logo.png"
+                      primaryColor: "#0066CC"
+                      secondaryColor: "#FF6600"
+                page: 0
+                size: 20
+                totalElements: 1
+                totalPages: 1
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
     post:
       tags:
         - Organizations
@@ -818,6 +910,45 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
+    put:
+      tags:
+        - Organizations
+      summary: Update organization settings
+      description: |
+        Updates organization display name, domain, or branding. **Requires ADMIN role.**
+      operationId: updateOrganization
+      parameters:
+        - $ref: '#/components/parameters/OrgIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateOrganizationRequest'
+            example:
+              name: "Acme Corp"
+              domain: "acme.com"
+              branding:
+                logoUrl: "https://cdn.acme.com/logo.png"
+                primaryColor: "#0066CC"
+                secondaryColor: "#FF6600"
+      responses:
+        '200':
+          description: Organization updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrganizationDTO'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
 
   /api/v1/organizations/{orgId}/sso:
     put:
@@ -854,6 +985,49 @@ paths:
           $ref: '#/components/responses/InternalServerError'
 
   /api/v1/organizations/{orgId}/members:
+    get:
+      tags:
+        - Organizations
+      summary: List organization members
+      description: |
+        Returns paginated list of organization members. **Requires ADMIN role.**
+      operationId: listOrganizationMembers
+      parameters:
+        - $ref: '#/components/parameters/OrgIdPath'
+        - name: role
+          in: query
+          schema:
+            $ref: '#/components/schemas/OrgRole'
+          description: Filter members by role
+          example: "ADMIN"
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/SizeParam'
+      responses:
+        '200':
+          description: Member list retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrgMemberListResponse'
+              example:
+                members:
+                  - userId: "123e4567-e89b-12d3-a456-426614174000"
+                    displayName: "Alice Smith"
+                    email: "alice@acme.com"
+                    role: "ADMIN"
+                    joinedAt: "2025-01-01T00:00:00Z"
+                page: 0
+                size: 20
+                totalElements: 1
+                totalPages: 1
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
     post:
       tags:
         - Organizations
@@ -1246,10 +1420,11 @@ components:
           description: User display name
           example: "Alice Smith"
         avatarUrl:
-          type: string
+          type:
+            - string
+            - 'null'
           format: uri
           maxLength: 500
-          nullable: true
           description: Profile avatar URL
           example: "https://example.com/avatar.jpg"
         subscriptionTier:
@@ -1274,10 +1449,11 @@ components:
           description: Updated display name
           example: "Alice Smith"
         avatarUrl:
-          type: string
+          type:
+            - string
+            - 'null'
           format: uri
           maxLength: 500
-          nullable: true
           description: Updated avatar URL
           example: "https://example.com/avatar.jpg"
 
@@ -1354,15 +1530,17 @@ components:
           description: 6-character room identifier (nanoid)
           example: "abc123"
         ownerId:
-          type: string
+          type:
+            - string
+            - 'null'
           format: uuid
-          nullable: true
           description: Owner user ID (null for anonymous rooms)
           example: "123e4567-e89b-12d3-a456-426614174000"
         organizationId:
-          type: string
+          type:
+            - string
+            - 'null'
           format: uuid
-          nullable: true
           description: Organization ID (null for personal rooms)
           example: "123e4567-e89b-12d3-a456-426614174000"
         title:
@@ -1469,9 +1647,10 @@ components:
           description: Participant identifier (userId or anonymousId)
           example: "123e4567-e89b-12d3-a456-426614174000"
         userId:
-          type: string
+          type:
+            - string
+            - 'null'
           format: uuid
-          nullable: true
           description: User ID (null for anonymous)
           example: "123e4567-e89b-12d3-a456-426614174000"
         displayName:
@@ -1480,9 +1659,10 @@ components:
           description: Display name in room
           example: "Alice Smith"
         avatarUrl:
-          type: string
+          type:
+            - string
+            - 'null'
           format: uri
-          nullable: true
           description: Avatar URL
           example: "https://example.com/avatar.jpg"
         role:
@@ -1569,9 +1749,10 @@ components:
           description: Current billing period end
           example: "2025-02-01T00:00:00Z"
         canceledAt:
-          type: string
+          type:
+            - string
+            - 'null'
           format: date-time
-          nullable: true
           description: Cancellation timestamp (null if active)
           example: null
         createdAt:
@@ -1618,6 +1799,52 @@ components:
           format: uri
           description: Stripe Checkout URL for redirect
           example: "https://checkout.stripe.com/pay/cs_test_a1..."
+
+    SubscriptionPlanDTO:
+      type: object
+      required:
+        - tier
+        - monthlyPrice
+        - maxActiveRooms
+        - historyDays
+        - features
+      properties:
+        tier:
+          $ref: '#/components/schemas/SubscriptionTier'
+        monthlyPrice:
+          type: number
+          format: float
+          minimum: 0
+          description: Monthly price per seat in USD
+          example: 15
+        maxActiveRooms:
+          type: integer
+          description: Maximum number of concurrently active rooms (-1 for unlimited)
+          example: 50
+        historyDays:
+          type: integer
+          description: Number of days of session history retention (-1 for unlimited)
+          example: 90
+        features:
+          type: array
+          description: Notable feature list
+          items:
+            type: string
+            maxLength: 255
+          example:
+            - "Advanced reports"
+            - "CSV export"
+
+    SubscriptionPlanListResponse:
+      type: object
+      required:
+        - plans
+      properties:
+        plans:
+          type: array
+          description: Available subscription plans
+          items:
+            $ref: '#/components/schemas/SubscriptionPlanDTO'
 
     PaymentHistoryDTO:
       type: object
@@ -1749,9 +1976,10 @@ components:
                 type: object
                 properties:
                   userId:
-                    type: string
+                    type:
+                      - string
+                      - 'null'
                     format: uuid
-                    nullable: true
                   displayName:
                     type: string
                   role:
@@ -1779,9 +2007,10 @@ components:
           description: Round sequence number (1-indexed)
           example: 1
         storyTitle:
-          type: string
+          type:
+            - string
+            - 'null'
           maxLength: 500
-          nullable: true
           description: Story being estimated
           example: "As a user, I want to login with Google"
         startedAt:
@@ -1790,21 +2019,24 @@ components:
           description: Round start timestamp
           example: "2025-01-15T10:00:00Z"
         revealedAt:
-          type: string
+          type:
+            - string
+            - 'null'
           format: date-time
-          nullable: true
           description: Vote reveal timestamp
           example: "2025-01-15T10:05:00Z"
         average:
-          type: number
+          type:
+            - number
+            - 'null'
           format: double
-          nullable: true
           description: Average of numeric votes
           example: 5.6
         median:
-          type: number
+          type:
+            - number
+            - 'null'
           format: double
-          nullable: true
           description: Median of numeric votes
           example: 5.0
         consensusReached:
@@ -1940,20 +2172,23 @@ components:
           description: Job creation timestamp
           example: "2025-01-15T10:00:00Z"
         completedAt:
-          type: string
+          type:
+            - string
+            - 'null'
           format: date-time
-          nullable: true
           description: Job completion timestamp
           example: "2025-01-15T10:05:00Z"
         downloadUrl:
-          type: string
+          type:
+            - string
+            - 'null'
           format: uri
-          nullable: true
           description: Download URL (expires in 24h)
           example: "https://cdn.planningpoker.example.com/exports/abc123.csv"
         error:
-          type: string
-          nullable: true
+          type:
+            - string
+            - 'null'
           description: Error message if status is FAILED
           example: null
 
@@ -1988,9 +2223,10 @@ components:
         branding:
           $ref: '#/components/schemas/BrandingDTO'
         subscriptionId:
-          type: string
+          type:
+            - string
+            - 'null'
           format: uuid
-          nullable: true
           description: Associated subscription ID
           example: "550e8400-e29b-41d4-a716-446655440000"
         memberCount:
@@ -2007,6 +2243,36 @@ components:
           format: date-time
           description: Last update timestamp
           example: "2025-01-10T15:30:00Z"
+
+    OrganizationListResponse:
+      type: object
+      required:
+        - organizations
+        - page
+        - size
+        - totalElements
+        - totalPages
+      properties:
+        organizations:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrganizationDTO'
+        page:
+          type: integer
+          description: Current page number (0-indexed)
+          example: 0
+        size:
+          type: integer
+          description: Page size
+          example: 20
+        totalElements:
+          type: integer
+          description: Total number of organizations
+          example: 2
+        totalPages:
+          type: integer
+          description: Total number of pages
+          example: 1
 
     SsoConfigDTO:
       type: object
@@ -2091,6 +2357,22 @@ components:
         branding:
           $ref: '#/components/schemas/BrandingDTO'
 
+    UpdateOrganizationRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 255
+          description: Updated organization display name
+          example: "Acme Corp"
+        domain:
+          type: string
+          maxLength: 255
+          description: Updated organization email domain
+          example: "acme.com"
+        branding:
+          $ref: '#/components/schemas/BrandingDTO'
+
     SsoConfigRequest:
       type: object
       required:
@@ -2150,9 +2432,10 @@ components:
           description: User email
           example: "alice@acme.com"
         avatarUrl:
-          type: string
+          type:
+            - string
+            - 'null'
           format: uri
-          nullable: true
           description: Avatar URL
           example: "https://example.com/avatar.jpg"
         role:
@@ -2162,6 +2445,36 @@ components:
           format: date-time
           description: Membership start timestamp
           example: "2025-01-01T00:00:00Z"
+
+    OrgMemberListResponse:
+      type: object
+      required:
+        - members
+        - page
+        - size
+        - totalElements
+        - totalPages
+      properties:
+        members:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrgMemberDTO'
+        page:
+          type: integer
+          description: Current page number (0-indexed)
+          example: 0
+        size:
+          type: integer
+          description: Page size
+          example: 20
+        totalElements:
+          type: integer
+          description: Total number of members
+          example: 10
+        totalPages:
+          type: integer
+          description: Total number of pages
+          example: 1
 
     InviteMemberRequest:
       type: object
@@ -2191,15 +2504,17 @@ components:
           description: Log entry unique identifier
           example: "123e4567-e89b-12d3-a456-426614174000"
         orgId:
-          type: string
+          type:
+            - string
+            - 'null'
           format: uuid
-          nullable: true
           description: Organization ID
           example: "123e4567-e89b-12d3-a456-426614174000"
         userId:
-          type: string
+          type:
+            - string
+            - 'null'
           format: uuid
-          nullable: true
           description: Acting user ID
           example: "123e4567-e89b-12d3-a456-426614174000"
         action:
@@ -2213,21 +2528,24 @@ components:
           description: Resource type affected
           example: "USER"
         resourceId:
-          type: string
+          type:
+            - string
+            - 'null'
           maxLength: 255
-          nullable: true
           description: Resource identifier
           example: "123e4567-e89b-12d3-a456-426614174000"
         ipAddress:
-          type: string
+          type:
+            - string
+            - 'null'
           maxLength: 45
-          nullable: true
           description: Client IP address
           example: "192.168.1.1"
         userAgent:
-          type: string
+          type:
+            - string
+            - 'null'
           maxLength: 500
-          nullable: true
           description: Client user agent
           example: "Mozilla/5.0..."
         timestamp:
