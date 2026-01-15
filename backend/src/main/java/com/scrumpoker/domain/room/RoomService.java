@@ -26,7 +26,7 @@ public class RoomService {
 
     private static final String NANOID_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
     private static final int NANOID_LENGTH = 6;
-    private static final int MAX_TITLE_LENGTH = 255;
+    private static final int MAX_TITLE_LENGTH = 200;
     private static final SecureRandom RANDOM = new SecureRandom();
 
     @Inject
@@ -44,7 +44,7 @@ public class RoomService {
      * and initializes JSONB config. Enforces subscription tier
      * requirements for privacy modes.
      *
-     * @param title The room title (max 255 characters)
+     * @param title The room title (max 200 characters)
      * @param privacyMode The privacy mode (PUBLIC, INVITE_ONLY,
      *                    ORG_RESTRICTED)
      * @param owner The room owner (nullable for anonymous rooms)
@@ -87,6 +87,7 @@ public class RoomService {
         if (config == null) {
             config = new RoomConfig();
         }
+        validateRoomConfig(config);
 
         // Create room entity
         Room room = new Room();
@@ -116,6 +117,7 @@ public class RoomService {
         if (config == null) {
             return Uni.createFrom().failure(new IllegalArgumentException("Room config cannot be null"));
         }
+        validateRoomConfig(config);
 
         return findById(roomId)
             .onItem().transform(room -> {
@@ -130,7 +132,7 @@ public class RoomService {
      * Updates the title of an existing room.
      *
      * @param roomId The room ID
-     * @param title The new room title (max 255 characters)
+     * @param title The new room title (max 200 characters)
      * @return Uni containing the updated room
      * @throws IllegalArgumentException if title is invalid
      * @throws RoomNotFoundException if room doesn't exist
@@ -275,6 +277,17 @@ public class RoomService {
             id.append(NANOID_ALPHABET.charAt(RANDOM.nextInt(NANOID_ALPHABET.length())));
         }
         return id.toString();
+    }
+
+    /**
+     * Validates that the supplied room configuration meets domain rules.
+     *
+     * @param config Room configuration to validate
+     */
+    private void validateRoomConfig(RoomConfig config) {
+        if (config.getDeckType() == null) {
+            throw new IllegalArgumentException("Room config deck type cannot be null");
+        }
     }
 
     /**

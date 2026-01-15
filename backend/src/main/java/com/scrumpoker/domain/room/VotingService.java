@@ -103,10 +103,11 @@ public class VotingService {
                                     try {
                                         RoomConfig roomConfig = objectMapper.readValue(
                                                 room.config, RoomConfig.class);
-                                        String deckType = roomConfig.getDeckType() != null
-                                                ? roomConfig.getDeckType()
+                                        DeckType deckType = roomConfig.getDeckType();
+                                        String deckTypeMetric = deckType != null
+                                                ? deckType.getJsonValue()
                                                 : "unknown";
-                                        businessMetrics.incrementVotesCast(deckType);
+                                        businessMetrics.incrementVotesCast(deckTypeMetric);
                                     } catch (JsonProcessingException e) {
                                         Log.warnf(e, "Failed to parse room config for metrics: %s", roomId);
                                         businessMetrics.incrementVotesCast("unknown");

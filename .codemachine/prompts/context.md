@@ -10,18 +10,18 @@ This is the full specification of the task you must complete.
 
 ```json
 {
-  "task_id": "I2.T2",
+  "task_id": "I2.T3",
   "iteration_id": "I2",
   "iteration_goal": "Implement foundational domain services (Room Service, basic User Service), define REST API contracts (OpenAPI specification), and establish WebSocket protocol specification to enable frontend integration and parallel feature development.",
-  "description": "Create comprehensive Markdown document specifying WebSocket communication protocol. Define message envelope structure (`{\"type\": \"message_type.v1\", \"requestId\": \"uuid\", \"payload\": {...}}`). Document all message types: client-to-server (`room.join.v1`, `vote.cast.v1`, `chat.message.v1`, `round.reveal.v1`), server-to-client (`vote.recorded.v1`, `round.revealed.v1`, `room.participant_joined.v1`, `error.v1`). Provide JSON schema for each payload type. Define error codes (4000-4999 for application errors). Specify connection lifecycle (handshake with JWT token, heartbeat protocol, graceful/ungraceful disconnection). Document versioning strategy for message types.",
-  "agent_type_hint": "DocumentationAgent",
-  "inputs": "*   WebSocket communication patterns from architecture blueprint (Section 4)\n        *   Vote casting sequence diagram\n        *   WebSocket message types overview",
+  "description": "Create `RoomService` domain service implementing core room operations: create room (generate 6-character nanoid, validate privacy mode, initialize config JSONB), update room configuration (deck type, rules, title), delete room (soft delete with `deleted_at`), find room by ID, list rooms by owner. Use `RoomRepository` for database operations. Implement reactive methods returning `Uni<>` for single results, `Multi<>` for lists. Validate business rules (room title length, valid privacy modes, deck type enum). Handle JSONB serialization for room configuration. Add transaction boundaries with `@Transactional`.",
+  "agent_type_hint": "BackendAgent",
+  "inputs": "*   Room entity and repository from I1\n        *   Room management requirements from product spec\n        *   Nanoid generation pattern (6 characters, a-z0-9)",
   "target_files": [],
   "input_files": [],
-  "deliverables": "*   Markdown specification document (10+ pages)\n        *   Message envelope definition with required/optional fields\n        *   20+ message type definitions with JSON schema payloads\n        *   Error code catalog (4000: Unauthorized, 4001: Room not found, 4002: Invalid vote, etc.)\n        *   Connection lifecycle diagram (PlantUML or Mermaid)\n        *   Versioning policy explanation (backward compatibility guarantees)",
-  "acceptance_criteria": "*   All message types from architecture blueprint documented\n        *   JSON schemas validate sample messages (test with AJV or similar validator)\n        *   Error codes cover common failure scenarios (auth, validation, server error)\n        *   Connection lifecycle clearly explains handshake, heartbeat, reconnection\n        *   Versioning strategy enables protocol evolution without breaking clients\n        *   Document reviewed by backend and frontend leads for completeness",
+  "deliverables": "*   RoomService class with methods: `createRoom()`, `updateRoomConfig()`, `deleteRoom()`, `findById()`, `findByOwnerId()`\n        *   Nanoid generation utility for unique room IDs\n        *   RoomConfig POJO with fields: deckType, timerEnabled, timerDurationSeconds, revealBehavior\n        *   Business validation (title max 200 chars, valid privacy enum)\n        *   Reactive return types (Uni, Multi)\n        *   Custom exception for room not found scenarios",
+  "acceptance_criteria": "*   Service methods compile and pass unit tests (mocked repository)\n        *   Room creation generates unique 6-character IDs (test collision resistance with 1000 iterations)\n        *   JSONB config serialization/deserialization works correctly\n        *   Soft delete sets `deleted_at` timestamp without removing database row\n        *   Business validation throws appropriate exceptions (e.g., `IllegalArgumentException` for invalid title)\n        *   Service transactional boundaries configured correctly",
   "dependencies": [],
-  "parallelizable": true,
+  "parallelizable": false,
   "done": false
 }
 ```
@@ -32,101 +32,97 @@ This is the full specification of the task you must complete.
 
 The following are the relevant sections from the architecture and plan documents, which I found by analyzing the task description.
 
-### Context: Communication Patterns (from .codemachine/artifacts/plan/01_Plan_Overview_and_Setup.md)
+### Context: Task 2.3 Implement Room Service (from .codemachine/artifacts/plan/02_Iteration_I2.md)
 
 ```markdown
-*   **Communication Patterns:**
-    *   **Synchronous REST (Request/Response):** User authentication, room CRUD, subscription management, report triggers
-    *   **Asynchronous WebSocket (Event-Driven):** Real-time vote casting, room state sync, presence updates, chat
-    *   **Asynchronous Job Processing (Fire-and-Forget):** Report exports, email notifications, analytics aggregation
-
-    **Event Flow (WebSocket):**
-    1. Client sends message to WebSocket handler
-    2. Handler validates, persists to PostgreSQL
-    3. Handler publishes event to Redis Pub/Sub channel `room:{roomId}`
-    4. All application nodes subscribed to channel receive event
-    5. Each node broadcasts to locally connected clients in that room
-
-    **Relevant Sequence Diagrams:**
-    *   Vote Casting & Round Reveal (Created in Architecture Blueprint reference)
-    *   OAuth2 Authentication Flow (Created in Architecture Blueprint reference)
+<!-- anchor: task-i2-t3 -->
+*   **Task 2.3: Implement Room Service (CRUD Operations)**
+    *   **Task ID:** `I2.T3`
+    *   **Description:** Create `RoomService` domain service implementing core room operations: create room (generate 6-character nanoid, validate privacy mode, initialize config JSONB), update room configuration (deck type, rules, title), delete room (soft delete with `deleted_at`), find room by ID, list rooms by owner. Use `RoomRepository` for database operations. Implement reactive methods returning `Uni<>` for single results, `Multi<>` for lists. Validate business rules (room title length, valid privacy modes, deck type enum). Handle JSONB serialization for room configuration. Add transaction boundaries with `@Transactional`.
+    *   **Agent Type Hint:** `BackendAgent`
+    *   **Inputs:**
+        *   Room entity and repository from I1
+        *   Room management requirements from product spec
+        *   Nanoid generation pattern (6 characters, a-z0-9)
+    *   **Input Files:**
+        *   `backend/src/main/java/com/scrumpoker/domain/room/Room.java`
+        *   `backend/src/main/java/com/scrumpoker/repository/RoomRepository.java`
+    *   **Target Files:**
+        *   `backend/src/main/java/com/scrumpoker/domain/room/RoomService.java`
+        *   `backend/src/main/java/com/scrumpoker/domain/room/RoomConfig.java` (POJO for JSONB mapping)
+        *   `backend/src/main/java/com/scrumpoker/domain/room/RoomNotFoundException.java` (custom exception)
+    *   **Deliverables:**
+        *   RoomService class with methods: `createRoom()`, `updateRoomConfig()`, `deleteRoom()`, `findById()`, `findByOwnerId()`
+        *   Nanoid generation utility for unique room IDs
+        *   RoomConfig POJO with fields: deckType, timerEnabled, timerDurationSeconds, revealBehavior
+        *   Business validation (title max 200 chars, valid privacy enum)
+        *   Reactive return types (Uni, Multi)
+        *   Custom exception for room not found scenarios
+    *   **Acceptance Criteria:**
+        *   Service methods compile and pass unit tests (mocked repository)
+        *   Room creation generates unique 6-character IDs (test collision resistance with 1000 iterations)
+        *   JSONB config serialization/deserialization works correctly
+        *   Soft delete sets `deleted_at` timestamp without removing database row
+        *   Business validation throws appropriate exceptions (e.g., `IllegalArgumentException` for invalid title)
+        *   Service transactional boundaries configured correctly
+    *   **Dependencies:** [I1.T4, I1.T7]
+    *   **Parallelizable:** No (depends on entity and repository)
 ```
 
-### Context: Asynchronous WebSocket (Event-Driven) (from .codemachine/artifacts/architecture/04_Behavior_and_Communication.md)
+### Context: Key Components Emphasizing Room Service (from .codemachine/artifacts/plan/01_Plan_Overview_and_Setup.md)
 
 ```markdown
-##### Asynchronous WebSocket (Event-Driven)
-
-**Use Cases:**
-- Real-time vote casting and vote state updates
-- Room state synchronization (participant joins/leaves, host controls)
-- Card reveal events with animated timing coordination
-- Presence updates (typing indicators, ready states)
-- Chat messages and emoji reactions
-
-**Pattern Characteristics:**
-- Persistent connection maintained for session duration
-- Events broadcast via Redis Pub/Sub to all application nodes
-- Client-side event handlers update local state optimistically, reconcile on server confirmation
-- Heartbeat/ping-pong protocol for connection liveness detection
-- Automatic reconnection with exponential backoff on connection loss
-
-**Message Flow:**
-1. Client sends WebSocket message: `{"type": "vote.cast.v1", "requestId": "uuid", "payload": {"cardValue": "5"}}`
-2. Server validates, persists vote to PostgreSQL
-3. Server publishes event to Redis channel: `room:{roomId}`
-4. All application nodes subscribed to channel receive event
-5. Each node broadcasts to locally connected clients in that room
-6. Clients receive: `{"type": "vote.recorded.v1", "requestId": "uuid", "payload": {"participantId": "...", "votedAt": "..."}}`
-
-**WebSocket Message Types:**
-- `room.join.v1` - Participant joins room
-- `room.leave.v1` - Participant exits room
-- `vote.cast.v1` - Participant submits vote
-- `vote.recorded.v1` - Server confirms vote persisted (broadcast to room)
-- `round.reveal.v1` - Host triggers card reveal
-- `round.revealed.v1` - Server broadcasts reveal with statistics
-- `round.reset.v1` - Host resets round for re-voting
-- `chat.message.v1` - Participant sends chat message
-- `presence.update.v1` - Participant status change (ready, away)
-- `error.v1` - Server-side validation or authorization error
+<!-- anchor: key-components -->
+*   **Key Components/Services:**
+    *   **REST Controllers:** HTTP endpoints for user management, room CRUD, subscriptions, reporting
+    *   **WebSocket Handlers:** Real-time connection managers for `/ws/room/{roomId}` endpoints
+    *   **Domain Services:**
+        *   User Service (registration, profile, preferences)
+        *   Room Service (creation, configuration, join logic)
+        *   Voting Service (vote casting, reveal, consensus calculation)
+        *   Billing Service (subscription tier enforcement, Stripe integration)
+        *   Reporting Service (session aggregation, analytics, export)
+        *   Organization Service (SSO config, member management, admin controls)
+    *   **Repository Layer:** Panache repositories for User, Room, Vote, Session, Subscription, Organization entities
+    *   **Integration Adapters:** OAuth2 client, SSO adapter, Stripe adapter, Email adapter
+    *   **Event Publisher/Subscriber:** Redis Pub/Sub client for WebSocket message broadcasting
+    *   **Background Worker:** Async job processor for report generation, email dispatch
 ```
 
-### Context: WebSocket Connection Lifecycle (from .codemachine/artifacts/architecture/04_Behavior_and_Communication.md)
+### Context: Component Diagram – Domain & Repository Responsibilities (from .codemachine/artifacts/architecture/03_System_Structure_and_Data.md)
 
 ```markdown
-#### WebSocket Connection Lifecycle
+<!-- anchor: component-diagram -->
+### 3.5. Component Diagram(s) (C4 Level 3 or UML)
 
-**Connection Establishment:**
-1. Client initiates WebSocket handshake: `wss://api.scrumpoker.com/ws/room/{roomId}?token={jwt}`
-2. Server validates JWT token, extracts user/participant identity
-3. Server checks room existence and user authorization (privacy mode enforcement)
-4. Server subscribes connection to Redis Pub/Sub channel: `room:{roomId}`
-5. Server broadcasts `room.participant_joined.v1` event to existing participants
-6. Server sends initial room state snapshot to newly connected client
+This Component Diagram zooms into the **Quarkus Application** container to reveal its internal modular structure. The application follows a hexagonal (ports and adapters) architecture with clear separation between domain logic, infrastructure, and API layers.
 
-**Heartbeat Protocol:**
-- Client sends `ping` frame every 30 seconds
-- Server responds with `pong` frame
-- Connection terminated if no `ping` received within 60 seconds (2x interval)
+**Key Modules:**
+- **REST Controllers:** HTTP endpoint handlers exposing RESTful APIs for user management, room CRUD, subscriptions, and reporting
+- **WebSocket Handlers:** Real-time connection managers processing vote events, room state changes, and participant actions
+- **Domain Services:** Core business logic implementing estimation rules, room lifecycle, user preferences, billing logic
+- **Repository Layer:** Data access abstractions using Hibernate Reactive Panache for PostgreSQL interactions
+- **Integration Adapters:** External service clients (OAuth2, Stripe, email) following the adapter pattern
+- **Event Publisher:** Redis Pub/Sub integration for broadcasting WebSocket messages across application nodes
 
-**Graceful Disconnection:**
-1. Client sends `room.leave.v1` message before closing connection
-2. Server persists disconnection timestamp in `RoomParticipant` table
-3. Server broadcasts `room.participant_left.v1` to remaining participants
-4. Server unsubscribes from Redis channel if no more local connections to room
+PlantUML excerpt:
+```
+Component(room_service, "Room Service", "Domain Logic", "Room creation, join logic, deck configuration, privacy controls")
+Component(room_repository, "Room Repository", "Panache Repository", "Room, RoomConfig, Vote entity persistence")
+Rel(rest_controllers, room_service, "Invokes")
+Rel(room_service, room_repository, "Persists via")
+```
+```
 
-**Ungraceful Disconnection (Network Failure):**
-1. Server detects missing heartbeat, marks connection as stale
-2. Server broadcasts `room.participant_disconnected.v1` with grace period
-3. If client reconnects within 5 minutes, restores session without re-join
-4. If timeout expires, participant marked as left, votes remain valid
+### Context: Core Gameplay Requirements – Room Controls (from .codemachine/artifacts/architecture/01_Context_and_Drivers.md)
 
-**Reconnection Strategy (Client-Side):**
-- Detect connection loss via WebSocket `onclose` event
-- Attempt reconnection with exponential backoff: 1s, 2s, 4s, 8s, 16s (max)
-- Include `lastEventId` in reconnection handshake to retrieve missed events
-- Server replays events from Redis or database within 5-minute window
+```markdown
+<!-- anchor: core-gameplay-requirements -->
+#### Core Gameplay Requirements
+- **Real-time Estimation:** WebSocket-based blind card selection with configurable deck types (Fibonacci, T-shirt, custom)
+- **Session Management:** Host controls for round lifecycle (start, lock, reveal, reset), participant management (kick, mute)
+- **Calculation Engine:** Automatic computation of average, median, and consensus indicators upon reveal
+- **Room Controls:** Unique room ID generation (6-character nanoid), shareable links, privacy modes
 ```
 
 ---
@@ -136,16 +132,22 @@ The following are the relevant sections from the architecture and plan documents
 The following analysis is based on my direct review of the current codebase. Use these notes and tips to guide your implementation.
 
 ### Relevant Existing Code
-*   **File:** `api/websocket-protocol.md`
-    *   **Summary:** Contains a 10+ section specification that already outlines the WebSocket endpoint, envelope structure, detailed client/server message catalogs, payload descriptions, connection lifecycle narrations, error taxonomy, versioning plan, troubleshooting guidance, and appendices linking to related docs. It reads like the deliverable for I2.T2.
-    *   **Recommendation:** Treat this file as the canonical spec—expand or refine it rather than starting from scratch. Ensure new requirements (additional message types, envelope clarifications, diagrams) fit the existing structure: keep headings, tables, and example payloads consistent, and update the “Last Updated” date/version as needed.
-*   **File:** `api/websocket-message-schemas.json`
-    *   **Summary:** Provides JSON Schema definitions for every message payload (join/leave, vote, round lifecycle, chat, presence, errors, room snapshots, heartbeat, reconnection). These schemas document validation rules (required fields, enums, string formats, numeric ranges) referenced by the Markdown spec.
-    *   **Recommendation:** When documenting or introducing message types, cross-reference these schemas. If you add or modify payload attributes in the Markdown file, update the corresponding schema definition to keep tooling (AJV validation, contract tests) in sync and mention schema IDs/linkbacks in the spec.
+*   **File:** `backend/src/main/java/com/scrumpoker/domain/room/RoomService.java`
+    *   **Summary:** Fully implemented domain service using Mutiny `Uni`/`Multi`, Quarkus `@WithTransaction`/`@WithSession`, and JSON serialization via Jackson to persist `Room` instances with validation, feature gating for privacy modes, plus helper methods for config handling and nanoid generation.
+    *   **Recommendation:** Reuse the existing helpers (e.g., `serializeConfig`, `generateNanoid`, `findById`) when extending behavior. The service already depends on `RoomRepository`, `FeatureGate`, and `ObjectMapper`; any new operations should follow the same validation + persistence flow and leverage Mutiny transformations rather than blocking code.
+*   **File:** `backend/src/main/java/com/scrumpoker/domain/room/RoomConfig.java`
+    *   **Summary:** Jackson-mapped POJO describing the JSONB config payload (deck type, timer controls, reveal behavior, observer flag) with defaults and getters/setters.
+    *   **Recommendation:** When modifying config semantics, update this POJO and ensure `RoomService` serialization/deserialization covers new properties. Preserve the existing snake_case `@JsonProperty` names to align with stored JSON.
+*   **File:** `backend/src/main/java/com/scrumpoker/domain/room/Room.java`
+    *   **Summary:** Hibernate Reactive entity using String primary key (6-character nanoid) with relationships to `User`, `Organization`, `RoomParticipant`, and others. Includes soft-delete support via `deletedAt` and JSONB config stored as a raw string.
+    *   **Recommendation:** Respect entity constraints when creating/updating rooms—especially `@Size` on `roomId` and `title`, enum mapping for `privacyMode`, and the expectation that `config` holds serialized JSON. Avoid bypassing these annotations by always using `RoomService` for modifications.
+*   **File:** `backend/src/main/java/com/scrumpoker/repository/RoomRepository.java`
+    *   **Summary:** Panache repository encapsulating reactive queries for owner/org-specific rooms, privacy filters, activity-based lookups, and counts.
+    *   **Recommendation:** Use these methods inside higher-level features (listing rooms, analytics) instead of writing ad-hoc queries. Ensure new `RoomService` APIs compose results through Mutiny (e.g., `findActiveByOwnerId` -> `Multi` conversion) for consistency.
 
 ### Implementation Tips & Notes
-*   **Tip:** The Markdown spec already sections “Message Envelope Format”, “Message Types”, “Connection Lifecycle”, “Error Handling”, and “Versioning Strategy”; align your additions with those sections to preserve navigability and automate TOC generation.
-*   **Tip:** The existing message catalog covers the core interactions listed in the architecture blueprint. Verify completeness against the blueprint list (join/leave, vote cast/recorded, round start/reveal/reset, presence, chat, participant join/left/disconnected, error) and document bidirectional flow expectations in each entry.
-*   **Tip:** Error codes currently live in the spec—extend them to cover all 4000-4999 cases with consistent naming, and reference which REST error they map to for troubleshooting.
-*   **Tip:** When describing lifecycle/heartbeat behavior, mirror the enumerated steps from the blueprint (JWT handshake, Redis subscriptions, ping/pong, reconnection with `lastEventId`) and consider embedding a Mermaid or PlantUML diagram, as requested in the deliverables.
-*   **Tip:** Before finalizing, validate the JSON schemas (`api/websocket-message-schemas.json`) with AJV or Spectral to ensure syntax correctness; include a brief note in the spec referencing the validation status so reviewers know the contract is machine-verifiable.
+*   **Tip:** `RoomService` already enforces subscription tier requirements through the injected `FeatureGate`; when adding new privacy options or business checks, route through the gate’s helper methods (`requireCanCreateInviteOnlyRoom`, `requireCanManageOrganization`) to keep billing logic centralized.
+*   **Tip:** JSONB persistence is handled by `serializeConfig`/`deserializeConfig`; if a workflow needs structured access to config fields, convert to `RoomConfig` rather than manipulating the raw JSON string to avoid schema drift.
+*   **Tip:** Mutiny error handling is used for validation—service methods return `Uni.createFrom().failure(...)` for invalid inputs. Follow that pattern so REST controllers can map exceptions uniformly via registered exception mappers.
+*   **Tip:** The repository and service are reactive; avoid blocking operations (e.g., `Thread.sleep`, classic JDBC). Keep transformations within `Uni`/`Multi` pipelines and prefer method references or lambdas as shown.
+*   **Note:** Because `Room` uses a human-friendly nanoid as its primary key, collision resistance matters. If you introduce batch room creation or import features, consider enhancing `generateNanoid` to check for existing IDs before persisting (there’s no guard now).

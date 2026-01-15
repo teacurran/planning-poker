@@ -42,7 +42,7 @@
     "acceptance_criteria": "*   Service methods compile and pass unit tests (mocked repository)\n        *   Room creation generates unique 6-character IDs (test collision resistance with 1000 iterations)\n        *   JSONB config serialization/deserialization works correctly\n        *   Soft delete sets `deleted_at` timestamp without removing database row\n        *   Business validation throws appropriate exceptions (e.g., `IllegalArgumentException` for invalid title)\n        *   Service transactional boundaries configured correctly",
     "dependencies": [],
     "parallelizable": false,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I2.T4",

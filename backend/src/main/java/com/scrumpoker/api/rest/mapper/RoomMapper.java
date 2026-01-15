@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.scrumpoker.api.rest.dto.RoomConfigDTO;
 import com.scrumpoker.api.rest.dto.RoomDTO;
+import com.scrumpoker.domain.room.DeckType;
 import com.scrumpoker.domain.room.PrivacyMode;
 import com.scrumpoker.domain.room.Room;
 import com.scrumpoker.domain.room.RoomConfig;
@@ -59,7 +60,11 @@ public class RoomMapper {
         }
 
         RoomConfig config = new RoomConfig();
-        config.setDeckType(dto.deckType != null ? dto.deckType : "FIBONACCI");
+        if (dto.deckType != null) {
+            config.setDeckType(dto.deckType);
+        } else {
+            config.setDeckType(DeckType.FIBONACCI);
+        }
         config.setTimerEnabled(dto.timerEnabled != null ? dto.timerEnabled : false);
         config.setTimerDurationSeconds(dto.timerDurationSeconds != null ? dto.timerDurationSeconds : 60);
         config.setRevealBehavior(dto.revealBehavior != null ? dto.revealBehavior : "MANUAL");
@@ -80,7 +85,7 @@ public class RoomMapper {
         }
 
         RoomConfigDTO dto = new RoomConfigDTO();
-        dto.deckType = config.getDeckType();
+        dto.deckType = config.getDeckType() != null ? config.getDeckType().getJsonValue() : null;
         dto.timerEnabled = config.isTimerEnabled();
         dto.timerDurationSeconds = config.getTimerDurationSeconds();
         dto.revealBehavior = config.getRevealBehavior();

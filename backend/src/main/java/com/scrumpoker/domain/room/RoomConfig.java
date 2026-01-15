@@ -9,7 +9,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 public class RoomConfig {
 
     @JsonProperty("deck_type")
-    private String deckType;
+    private DeckType deckType;
 
     @JsonProperty("timer_enabled")
     private boolean timerEnabled;
@@ -28,7 +28,7 @@ public class RoomConfig {
      */
     public RoomConfig() {
         // Sensible defaults
-        this.deckType = "FIBONACCI";
+        this.deckType = DeckType.FIBONACCI;
         this.timerEnabled = false;
         this.timerDurationSeconds = 60;
         this.revealBehavior = "MANUAL";
@@ -38,7 +38,7 @@ public class RoomConfig {
     /**
      * Constructor with all fields.
      */
-    public RoomConfig(String deckType, boolean timerEnabled, int timerDurationSeconds,
+    public RoomConfig(DeckType deckType, boolean timerEnabled, int timerDurationSeconds,
                       String revealBehavior, boolean allowObservers) {
         this.deckType = deckType;
         this.timerEnabled = timerEnabled;
@@ -49,12 +49,16 @@ public class RoomConfig {
 
     // Getters and setters
 
-    public String getDeckType() {
+    public DeckType getDeckType() {
         return deckType;
     }
 
-    public void setDeckType(String deckType) {
+    public void setDeckType(DeckType deckType) {
         this.deckType = deckType;
+    }
+
+    public void setDeckType(String deckType) {
+        this.deckType = DeckType.fromValue(deckType);
     }
 
     public boolean isTimerEnabled() {
@@ -92,7 +96,7 @@ public class RoomConfig {
     @Override
     public String toString() {
         return "RoomConfig{" +
-                "deckType='" + deckType + '\'' +
+                "deckType='" + (deckType != null ? deckType.getJsonValue() : null) + '\'' +
                 ", timerEnabled=" + timerEnabled +
                 ", timerDurationSeconds=" + timerDurationSeconds +
                 ", revealBehavior='" + revealBehavior + '\'' +

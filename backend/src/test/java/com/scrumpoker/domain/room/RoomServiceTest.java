@@ -45,7 +45,7 @@ class RoomServiceTest {
     @BeforeEach
     void setUp() {
         testConfig = new RoomConfig();
-        testConfig.setDeckType("FIBONACCI");
+        testConfig.setDeckType(DeckType.FIBONACCI);
         testConfig.setTimerEnabled(false);
         testConfig.setAllowObservers(true);
 
@@ -102,6 +102,33 @@ class RoomServiceTest {
     }
 
     @Test
+    void testCreateRoom_NanoidCollisionResistance_1000Iterations() throws JsonProcessingException {
+        // Given
+        String configJson = "{}";
+        when(objectMapper.writeValueAsString(any())).thenReturn(configJson);
+        when(roomRepository.persist(any(Room.class))).thenAnswer(invocation -> {
+            Room room = invocation.getArgument(0);
+            return Uni.createFrom().item(room);
+        });
+
+        // When - Generate 1000 room IDs
+        java.util.Set<String> generatedIds = new java.util.HashSet<>();
+        for (int i = 0; i < 1000; i++) {
+            Room result = roomService.createRoom("Test " + i, PrivacyMode.PUBLIC, null, testConfig)
+                    .await().indefinitely();
+            generatedIds.add(result.roomId);
+        }
+
+        // Then - All IDs should be unique (no collisions)
+        assertThat(generatedIds).hasSize(1000);
+        // Verify all IDs have correct format
+        generatedIds.forEach(id -> {
+            assertThat(id).hasSize(6);
+            assertThat(id).matches("[a-z0-9]{6}");
+        });
+    }
+
+    @Test
     void testCreateRoom_NullTitle_ThrowsException() {
         // When/Then
         assertThatThrownBy(() ->
@@ -130,7 +157,7 @@ class RoomServiceTest {
     @Test
     void testCreateRoom_TitleTooLong_ThrowsException() {
         // Given
-        String longTitle = "a".repeat(256);
+        String longTitle = "a".repeat(201);
 
         // When/Then
         assertThatThrownBy(() ->
@@ -138,7 +165,7 @@ class RoomServiceTest {
                         .await().indefinitely()
         )
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("cannot exceed 255 characters");
+                .hasMessageContaining("cannot exceed 200 characters");
 
         verify(roomRepository, never()).persist(any(Room.class));
     }
@@ -173,6 +200,23 @@ class RoomServiceTest {
         assertThat(result).isNotNull();
         verify(objectMapper).writeValueAsString(any(RoomConfig.class)); // Default config created
         verify(roomRepository).persist(any(Room.class));
+    }
+
+    @Test
+    void testCreateRoom_InvalidDeckType_ThrowsException() {
+        // Given
+        RoomConfig invalidConfig = new RoomConfig();
+        invalidConfig.setDeckType((DeckType) null);
+
+        // When/Then
+        assertThatThrownBy(() ->
+                roomService.createRoom("Test", PrivacyMode.PUBLIC, null, invalidConfig)
+                        .await().indefinitely()
+        )
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("deck type");
+
+        verify(roomRepository, never()).persist(any(Room.class));
     }
 
     @Test
@@ -262,6 +306,23 @@ class RoomServiceTest {
         )
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("config cannot be null");
+
+        verify(roomRepository, never()).findById(anyString());
+    }
+
+    @Test
+    void testUpdateRoomConfig_InvalidDeckType_ThrowsException() {
+        // Given
+        RoomConfig invalidConfig = new RoomConfig();
+        invalidConfig.setDeckType((DeckType) null);
+
+        // When/Then
+        assertThatThrownBy(() ->
+                roomService.updateRoomConfig("room123", invalidConfig)
+                        .await().indefinitely()
+        )
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("deck type");
 
         verify(roomRepository, never()).findById(anyString());
     }
@@ -375,7 +436,7 @@ class RoomServiceTest {
     @Test
     void testUpdateRoomTitle_TitleTooLong_ThrowsException() {
         // Given
-        String longTitle = "a".repeat(256);
+        String longTitle = "a".repeat(201);
 
         // When/Then
         assertThatThrownBy(() ->
@@ -383,7 +444,7 @@ class RoomServiceTest {
                         .await().indefinitely()
         )
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("cannot exceed 255 characters");
+                .hasMessageContaining("cannot exceed 200 characters");
 
         verify(roomRepository, never()).findById(anyString());
     }
