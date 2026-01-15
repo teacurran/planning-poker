@@ -10,16 +10,16 @@ This is the full specification of the task you must complete.
 
 ```json
 {
-  "task_id": "I1.T1",
+  "task_id": "I1.T2",
   "iteration_id": "I1",
   "iteration_goal": "Establish project scaffolding, configure development environment, define database schema, and set up CI/CD foundation to enable parallel backend and frontend development in subsequent iterations.",
-  "description": "Create Quarkus 3.x Maven project with reactive extensions (hibernate-reactive-panache, reactive-pg-client, redis-client, websockets, oidc, smallrye-jwt, micrometer-prometheus). Configure `application.properties` with database connection placeholders, Redis configuration, and JWT settings. Set up Maven build with compiler plugin (Java 17 target), Quarkus plugin, and Surefire for testing. Create package structure: `api`, `domain`, `repository`, `integration`, `event`, `config`, `security`.",
+  "description": "Create React 18 TypeScript project using Vite. Install dependencies: React, React Router, Tailwind CSS, Headless UI, Zustand, React Query, Zod, date-fns, recharts. Configure Tailwind CSS with custom theme (primary color, dark mode support). Set up directory structure: `components`, `pages`, `services`, `stores`, `types`, `utils`. Create placeholder components for routing (HomePage, RoomPage, DashboardPage). Configure TypeScript with strict mode, path aliases (`@/components`, `@/services`).",
   "agent_type_hint": "SetupAgent",
-  "inputs": "*   Directory structure specification from Section 3 of plan overview\n        *   Technology stack requirements (Quarkus 3.x, Java 17, reactive extensions)\n        *   Maven dependency list from architecture blueprint",
+  "inputs": "*   Directory structure specification from Section 3\n        *   Frontend technology stack (React 18, Vite, TypeScript, Tailwind)\n        *   List of required npm packages",
   "target_files": [],
   "input_files": [],
-  "deliverables": "*   Working Maven project buildable with `mvn clean compile`\n        *   Configured Quarkus extensions in `pom.xml`\n        *   Application properties with placeholder values for database, Redis, JWT secret\n        *   Package directory structure following hexagonal architecture",
-  "acceptance_criteria": "*   `mvn clean compile` executes without errors\n        *   `mvn quarkus:dev` starts Quarkus in dev mode and serves health check at `/q/health`\n        *   All required Quarkus extensions listed in `pom.xml` dependencies\n        *   Package structure matches specification (6+ top-level packages created)",
+  "deliverables": "*   Working React application buildable with `npm run build`\n        *   Development server runnable with `npm run dev`\n        *   Tailwind CSS configured with custom theme\n        *   TypeScript configuration with strict checks and path aliases\n        *   Placeholder page components with basic routing",
+  "acceptance_criteria": "*   `npm run dev` starts Vite dev server successfully\n        *   Navigating to `http://localhost:5173` displays HomePage component\n        *   Tailwind CSS classes render correctly (test with colored div)\n        *   TypeScript compilation successful with no errors\n        *   Path aliases work (import using `@/components/...`)",
   "dependencies": [],
   "parallelizable": true,
   "done": false
@@ -32,9 +32,41 @@ This is the full specification of the task you must complete.
 
 The following are the relevant sections from the architecture and plan documents, which I found by analyzing the task description.
 
+### Context: technology-stack (from 01_Plan_Overview_and_Setup.md)
+
+```markdown
+<!-- anchor: technology-stack -->
+*   **Technology Stack:**
+    *   **Frontend:**
+        *   Framework: React 18+ with TypeScript
+        *   UI Library: Tailwind CSS + Headless UI
+        *   State Management: Zustand (client state) + React Query (server state)
+        *   WebSocket: Native WebSocket API with reconnection wrapper
+    *   **Backend:**
+        *   Framework: Quarkus 3.x (Reactive mode)
+        *   Language: Java 17 (LTS)
+        *   Runtime: JVM mode (potential future native compilation)
+    *   **Database:**
+        *   Primary: PostgreSQL 15+ (ACID compliance, JSONB support, partitioning)
+        *   ORM: Hibernate Reactive + Panache repositories
+    *   **Messaging/Queues:**
+        *   Redis 7+ Cluster (Pub/Sub for WebSocket broadcasting, Streams for async jobs)
+    *   **Deployment:**
+        *   Containerization: Docker (multi-stage builds)
+        *   Orchestration: Kubernetes (AWS EKS or GCP GKE)
+        *   Cloud Platform: AWS (primary) with CloudFront CDN, RDS, ElastiCache
+    *   **Other Key Libraries/Tools:**
+        *   **Auth:** Quarkus OIDC extension (OAuth2/SSO), SmallRye JWT
+        *   **Payments:** Stripe Java SDK
+        *   **Logging:** SLF4J with JSON formatter, Loki/CloudWatch aggregation
+        *   **Metrics:** Prometheus + Grafana dashboards
+        *   **Testing:** Testcontainers (integration), Playwright (E2E), JUnit 5
+```
+
 ### Context: directory-structure (from 01_Plan_Overview_and_Setup.md)
 
 ```markdown
+<!-- anchor: directory-structure -->
 ## 3. Directory Structure
 
 *   **Root Directory:** `scrum-poker-platform/`
@@ -113,42 +145,56 @@ The following are the relevant sections from the architecture and plan documents
     │   │   │   └── websocket.ts          # WebSocket message types
     │   │   ├── utils/                    # Utility functions
     │   │   ├── App.tsx                   # Root component with routing
-    │   │   ├── index.tsx
-    │   │   └── ...
+    │   │   ├── index.tsx                 # Entry point
+    │   │   └── tailwind.config.js        # Tailwind CSS configuration
     │   ├── package.json
     │   ├── tsconfig.json
-    │   └── vite.config.ts
+    │   └── vite.config.ts                # Vite build configuration
     │
-    ├── marketing-site/                   # Static marketing website
+    ├── marketing-site/                   # Separate static marketing website
     │   ├── src/
     │   │   ├── pages/
+    │   │   │   ├── index.astro           # Landing page
+    │   │   │   ├── pricing.astro
+    │   │   │   ├── demo.astro
+    │   │   │   └── blog/
     │   │   ├── components/
-    │   │   ├── styles/
-    │   │   └── content/
+    │   │   └── layouts/
     │   ├── public/
-    │   ├── package.json
-    │   ├── tailwind.config.js
-    │   └── astro.config.mjs (if Astro is chosen)
+    │   │   └── assets/
+    │   ├── astro.config.mjs              # Astro framework configuration
+    │   └── package.json
     │
-    ├── api/                              # Contract-first API specifications
-    │   ├── openapi.yaml                  # REST API specification
-    │   └── websocket-protocol.md         # WebSocket message schema
+    ├── docs/                             # Documentation and design artifacts
+    │   ├── architecture/                 # System architecture blueprint (reference)
+    │   │   ├── 01_Context_and_Drivers.md
+    │   │   ├── 02_Architecture_Overview.md
+    │   │   ├── 03_System_Structure_and_Data.md
+    │   │   ├── 04_Behavior_and_Communication.md
+    │   │   ├── 05_Operational_Architecture.md
+    │   │   ├── 06_Rationale_and_Future.md
+    │   │   └── architecture_manifest.json
+    │   ├── diagrams/                     # UML and architectural diagrams
+    │   │   ├── component_diagram.puml
+    │   │   ├── sequence_vote_flow.puml
+    │   │   ├── sequence_oauth.puml
+    │   │   ├── erd.puml
+    │   │   └── deployment_aws.puml
+    │   ├── adr/                          # Architectural Decision Records
+    │   │   ├── 001-modular-monolith.md
+    │   │   ├── 002-quarkus-reactive.md
+    │   │   └── ...
+    │   └── runbooks/                     # Operational runbooks
+    │       ├── deployment.md
+    │       ├── disaster-recovery.md
+    │       └── scaling.md
     │
-    ├── docs/                             # Architecture, ADRs, diagrams
-    │   ├── 01_Context_and_Drivers.md
-    │   ├── 02_Architecture_Overview.md
-    │   ├── 03_System_Structure_and_Data.md
-    │   ├── 04_Behavior_and_Communication.md
-    │   ├── 05_Operational_Architecture.md
-    │   ├── 06_Rationale_and_Future.md
-    │   └── diagrams/
-    │       ├── c4-system.puml
-    │       ├── c4-container.puml
-    │       ├── erd.puml
-    │       └── sequence-vote-round.puml
+    ├── api/                              # API specifications
+    │   ├── openapi.yaml                  # OpenAPI 3.1 REST API spec
+    │   └── websocket-protocol.md         # WebSocket message catalog
     │
-    ├── infra/                            # Infrastructure-as-code
-    │   ├── kubernetes/
+    ├── infra/                            # Infrastructure as Code
+    │   ├── kubernetes/                   # Kubernetes manifests
     │   │   ├── base/
     │   │   │   ├── deployment.yaml
     │   │   │   ├── service.yaml
@@ -202,110 +248,27 @@ The following are the relevant sections from the architecture and plan documents
 9. **Testcontainers Support (`backend/src/test/`):** Integration tests with real PostgreSQL/Redis instances for high confidence
 ```
 
-### Context: technology-stack (from 01_Plan_Overview_and_Setup.md)
+### Context: usability-nfrs (from 01_Context_and_Drivers.md)
 
 ```markdown
-*   **Technology Stack:**
-    *   **Frontend:**
-        *   Framework: React 18+ with TypeScript
-        *   UI Library: Tailwind CSS + Headless UI
-        *   State Management: Zustand (client state) + React Query (server state)
-        *   WebSocket: Native WebSocket API with reconnection wrapper
-    *   **Backend:**
-        *   Framework: Quarkus 3.x (Reactive mode)
-        *   Language: Java 17 (LTS)
-        *   Runtime: JVM mode (potential future native compilation)
-    *   **Database:**
-        *   Primary: PostgreSQL 15+ (ACID compliance, JSONB support, partitioning)
-        *   ORM: Hibernate Reactive + Panache repositories
-    *   **Messaging/Queues:**
-        *   Redis 7+ Cluster (Pub/Sub for WebSocket broadcasting, Streams for async jobs)
-    *   **Deployment:**
-        *   Containerization: Docker (multi-stage builds)
-        *   Orchestration: Kubernetes (AWS EKS or GCP GKE)
-        *   Cloud Platform: AWS (primary) with CloudFront CDN, RDS, ElastiCache
-    *   **Other Key Libraries/Tools:**
-        *   **Auth:** Quarkus OIDC extension (OAuth2/SSO), SmallRye JWT
-        *   **Payments:** Stripe Java SDK
-        *   **Logging:** SLF4J with JSON formatter, Loki/CloudWatch aggregation
-        *   **Metrics:** Prometheus + Grafana dashboards
-        *   **Testing:** Testcontainers (integration), Playwright (E2E), JUnit 5
+<!-- anchor: usability-nfrs -->
+#### Usability
+- **Responsive Design:** Mobile-first Tailwind CSS with breakpoints for tablet/desktop
+- **Accessibility:** WCAG 2.1 Level AA compliance for keyboard navigation and screen readers
+- **Browser Support:** Last 2 versions of Chrome, Firefox, Safari, Edge
+- **Internationalization:** English language in initial release, i18n framework for future localization
 ```
 
-### Context: technology-stack-summary (from 02_Architecture_Overview.md)
+### Context: preferences (from 01_Context_and_Drivers.md)
 
 ```markdown
-### 3.2. Technology Stack Summary
-
-| **Category** | **Technology Choice** | **Justification** |
-|--------------|----------------------|-------------------|
-| **Frontend Framework** | **React 18+ with TypeScript** | Strong ecosystem, concurrent rendering for real-time updates, TypeScript for type safety in WebSocket message contracts |
-| **UI Component Library** | **Tailwind CSS + Headless UI** | Utility-first CSS for rapid development, Headless UI for accessible components (modals, dropdowns), minimal bundle size |
-| **State Management** | **Zustand + React Query** | Lightweight state management (Zustand), server state caching and synchronization (React Query), WebSocket integration support |
-| **WebSocket Client** | **Native WebSocket API + Reconnecting wrapper** | Native browser API for compatibility, lightweight reconnection logic with exponential backoff |
-| **Backend Framework** | **Quarkus 3.x (Reactive)** | Specified requirement, optimized for cloud-native deployment, reactive runtime for WebSocket concurrency, fast startup times |
-| **Language** | **Java 17+ (LTS)** | Native Quarkus support, strong type system, mature ecosystem, team expertise |
-| **ORM/Data Access** | **Hibernate Reactive + Panache** | Specified requirement, reactive database access with Mutiny streams, simplified repository pattern via Panache |
-| **Database** | **PostgreSQL 15+** | ACID compliance, JSONB for flexible room configuration storage, proven scalability, strong community support |
-| **Cache/Session Store** | **Redis 7+ (Cluster mode)** | In-memory performance for session state, Pub/Sub for WebSocket message broadcasting, horizontal scaling via cluster mode |
-| **Message Queue** | **Redis Streams** | Leverages existing Redis infrastructure, sufficient for asynchronous job processing (report generation, email notifications), simpler than dedicated message brokers |
-| **Authentication** | **OAuth2/OIDC (Google, Microsoft)** | Leverages existing identity providers, reduces password management risk, Quarkus OIDC extension for SSO integration |
-| **Authorization** | **Quarkus Security (RBAC)** | Built-in role-based access control, annotation-driven security, JWT token validation |
-| **Payment Processing** | **Stripe API (v2023-10+)** | Industry-leading payment gateway, comprehensive subscription management, webhook-based event handling, PCI compliance |
-| **WebSocket Protocol** | **Custom JSON-RPC style over WebSocket** | Lightweight request/response + event notification pattern, versioned message types for backward compatibility |
-| **API Style (REST)** | **RESTful JSON API (OpenAPI 3.1)** | Standard HTTP semantics for CRUD operations, OpenAPI specification for client generation and documentation |
-| **Containerization** | **Docker (multi-stage builds)** | Standardized deployment artifact, multi-stage builds for optimized image size (Quarkus native or JVM mode) |
-| **Orchestration** | **Kubernetes (managed service)** | Horizontal scaling, health checks, rolling deployments, Ingress for load balancing with sticky sessions |
-| **Observability - Metrics** | **Prometheus + Grafana** | Cloud-native standard, Quarkus Micrometer extension, custom business metrics (active sessions, vote latency) |
-| **Observability - Logging** | **Structured JSON + Loki/CloudWatch** | Structured logging for query efficiency, centralized aggregation, correlation IDs for distributed tracing |
-| **Observability - Tracing** | **OpenTelemetry (optional MVP+)** | Distributed tracing for debugging WebSocket flows, integration with Jaeger/Tempo |
-| **CI/CD** | **GitHub Actions** | Native integration with repository, Docker build/push, automated testing, deployment to Kubernetes |
-| **Infrastructure as Code** | **Terraform or Helm Charts** | Declarative infrastructure provisioning (Terraform for cloud resources, Helm for K8s manifests) |
-| **Cloud Platform** | **AWS (preferred) or GCP** | Managed Kubernetes (EKS), managed PostgreSQL (RDS), managed Redis (ElastiCache), CDN (CloudFront/Cloud CDN) |
-| **CDN** | **CloudFront (AWS) or Cloud CDN (GCP)** | Static asset caching (React SPA), edge termination for HTTPS, DDoS protection |
-| **DNS/SSL** | **Route53 + ACM (AWS) or Cloud DNS + Let's Encrypt** | Managed DNS with health checks, automated SSL certificate provisioning and renewal |
-| **Email Service** | **SendGrid or AWS SES** | Transactional email delivery (password reset, subscription notifications), deliverability monitoring |
-| **Monitoring/Alerting** | **Prometheus Alertmanager + PagerDuty** | Rule-based alerting (CPU, error rates, WebSocket connection drops), on-call escalation |
-
-#### Key Libraries & Extensions
-
-**Backend (Quarkus):**
-- `quarkus-resteasy-reactive-jackson` - Reactive REST endpoints with JSON serialization
-- `quarkus-hibernate-reactive-panache` - Reactive database access layer
-- `quarkus-reactive-pg-client` - Non-blocking PostgreSQL driver
-- `quarkus-redis-client` - Redis integration for caching and Pub/Sub
-- `quarkus-websockets` - WebSocket server implementation
-- `quarkus-oidc` - OAuth2/OIDC authentication and SSO support
-- `quarkus-smallrye-jwt` - JWT token generation and validation
-- `quarkus-micrometer-registry-prometheus` - Metrics export
-- `stripe-java` - Stripe API client for payment processing
-
-**Frontend (React):**
-- `@tanstack/react-query` - Server state management and caching
-- `zustand` - Client-side state management (UI, WebSocket connection state)
-- `react-hook-form` - Form validation and submission
-- `zod` - Schema validation for API responses and WebSocket messages
-- `date-fns` - Date/time formatting for session history
-- `recharts` - Charting library for analytics dashboards
-- `@headlessui/react` - Accessible UI components
-- `heroicons` - Icon library
-
-**DevOps & Testing:**
-- `testcontainers` - Integration testing with PostgreSQL and Redis containers
-- `rest-assured` - REST API testing
-- `playwright` - End-to-end testing for WebSocket flows
-- `k6` - Load testing for WebSocket concurrency benchmarks
-```
-
-### Context: technology-constraints (from 01_Context_and_Drivers.md)
-
-```markdown
-#### Technology Constraints
-- **Backend Framework:** Quarkus with Hibernate Reactive (specified requirement)
-- **Database:** PostgreSQL for relational data integrity and JSONB support
-- **Cache/Message Bus:** Redis for session state distribution and Pub/Sub messaging
-- **Payment Provider:** Stripe for subscription billing and payment processing
-- **Containerization:** Docker containers orchestrated via Kubernetes
+<!-- anchor: preferences -->
+#### Preferences
+- **Frontend Framework:** React or Vue preferred for SPA development with strong ecosystem
+- **CSS Framework:** Tailwind CSS for rapid UI development and consistent design system
+- **Observability:** Prometheus/Grafana stack for metrics, ELK or Loki for centralized logging
+- **CI/CD:** GitLab CI or GitHub Actions for automated testing, building, and deployment
+- **Deployment Target:** AWS or GCP with managed Kubernetes (EKS/GKE) for reduced operational overhead
 ```
 
 ---
@@ -315,15 +278,21 @@ The following are the relevant sections from the architecture and plan documents
 The following analysis is based on my direct review of the current codebase. Use these notes and tips to guide your implementation.
 
 ### Relevant Existing Code
-*   **File:** `backend/pom.xml`
-    *   **Summary:** This Maven descriptor already defines the backend as a Quarkus 3.15.1 application targeting Java 17. It imports the Quarkus BOM, pulls in every required extension from the blueprint (REST reactive, websockets, Hibernate Reactive with Panache, reactive Postgres client, Redis, OIDC, SmallRye JWT, Flyway, Prometheus, Scheduler, Fault Tolerance, Stripe SDK, MapStruct, etc.), and configures the standard plugin stack (Quarkus plugin, compiler with `-parameters` and MapStruct processors, Surefire/Failsafe, JaCoCo). Repository definitions include the Shibboleth repo for OpenSAML artifacts.
-    *   **Recommendation:** You SHOULD treat this POM as the canonical dependency list—add new libraries through the existing dependency blocks to preserve BOM-managed versions, and keep Java release targets aligned with the `<maven.compiler.release>` property. When altering build configuration, extend the defined plugins instead of replacing them to avoid breaking the already wired Quarkus goals.
-*   **File:** `backend/src/main/resources/application.properties`
-    *   **Summary:** The configuration file is fully scaffolded with placeholder-driven sections for PostgreSQL (reactive pool tuning + Flyway), Redis, JWT (issuer, signing/verification key locations, expirations), OIDC providers, Stripe, WebSockets, logging, metrics, and environment-specific overrides for dev/prod/test. Each setting is parameterized via environment variables (e.g., `DB_USERNAME`, `REDIS_URL`, `JWT_ISSUER`) and includes operational guidance comments.
-    *   **Recommendation:** Reuse these placeholders whenever you add new modules (e.g., additional datasources or services). Secrets such as RSA keys or Stripe credentials MUST remain externalized via the documented environment variables—never hardcode them. Leverage the existing `%dev` profile overrides while developing locally so that production defaults stay hardened.
+*   **File:** `frontend/package.json`
+    *   **Summary:** Defines the Vite-powered React 18 workspace with the exact dependency set called out in the plan (React Router, Tailwind, Headless UI, Zustand, React Query, Zod, date-fns, Recharts) plus Axios for HTTP access and Playwright for E2E. Scripts already expose `npm run dev`, `build`, `lint`, and multiple Playwright targets, while the `test` script is a placeholder that exits immediately.
+    *   **Recommendation:** Keep dependency additions centralized here—install any new UI or tooling packages with `npm install` so that lockfiles stay in sync, and continue wiring new scripts (tests, storybook, etc.) through this file to match the existing npm workflow.
+*   **File:** `frontend/tailwind.config.js`
+    *   **Summary:** Enables class-based dark mode and extends the theme with a bespoke `primary` palette (50–950). The config watches `index.html` plus every TS/TSX source file beneath `src/`.
+    *   **Recommendation:** Reuse the defined `primary-*` scales for accent colors instead of hardcoding hex values; if additional brand tokens are required, extend them here to keep styling centralized and automatically tree-shaken.
+*   **File:** `frontend/tsconfig.json`
+    *   **Summary:** TypeScript runs in strict mode with bundler module resolution, JSX `react-jsx`, and lint-focused flags like `noUnusedLocals`. It exposes a comprehensive alias map for `@/components`, `@/pages`, `@/services`, `@/stores`, `@/hooks`, `@/types`, `@/utils`, and `@/contexts`.
+    *   **Recommendation:** Always import via these aliases (mirrored in `vite.config.ts`) to avoid brittle relative paths. When adding new top-level directories, update both `tsconfig.json` and `vite.config.ts` to keep IDE resolution and Vite builds aligned.
+*   **File:** `frontend/src/App.tsx`
+    *   **Summary:** Wraps the entire SPA in a `QueryClientProvider` with tuned defaults, a global `UpgradeModalProvider`, and `BrowserRouter`. Routes already cover the full journey (home/login, OAuth callback, pricing/billing, room experience, dashboard, reporting pages, and enterprise organization admin screens) with `PrivateRoute` guarding authenticated areas.
+    *   **Recommendation:** When introducing new pages or placeholder screens, register them here and decide whether they belong behind `PrivateRoute`. Share the existing `QueryClient` instead of instantiating another, and prefer context providers/hooks that already exist (auth, upgrade modal) for consistency.
 
 ### Implementation Tips & Notes
-*   **Tip:** The repository already follows the detailed package layout from the plan (e.g., `com/scrumpoker/api`, `domain`, `repository`, `integration`, `event`, `config`, `security`). When creating or moving classes, keep them within these bounded contexts to maintain the hexagonal structure.
-*   **Tip:** Use the Maven Wrapper (`./mvnw`) at the repo root; it is already configured for the Quarkus plugin and ensures contributors run with the expected Maven version.
-*   **Note:** Many infrastructure utilities (Flyway migrations, Redis/Testcontainers setup, logging defaults) are already in place. Before introducing new configuration keys or scripts, scan `application.properties` and `scripts/` to avoid duplicating existing capabilities.
-*   **Warning:** `application.properties` references external key files (`/privateKey.pem`, `/publicKey.pem`) that are intentionally ignored via `.gitignore`. If your task requires touching key material, rely on the existing `backend/generate-keys.sh` helper rather than attempting to store secrets in the repository.
+*   **Tip:** `vite.config.ts` mirrors the TS path aliases and proxies `/api` to `http://localhost:8080`; leverage that instead of hardcoding backend URLs inside services.
+*   **Tip:** Tailwind is already wired through `src/index.css` (imported by `main.tsx`). After adding new components, run `npm run dev` once so that Vite picks up fresh classes and purges unused styles correctly.
+*   **Note:** Placeholder pages such as `HomePage.tsx` already demonstrate importing shared components via `@/components/...` and using the custom `primary` palette—follow that pattern to keep styling cohesive.
+*   **Warning:** The npm `test` script intentionally exits with status 0; if you rely on automated testing in CI, replace this with real unit tests or ensure the CI workflow invokes `npm run lint`/`npm run build` to catch regressions.
