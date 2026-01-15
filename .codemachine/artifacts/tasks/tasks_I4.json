@@ -12,7 +12,7 @@
     "acceptance_criteria": "*   WebSocket connection succeeds with valid JWT token\n        *   Connection rejected with 401 if token invalid/missing\n        *   Participant joined event broadcasted to existing room connections\n        *   Heartbeat mechanism prevents stale connections (auto-close after timeout)\n        *   Connection gracefully closed on client disconnect\n        *   Multiple clients can connect to same room simultaneously",
     "dependencies": [],
     "parallelizable": false,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I4.T2",

@@ -9,7 +9,6 @@ import com.scrumpoker.security.JwtClaims;
 import com.scrumpoker.security.JwtTokenService;
 import io.quarkus.logging.Log;
 import io.quarkus.scheduler.Scheduled;
-import io.smallrye.common.annotation.Blocking;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.websocket.*;
@@ -25,7 +24,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.TimeUnit;
 
 /**
  * WebSocket handler for real-time room communication.
@@ -65,6 +63,7 @@ public class RoomWebSocketHandler {
     private static final int JOIN_TIMEOUT_SECONDS = 10;
     private static final int HEARTBEAT_INTERVAL_SECONDS = 30;
     private static final int HEARTBEAT_TIMEOUT_SECONDS = 60;
+    private static final CloseReason.CloseCode CLOSE_CODE_UNAUTHORIZED = () -> 4401;
 
     /**
      * Tracks pending join timeouts per session.
@@ -131,59 +130,12 @@ public class RoomWebSocketHandler {
         // Clear MDC immediately - each async callback will set its own MDC
         MDC.clear();
 
-        // Extract JWT token from query parameter (optional for anonymous users)
+        // Extract JWT token from query parameter
         String token = extractTokenFromQuery(session);
 
         if (token == null || token.isBlank()) {
-            // Anonymous connection - validate room only
-            Log.infof("Anonymous WebSocket connection attempt for room %s", roomId);
-
-            roomService.findById(roomId)
-                    .subscribe().with(
-                            room -> {
-                                // Set MDC for this callback's execution
-                                MDC.put(LoggingConstants.CORRELATION_ID, correlationId);
-                                MDC.put(LoggingConstants.ROOM_ID, roomId);
-
-                                try {
-                                    // Room exists, allow anonymous connection
-                                    // Generate anonymous user ID for this session
-                                    String anonymousUserId = "anon_" + UUID.randomUUID().toString();
-
-                                    // Store anonymous user ID and room ID in session properties
-                                    session.getUserProperties().put(USER_ID_KEY, anonymousUserId);
-                                    session.getUserProperties().put(ROOM_ID_KEY, roomId);
-                                    session.getUserProperties().put("anonymous", true);
-
-                                    // Track session for join timeout enforcement
-                                    sessionIdToSession.put(session.getId(), session);
-
-                                    // Register connection in registry
-                                    connectionRegistry.addConnection(roomId, session);
-
-                                    // Schedule join timeout (client must send room.join.v1 within 10 seconds)
-                                    scheduleJoinTimeout(session);
-
-                                    Log.infof("Anonymous WebSocket connection established: user %s, room %s, session %s",
-                                            anonymousUserId, roomId, session.getId());
-                                } finally {
-                                    MDC.clear();
-                                }
-                            },
-                            failure -> {
-                                // Set MDC for this error callback's execution
-                                MDC.put(LoggingConstants.CORRELATION_ID, correlationId);
-                                MDC.put(LoggingConstants.ROOM_ID, roomId);
-
-                                try {
-                                    Log.errorf(failure, "Failed to establish anonymous WebSocket connection for session %s", session.getId());
-                                    closeWithError(session, 4001, "ROOM_NOT_FOUND",
-                                            "Room does not exist or has been deleted");
-                                } finally {
-                                    MDC.clear();
-                                }
-                            }
-                    );
+            Log.warnf("Rejecting WebSocket connection for room %s due to missing JWT token", roomId);
+            closeUnauthorized(session, "Missing JWT token");
             return;
         }
 
@@ -239,7 +191,7 @@ public class RoomWebSocketHandler {
                                     closeWithError(session, 4001, "ROOM_NOT_FOUND",
                                             "Room does not exist or has been deleted");
                                 } else {
-                                    closeWithError(session, 4000, "UNAUTHORIZED", "Invalid or expired JWT token");
+                                    closeUnauthorized(session, "Invalid or expired JWT token");
                                 }
                             } finally {
                                 MDC.clear();
@@ -749,18 +701,38 @@ public class RoomWebSocketHandler {
      * @param message The error message
      */
     private void closeWithError(Session session, int code, String error, String message) {
+        closeWithError(session, code, error, message, CloseReason.CloseCodes.PROTOCOL_ERROR);
+    }
+
+    /**
+     * Closes a WebSocket session with custom close code.
+     *
+     * @param session The WebSocket session
+     * @param code Protocol error payload code (mirrors HTTP semantics)
+     * @param error Error identifier
+     * @param message Human readable detail
+     * @param closeCode Close frame code to send to client
+     */
+    private void closeWithError(Session session, int code, String error, String message,
+                                CloseReason.CloseCode closeCode) {
         try {
-            // Send error message before closing
             sendError(session, UUID.randomUUID().toString(), code, error, message);
-
-            // Close connection
-            CloseReason.CloseCode closeCode = CloseReason.CloseCodes.PROTOCOL_ERROR;
             session.close(new CloseReason(closeCode, error));
-
-            Log.infof("Closed session %s with error %d: %s", session.getId(), code, message);
+            Log.infof("Closed session %s with error %d (closeCode=%d): %s",
+                    session.getId(), code, closeCode.getCode(), message);
         } catch (Exception e) {
             Log.errorf(e, "Failed to close session %s with error", session.getId());
         }
+    }
+
+    /**
+     * Helper to close a session with unauthorized semantics (HTTP 401 equivalent).
+     *
+     * @param session The WebSocket session
+     * @param message Message to send to the client
+     */
+    private void closeUnauthorized(Session session, String message) {
+        closeWithError(session, 401, "UNAUTHORIZED", message, CLOSE_CODE_UNAUTHORIZED);
     }
 
     /**
