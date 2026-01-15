@@ -1,10 +1,12 @@
 package com.scrumpoker.domain.organization;
 
 import com.scrumpoker.domain.user.User;
+import com.vladmihalcea.hibernate.type.json.JsonBinaryType;
 import io.quarkus.hibernate.reactive.panache.PanacheEntityBase;
 import jakarta.persistence.*;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
+import org.hibernate.annotations.Type;
 
 /**
  * Immutable audit trail for compliance and security monitoring.
@@ -40,11 +42,10 @@ public class AuditLog extends PanacheEntityBase {
     public String resourceId;
 
     /**
-     * IP address stored as VARCHAR (supports IPv4/IPv6).
-     * Note: Changed from PostgreSQL INET type to VARCHAR due to Hibernate Reactive mapping issues.
+     * IP address stored using PostgreSQL INET type to support IPv4/IPv6.
      */
     @Size(max = 45)  // Sufficient for IPv6 (39 chars) + potential future formats
-    @Column(name = "ip_address", length = 45)
+    @Column(name = "ip_address", length = 45, columnDefinition = "inet")
     public String ipAddress;
 
     @Size(max = 500)
@@ -55,6 +56,7 @@ public class AuditLog extends PanacheEntityBase {
      * JSONB column: additional context for the audited action.
      * Stored as JSON string, serialized/deserialized by application code.
      */
+    @Type(JsonBinaryType.class)
     @Column(name = "metadata", columnDefinition = "jsonb")
     public String metadata;
 }

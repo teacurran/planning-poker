@@ -53,11 +53,11 @@
     "inputs": "*   Database migration scripts from I1.T3\n        *   Entity attribute specifications from ERD\n        *   JPA/Panache patterns from Quarkus documentation",
     "target_files": [],
     "input_files": [],
-    "deliverables": "*   12 JPA entity classes with correct annotations\n        *   Bidirectional relationships configured (e.g., User ↔ Room ownership)\n        *   JSONB column mappings for Room.config, UserPreference.default_room_config, Organization.sso_config\n        *   Bean validation constraints matching database constraints\n        *   UUID generators configured for primary keys",
+    "deliverables": "*   12 JPA entity classes with correct annotations\n        *   Bidirectional relationships configured (e.g., User \u2194 Room ownership)\n        *   JSONB column mappings for Room.config, UserPreference.default_room_config, Organization.sso_config\n        *   Bean validation constraints matching database constraints\n        *   UUID generators configured for primary keys",
     "acceptance_criteria": "*   Maven compilation successful\n        *   Quarkus dev mode starts without JPA mapping errors\n        *   Entities can be persisted and retrieved via Panache repository methods\n        *   JSONB columns serialize/deserialize correctly (test with sample data)\n        *   Foreign key relationships navigable in code (e.g., `room.getOwner()`)",
     "dependencies": [],
     "parallelizable": false,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I1.T5",
@@ -72,7 +72,7 @@
     "acceptance_criteria": "*   `docker-compose up` starts all services without errors\n        *   PostgreSQL accessible at `localhost:5432` with credentials from `.env`\n        *   Redis cluster accessible at `localhost:6379-6381`\n        *   Prometheus UI at `http://localhost:9090` shows Quarkus target\n        *   Grafana UI at `http://localhost:3000` displays preconfigured dashboard\n        *   Flyway migrations execute automatically when PostgreSQL container starts",
     "dependencies": [],
     "parallelizable": false,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I1.T6",

@@ -1,14 +1,19 @@
 package com.scrumpoker.domain.organization;
 
 import com.scrumpoker.domain.billing.Subscription;
+import com.scrumpoker.domain.room.Room;
+import com.vladmihalcea.hibernate.type.json.JsonBinaryType;
 import io.quarkus.hibernate.reactive.panache.PanacheEntityBase;
 import jakarta.persistence.*;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.Type;
 import org.hibernate.annotations.UpdateTimestamp;
 
 import java.time.Instant;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -41,6 +46,7 @@ public class Organization extends PanacheEntityBase {
      * JSONB column: OIDC/SAML2 configuration.
      * Stored as JSON string, serialized/deserialized by application code.
      */
+    @Type(JsonBinaryType.class)
     @Column(name = "sso_config", columnDefinition = "jsonb")
     public String ssoConfig;
 
@@ -48,6 +54,7 @@ public class Organization extends PanacheEntityBase {
      * JSONB column: logo_url, primary_color, secondary_color.
      * Stored as JSON string, serialized/deserialized by application code.
      */
+    @Type(JsonBinaryType.class)
     @Column(name = "branding", columnDefinition = "jsonb")
     public String branding;
 
@@ -64,4 +71,13 @@ public class Organization extends PanacheEntityBase {
     @UpdateTimestamp
     @Column(name = "updated_at", nullable = false)
     public Instant updatedAt;
+
+    @OneToMany(mappedBy = "organization", fetch = FetchType.LAZY)
+    public Set<OrgMember> members = new HashSet<>();
+
+    @OneToMany(mappedBy = "organization", fetch = FetchType.LAZY)
+    public Set<Room> rooms = new HashSet<>();
+
+    @OneToMany(mappedBy = "organization", fetch = FetchType.LAZY)
+    public Set<AuditLog> auditLogs = new HashSet<>();
 }

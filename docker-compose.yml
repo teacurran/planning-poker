@@ -19,6 +19,26 @@ services:
     networks:
       - planning-poker-network
 
+  flyway-migrator:
+    image: flyway/flyway:10.15
+    container_name: planning-poker-flyway
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: >
+      -url=jdbc:postgresql://postgres:5432/${POSTGRES_DB:-scrumpoker}
+      -user=${POSTGRES_USER:-scrumpoker}
+      -password=${POSTGRES_PASSWORD:-scrumpoker}
+      -locations=filesystem:/flyway/sql
+      -baselineOnMigrate=true
+      -connectRetries=60
+      migrate
+    volumes:
+      - ./backend/src/main/resources/db/migration:/flyway/sql:ro
+    restart: "no"
+    networks:
+      - planning-poker-network
+
   # Redis cluster setup with 3 nodes (1 master + 2 replicas for local dev)
   redis-node-1:
     image: redis:7-alpine

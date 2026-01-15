@@ -8,6 +8,8 @@ import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 
 import java.time.Instant;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -71,4 +73,7 @@ public class Subscription extends PanacheEntityBase {
     @UpdateTimestamp
     @Column(name = "updated_at", nullable = false)
     public Instant updatedAt;
+
+    @OneToMany(mappedBy = "subscription", fetch = FetchType.LAZY)
+    public Set<PaymentHistory> payments = new HashSet<>();
 }

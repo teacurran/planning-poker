@@ -7,6 +7,8 @@ import jakarta.validation.constraints.Size;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -59,4 +61,7 @@ public class Round extends PanacheEntityBase {
 
     @Column(name = "consensus_reached")
     public Boolean consensusReached = false;
+
+    @OneToMany(mappedBy = "round", fetch = FetchType.LAZY)
+    public Set<Vote> votes = new HashSet<>();
 }

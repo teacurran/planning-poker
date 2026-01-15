@@ -7,6 +7,8 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 
 import java.time.Instant;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -64,4 +66,7 @@ public class RoomParticipant extends PanacheEntityBase {
 
     @Column(name = "disconnected_at")
     public Instant disconnectedAt;
+
+    @OneToMany(mappedBy = "participant", fetch = FetchType.LAZY)
+    public Set<Vote> votes = new HashSet<>();
 }

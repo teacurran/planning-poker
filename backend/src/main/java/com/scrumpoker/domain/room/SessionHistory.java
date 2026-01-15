@@ -1,5 +1,6 @@
 package com.scrumpoker.domain.room;
 
+import com.vladmihalcea.hibernate.type.json.JsonBinaryType;
 import io.quarkus.hibernate.reactive.panache.PanacheEntityBase;
 import jakarta.persistence.Column;
 import jakarta.persistence.EmbeddedId;
@@ -11,6 +12,7 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import jakarta.validation.constraints.NotNull;
 import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.Type;
 
 import java.time.Instant;
 
@@ -51,6 +53,7 @@ public class SessionHistory extends PanacheEntityBase {
      * Stored as JSON string, serialized/deserialized by application code.
      */
     @NotNull
+    @Type(JsonBinaryType.class)
     @Column(name = "participants", nullable = false, columnDefinition = "jsonb")
     public String participants;
 
@@ -59,6 +62,7 @@ public class SessionHistory extends PanacheEntityBase {
      * Stored as JSON string, serialized/deserialized by application code.
      */
     @NotNull
+    @Type(JsonBinaryType.class)
     @Column(name = "summary_stats", nullable = false, columnDefinition = "jsonb")
     public String summaryStats;
 
