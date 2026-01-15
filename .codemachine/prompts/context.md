@@ -10,18 +10,18 @@ This is the full specification of the task you must complete.
 
 ```json
 {
-  "task_id": "I1.T6",
+  "task_id": "I1.T7",
   "iteration_id": "I1",
   "iteration_goal": "Establish project scaffolding, configure development environment, define database schema, and set up CI/CD foundation to enable parallel backend and frontend development in subsequent iterations.",
-  "description": "Create GitHub Actions workflows for backend CI (`backend-ci.yml`) and frontend CI (`frontend-ci.yml`). Backend workflow: checkout code, setup Java 17, run `mvn clean verify` (compile, unit tests, integration tests with Testcontainers), SonarQube analysis (code quality gate), Trivy container scan on built Docker image. Frontend workflow: checkout, setup Node.js 18, run `npm ci`, `npm run lint`, `npm run test`, `npm run build`, upload build artifacts. Configure workflow triggers (push to main, pull requests). Add workflow status badges to README.md.",
-  "agent_type_hint": "SetupAgent",
-  "inputs": "*   CI/CD requirements from architecture blueprint (Section 5.2 - CI/CD Pipeline Hardening)\n        *   Maven build lifecycle for Quarkus\n        *   npm script conventions (lint, test, build)",
+  "description": "Implement Panache repository interfaces for all entities using `PanacheRepositoryBase` pattern. Create repositories: `UserRepository`, `UserPreferenceRepository`, `OrganizationRepository`, `OrgMemberRepository`, `RoomRepository`, `RoomParticipantRepository`, `RoundRepository`, `VoteRepository`, `SessionHistoryRepository`, `SubscriptionRepository`, `PaymentHistoryRepository`, `AuditLogRepository`. Add custom finder methods (e.g., `UserRepository.findByEmail()`, `RoomRepository.findActiveByOwnerId()`, `VoteRepository.findByRoundId()`). Use reactive return types (`Uni<>`, `Multi<>`).",
+  "agent_type_hint": "BackendAgent",
+  "inputs": "*   Entity classes from I1.T4\n        *   Common query patterns from architecture blueprint (e.g., user lookup by email, rooms by owner)\n        *   Panache repository patterns from Quarkus docs",
   "target_files": [],
   "input_files": [],
-  "deliverables": "*   Backend CI workflow with Java 17 setup, Maven build, Testcontainers support\n        *   Frontend CI workflow with Node.js 18 setup, npm tasks (lint, test, build)\n        *   SonarQube integration for backend (quality gate check)\n        *   Trivy security scan for backend Docker image\n        *   Workflow status badges in README\n        *   Workflows triggered on push to `main` and pull requests to `main`",
-  "acceptance_criteria": "*   Backend workflow executes successfully on sample commit (even with minimal code)\n        *   Frontend workflow executes successfully on sample commit\n        *   SonarQube analysis uploads results (if SonarCloud token configured)\n        *   Trivy scan completes without critical vulnerabilities in base image\n        *   Workflow badges display in README (green checkmarks)\n        *   Failed tests cause workflow to fail (red X)",
+  "deliverables": "*   12 Panache repository classes implementing `PanacheRepositoryBase<Entity, UUID>`\n        *   Custom finder methods with reactive return types (`Uni<User>`, `Multi<Room>`)\n        *   Query methods using Panache query syntax (e.g., `find(\"email\", email).firstResult()`)\n        *   ApplicationScoped CDI beans for dependency injection",
+  "acceptance_criteria": "*   Maven compilation successful\n        *   Repositories injectable via `@Inject` in service classes\n        *   Custom finder methods return correct reactive types\n        *   Query methods execute without errors against seeded database\n        *   Integration test for each repository demonstrates CRUD operations work",
   "dependencies": [],
-  "parallelizable": true,
+  "parallelizable": false,
   "done": false
 }
 ```
@@ -32,16 +32,104 @@ This is the full specification of the task you must complete.
 
 The following are the relevant sections from the architecture and plan documents, which I found by analyzing the task description.
 
-### Context: deployment-strategy (from 05_Operational_Architecture.md)
+### Context: task-i1-t7 (from 02_Iteration_I1.md)
 
 ```markdown
-The blueprint section referenced in the manifest (05_Operational_Architecture.md ▸ deployment-strategy) is absent from this repository, so the precise wording cannot be quoted. Based on the manifest summary, this section governs Docker-based builds promoted through CI/CD into Kubernetes with zero-downtime rolling updates. When implementing the workflows, favor container-friendly build steps (producing images, scanning them, and surfacing artifacts) because they map directly onto that intended deployment strategy.
+*   **Task 1.7: Create Panache Repository Interfaces**
+    *   **Task ID:** `I1.T7`
+    *   **Description:** Implement Panache repository interfaces for all entities using `PanacheRepositoryBase` pattern. Create repositories: `UserRepository`, `UserPreferenceRepository`, `OrganizationRepository`, `OrgMemberRepository`, `RoomRepository`, `RoomParticipantRepository`, `RoundRepository`, `VoteRepository`, `SessionHistoryRepository`, `SubscriptionRepository`, `PaymentHistoryRepository`, `AuditLogRepository`. Add custom finder methods (e.g., `UserRepository.findByEmail()`, `RoomRepository.findActiveByOwnerId()`, `VoteRepository.findByRoundId()`). Use reactive return types (`Uni<>`, `Multi<>`).
+    *   **Agent Type Hint:** `BackendAgent`
+    *   **Inputs:**
+        *   Entity classes from I1.T4
+        *   Common query patterns from architecture blueprint (e.g., user lookup by email, rooms by owner)
+        *   Panache repository patterns from Quarkus docs
+    *   **Input Files:**
+        *   `backend/src/main/java/com/scrumpoker/domain/user/User.java` (and other entity files)
+        *   `.codemachine/artifacts/architecture/03_System_Structure_and_Data.md` (indexing strategy shows common queries)
+    *   **Target Files:**
+        *   `backend/src/main/java/com/scrumpoker/repository/UserRepository.java`
+        *   `backend/src/main/java/com/scrumpoker/repository/UserPreferenceRepository.java`
+        *   `backend/src/main/java/com/scrumpoker/repository/OrganizationRepository.java`
+        *   `backend/src/main/java/com/scrumpoker/repository/OrgMemberRepository.java`
+        *   `backend/src/main/java/com/scrumpoker/repository/RoomRepository.java`
+        *   `backend/src/main/java/com/scrumpoker/repository/RoomParticipantRepository.java`
+        *   `backend/src/main/java/com/scrumpoker/repository/RoundRepository.java`
+        *   `backend/src/main/java/com/scrumpoker/repository/VoteRepository.java`
+        *   `backend/src/main/java/com/scrumpoker/repository/SessionHistoryRepository.java`
+        *   `backend/src/main/java/com/scrumpoker/repository/SubscriptionRepository.java`
+        *   `backend/src/main/java/com/scrumpoker/repository/PaymentHistoryRepository.java`
+        *   `backend/src/main/java/com/scrumpoker/repository/AuditLogRepository.java`
+    *   **Deliverables:**
+        *   12 Panache repository classes implementing `PanacheRepositoryBase<Entity, UUID>`
+        *   Custom finder methods with reactive return types (`Uni<User>`, `Multi<Room>`)
+        *   Query methods using Panache query syntax (e.g., `find("email", email).firstResult()`)
+        *   ApplicationScoped CDI beans for dependency injection
+    *   **Acceptance Criteria:**
+        *   Maven compilation successful
+        *   Repositories injectable via `@Inject` in service classes
+        *   Custom finder methods return correct reactive types
+        *   Query methods execute without errors against seeded database
+        *   Integration test for each repository demonstrates CRUD operations work
+    *   **Dependencies:** [I1.T4]
+    *   **Parallelizable:** No (depends on entity classes)
 ```
 
-### Context: ci-cd-pipeline (from 03_Verification_and_Glossary.md)
+### Context: data-model-overview-erd (from 03_System_Structure_and_Data.md)
 
 ```markdown
-The planning document that should describe the CI/CD quality gates (03_Verification_and_Glossary.md ▸ ci-cd-pipeline) is also missing locally. The manifest indicates it covers integrating automated tests, SonarQube quality gates, and security scans into GitHub Actions. Use the task requirements as the authoritative guidance: Maven `clean verify` must run with Testcontainers, Sonar analysis should execute (gated on secrets availability), and Trivy scanning must upload SARIF so GitHub Security can render findings.
+### 3.6. Data Model Overview & ERD
+
+#### Description
+
+The data model follows a relational schema leveraging PostgreSQL's ACID properties for transactional consistency and JSONB columns for flexible configuration storage (room settings, deck definitions). The model is optimized for both transactional writes (vote casting, room creation) and analytical reads (session history, organizational reporting).
+
+**Design Principles:**
+1. **Normalized Core Entities:** Users, Rooms, Organizations follow 3NF to prevent update anomalies
+2. **Denormalized Read Models:** SessionSummary and VoteStatistics tables precompute aggregations for reporting performance
+3. **JSONB for Flexibility:** RoomConfig, DeckDefinition, UserPreferences stored as JSONB to support customization without schema migrations
+4. **Soft Deletes:** Critical entities (Users, Rooms) use `deleted_at` timestamp for audit trail and GDPR compliance
+5. **Partitioning Strategy:** SessionHistory and AuditLog partitioned by month for query performance and data lifecycle management
+
+#### Key Entities
+
+| Entity | Purpose | Key Attributes |
+|--------|---------|----------------|
+| **User** | Registered user account | `user_id` (PK), `email`, `oauth_provider`, `oauth_subject`, `display_name`, `avatar_url`, `subscription_tier`, `created_at` |
+| **UserPreference** | Saved user defaults | `user_id` (FK), `default_deck_type`, `default_room_config` (JSONB), `theme`, `notification_settings` (JSONB) |
+| **Organization** | Enterprise SSO workspace | `org_id` (PK), `name`, `domain`, `sso_config` (JSONB: OIDC/SAML2 settings), `branding` (JSONB), `subscription_id` (FK) |
+| **OrgMember** | User-organization membership | `org_id` (FK), `user_id` (FK), `role` (ADMIN/MEMBER), `joined_at` |
+| **Room** | Estimation session | `room_id` (PK, nanoid 6-char), `owner_id` (FK nullable for anonymous), `org_id` (FK nullable), `title`, `privacy_mode` (PUBLIC/INVITE_ONLY/ORG_RESTRICTED), `config` (JSONB: deck, rules, timer), `created_at`, `last_active_at` |
+| **RoomParticipant** | Active session participants | `room_id` (FK), `user_id` (FK nullable), `anonymous_id`, `display_name`, `role` (HOST/VOTER/OBSERVER), `connected_at` |
+| **Vote** | Individual estimation vote | `vote_id` (PK), `room_id` (FK), `round_number`, `participant_id`, `card_value`, `voted_at` |
+| **Round** | Estimation round within session | `round_id` (PK), `room_id` (FK), `round_number`, `story_title`, `started_at`, `revealed_at`, `average`, `median`, `consensus_reached` |
+| **SessionHistory** | Completed session record | `session_id` (PK), `room_id` (FK), `started_at`, `ended_at`, `total_rounds`, `total_stories`, `participants` (JSONB array), `summary_stats` (JSONB) |
+| **Subscription** | Stripe subscription record | `subscription_id` (PK), `stripe_subscription_id`, `entity_id` (user_id or org_id), `entity_type` (USER/ORG), `tier` (FREE/PRO/PRO_PLUS/ENTERPRISE), `status`, `current_period_end`, `canceled_at` |
+| **PaymentHistory** | Payment transaction log | `payment_id` (PK), `subscription_id` (FK), `stripe_invoice_id`, `amount`, `currency`, `status`, `paid_at` |
+| **AuditLog** | Compliance and security audit trail | `log_id` (PK), `org_id` (FK nullable), `user_id` (FK nullable), `action`, `resource_type`, `resource_id`, `ip_address`, `user_agent`, `timestamp` |
+
+#### Database Indexing Strategy
+
+**High-Priority Indexes:**
+- `User(email)` - OAuth login lookups
+- `User(oauth_provider, oauth_subject)` - OAuth subject resolution
+- `Room(owner_id, created_at DESC)` - User's recent rooms query
+- `Room(org_id, last_active_at DESC)` - Organization room listing
+- `RoomParticipant(room_id, connected_at)` - Active participants query
+- `Vote(round_id, participant_id)` - Vote aggregation for reveal
+- `Round(room_id, round_number)` - Round history retrieval
+- `SessionHistory(started_at)` - Partition pruning for date-range queries
+- `Subscription(entity_id, entity_type, status)` - Active subscription lookups
+- `AuditLog(org_id, timestamp DESC)` - Enterprise audit trail queries
+
+**Composite Indexes:**
+- `Room(privacy_mode, last_active_at DESC) WHERE deleted_at IS NULL` - Public room discovery
+- `OrgMember(user_id, org_id) WHERE role = 'ADMIN'` - Admin permission checks
+- `Vote(round_id, voted_at) INCLUDE (card_value)` - Covering index for vote ordering
+
+**Partitioning:**
+- `SessionHistory` partitioned by `started_at` (monthly range partitions)
+- `AuditLog` partitioned by `timestamp` (monthly range partitions)
+- Automated partition creation via scheduled job or pg_partman extension
 ```
 
 ---
@@ -51,22 +139,23 @@ The planning document that should describe the CI/CD quality gates (03_Verificat
 The following analysis is based on my direct review of the current codebase. Use these notes and tips to guide your implementation.
 
 ### Relevant Existing Code
-*   **File:** `.github/workflows/backend-ci.yml`
-    *   **Summary:** Defines a workflow named “Backend CI” that already checks out the repo, installs Temurin Java 17 (with Maven dependency caching), runs `mvn clean verify` inside `backend/`, performs a SonarQube analysis on pushes to `main`, and publishes Surefire/Failsafe reports via `dorny/test-reporter`. Trivy steps are commented out pending a Docker image build.
-    *   **Recommendation:** Reuse this file rather than starting from scratch—tighten it to match the task (ensure Trivy capability is either implemented or clearly blocked by missing Dockerfile, and keep conditional Sonar execution gated on secrets). Preserve the working-directory scoping so commands run inside `./backend`.
-*   **File:** `.github/workflows/frontend-ci.yml`
-    *   **Summary:** Provides a "Frontend CI" workflow that checks out the repo, sets up Node.js 18 with npm caching (tied to `frontend/package-lock.json`), runs `npm ci`, `npm run lint`, `npm run test`, and `npm run build`, and uploads the compiled `frontend/dist` artifacts.
-    *   **Recommendation:** Validate that npm scripts exist and fail fast; consider surfacing test reports or cache directories only if the frontend tooling produces them. Artifacts are already uploaded—ensure naming/retention requirements align with expectations.
-*   **File:** `.github/workflows/ci.yml`
-    *   **Summary:** A legacy workflow that builds/runs Docker Compose services (`jaeger`, `postgresql`, etc.), executes Maven tests inside `docker compose run server`, and performs Sonar analysis via the same container. It predates the new backend/frontend split and may conflict with the dedicated workflows.
-    *   **Recommendation:** Decide whether to retire or update this pipeline once the new backend/frontend workflows satisfy coverage to avoid redundant builds. If you retain it temporarily, document its purpose so contributors aren’t confused by duplicate CI checks.
-*   **File:** `README.md`
-    *   **Summary:** The landing README already contains placeholder Markdown badges for “Backend CI” and “Frontend CI” pointing at `YOUR_GITHUB_ORG`. It also instructs developers on environment setup and infrastructure bootstrapping.
-    *   **Recommendation:** Update the badge URLs to the real GitHub org/repo names once the workflows are stable, and describe at a high level what each workflow verifies so contributors know when to inspect GitHub Actions logs.
+*   **File:** `backend/src/main/java/com/scrumpoker/repository/UserRepository.java`
+    *   **Summary:** Defines the reactive Panache repository for `User`, exposing helpers such as `findByEmail`, `findByOAuthProviderAndSubject`, `findActiveByEmail`, and `countActive`, all returning `Uni` results and filtering out soft-deleted rows where needed.
+    *   **Recommendation:** Follow the same conventions for other user-centric queries: use property names (e.g., `oauthProvider`, `deletedAt`) and prefer `firstResult()`/`list()` for reactive operations so higher layers can compose `Uni`/`Multi` chains without blocking.
+*   **File:** `backend/src/main/java/com/scrumpoker/repository/RoomRepository.java`
+    *   **Summary:** Implements `PanacheRepositoryBase<Room, String>` (Room IDs are 6-character strings) and already includes methods for owner/org lookups, privacy filters, inactivity checks, and count helpers.
+    *   **Recommendation:** Mirror this approach when adding any new room queries: always filter on `deletedAt is null`, keep ordering deterministic (e.g., `lastActiveAt desc`), and return `Uni<List<Room>>` or `Uni<Long>` to remain reactive-friendly.
+*   **File:** `backend/src/main/java/com/scrumpoker/repository/VoteRepository.java`
+    *   **Summary:** Provides the full suite of vote lookups (`findByRoundId`, `findByRoomIdAndRoundNumber`, `findByParticipantId`, etc.) plus aggregation helpers like `countByRoundId`. Queries traverse relationships such as `round.room.roomId` when needed.
+    *   **Recommendation:** When you're authoring similar finder methods for other entities, model the JPQL paths exactly as mapped in the entities (`round.roundId`, `participant.participantId`) and keep the return types as `Uni<List<...>>` for lists or `Uni<Vote>` for singletons.
+*   **File:** `backend/src/main/java/com/scrumpoker/repository/SessionHistoryRepository.java`
+    *   **Summary:** Because SessionHistory uses an `@EmbeddedId`, every finder uses native SQL through `Panache.getSession()` to work around Hibernate Reactive bugs, providing helpers for room/date lookups, counts, and combined owner/date filters.
+    *   **Recommendation:** Leave the native-query pattern in place for composite-key tables; if you need new queries, build them as SQL strings executed via `Panache.getSession()` and documented with the bug link so future maintainers know why JPQL isn’t used.
 
 ### Implementation Tips & Notes
-*   **Tip:** Keep SonarQube steps conditional on both the branch (`main`) and the presence of `secrets.SONAR_TOKEN` so forks can run the workflow without failing.
-*   **Tip:** Trivy scanning requires a Docker image. If the backend doesn’t yet have a Dockerfile, either add one or wrap the scan in a conditional that only runs when the build artifact exists, matching the acceptance criteria when possible.
-*   **Tip:** Cache Maven and npm dependencies via the official setup actions (already configured) so the workflows stay fast; avoid manually invoking `actions/cache` redundantly.
-*   **Note:** Expose test results using the existing `dorny/test-reporter` step or GitHub’s JUnit upload to make PR failures easier to triage.
-*   **Warning:** Ensure the workflows respect the repo’s multi-module structure (root `backend/` and `frontend/`). Running `mvn` or `npm` from the wrong directory will silently skip the intended code and provide a false sense of security.
+*   **Tip:** All repositories must be annotated with `@ApplicationScoped` and implement `PanacheRepositoryBase<Entity, KeyType>` so they can be injected into services without manual bean definitions.
+*   **Tip:** Prefer Mutiny's `Uni` for single-result queries (`firstResult()`, `singleResultOptional()`) and `Uni<List<...>>` for multi-row fetches—`Multi` is only necessary if you plan to stream results; existing code almost exclusively returns `Uni`.
+*   **Tip:** For soft-deletable entities (`User`, `Room`), always include `deletedAt is null` in finder predicates unless intentionally retrieving archived rows.
+*   **Note:** Room IDs are strings while most other entities use UUIDs; declare repository generics accordingly to avoid ClassCastExceptions.
+*   **Note:** SessionHistory’s composite key plus monthly partitions require native SQL finders; copying the established template prevents the Hibernate Reactive `EmbeddableInitializerImpl` bug cited in the comments.
+*   **Warning:** Repositories already exist for the listed entities—review their current method sets before adding new APIs to avoid duplication, and keep method names descriptive so the unit and integration tests (I1.T8) can exercise each path explicitly.

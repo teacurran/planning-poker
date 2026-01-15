@@ -102,7 +102,7 @@
     "acceptance_criteria": "*   Maven compilation successful\n        *   Repositories injectable via `@Inject` in service classes\n        *   Custom finder methods return correct reactive types\n        *   Query methods execute without errors against seeded database\n        *   Integration test for each repository demonstrates CRUD operations work",
     "dependencies": [],
     "parallelizable": false,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I1.T8",
