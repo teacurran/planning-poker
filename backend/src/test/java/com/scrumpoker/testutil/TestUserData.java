@@ -43,6 +43,11 @@ public final class TestUserData {
                         )
                         .flatMap(ignore -> userRepository.findById(userId))
                 )
+                .onItem().transform(user -> {
+                    user.subscriptionTier = SubscriptionTier.PRO_PLUS;
+                    return user;
+                })
+                .flatMap(userRepository::persist)
         );
     }
 }

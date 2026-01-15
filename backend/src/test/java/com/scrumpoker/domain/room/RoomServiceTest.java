@@ -248,7 +248,6 @@ class RoomServiceTest {
             Room room = invocation.getArgument(0);
             return Uni.createFrom().item(room);
         });
-        when(userRepository.findById(testOwner.userId)).thenReturn(Uni.createFrom().item(testOwner));
 
         // When
         Room result = roomService.createRoom("Test", PrivacyMode.PUBLIC, testOwner, testConfig)

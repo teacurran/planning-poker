@@ -35,6 +35,7 @@ The following are the relevant sections from the architecture and plan documents
 ### Context: Task 2.5 – Create REST Controllers for Room Management (from .codemachine/artifacts/plan/02_Iteration_I2.md)
 
 ```markdown
+<!-- anchor: task-i2-t5 -->
 *   **Task 2.5: Create REST Controllers for Room Management**
     *   **Task ID:** `I2.T5`
     *   **Description:** Implement JAX-RS REST controllers for room CRUD operations following OpenAPI specification from I2.T1. Create `RoomController` with endpoints: `POST /api/v1/rooms` (create room), `GET /api/v1/rooms/{roomId}` (get room), `PUT /api/v1/rooms/{roomId}/config` (update config), `DELETE /api/v1/rooms/{roomId}` (delete), `GET /api/v1/users/{userId}/rooms` (list user's rooms). Inject `RoomService`, convert entities to DTOs, handle exceptions (404 for room not found, 400 for validation errors). Add `@RolesAllowed` annotations for authorization (room owner can delete, authenticated users can create). Return reactive `Uni<>` types for non-blocking I/O.
@@ -75,6 +76,7 @@ The following are the relevant sections from the architecture and plan documents
 ### Context: REST API Endpoints Overview (from .codemachine/artifacts/architecture/04_Behavior_and_Communication.md)
 
 ```markdown
+<!-- anchor: rest-api-endpoints -->
 #### REST API Endpoints Overview
 
 **Authentication & User Management:**
@@ -117,53 +119,6 @@ The following are the relevant sections from the architecture and plan documents
 ---
 ```
 
-### Context: Synchronous REST (Request/Response) Pattern (from .codemachine/artifacts/architecture/04_Behavior_and_Communication.md)
-
-```markdown
-##### Synchronous REST (Request/Response)
-
-**Use Cases:**
-- User authentication and registration
-- Room creation and configuration updates
-- Subscription management (upgrade, cancellation, payment method updates)
-- Report generation triggers and export downloads
-- Organization settings management
-
-**Pattern Characteristics:**
-- Client blocks waiting for server response (typically <500ms)
-- Transactional consistency guaranteed within single database transaction
-- Idempotency keys for payment operations to prevent duplicate charges
-- Error responses use standard HTTP status codes (4xx client errors, 5xx server errors)
-
-**Example Endpoints:**
-- `POST /api/v1/auth/oauth/callback` - Exchange OAuth2 code for JWT token
-- `POST /api/v1/rooms` - Create new estimation room
-- `GET /api/v1/rooms/{roomId}` - Retrieve room configuration
-- `PUT /api/v1/users/{userId}/preferences` - Update user preferences
-- `POST /api/v1/subscriptions/{subscriptionId}/upgrade` - Upgrade subscription tier
-- `GET /api/v1/reports/sessions?from=2025-01-01&to=2025-01-31` - Query session history
-
----
-```
-
-### Context: API Contract Style (from .codemachine/artifacts/plan/01_Plan_Overview_and_Setup.md)
-
-```markdown
-*   **API Contract Style:**
-    *   **REST API:** RESTful JSON API documented with OpenAPI 3.1 specification
-        *   URL versioning: `/api/v1/`
-        *   Standard HTTP semantics (GET, POST, PUT, DELETE)
-        *   Error responses with consistent structure (4xx client errors, 5xx server errors)
-    *   **WebSocket Protocol:** Custom JSON-RPC style over WebSocket
-        *   Message format: `{\"type\": \"vote.cast.v1\", \"requestId\": \"uuid\", \"payload\": {...}}`
-        *   Versioned message types (e.g., `v1`, `v2`) for protocol evolution
-        *   Request/response correlation via `requestId`
-
-    **Planned Specification Files:**
-    *   OpenAPI 3.1 Specification (YAML) - Documents all REST endpoints (Created in I2.T1)
-    *   WebSocket Protocol Specification (Markdown) - Message type catalog with JSON schemas (Created in I2.T2)
-```
-
 ---
 
 ## 3. Codebase Analysis & Strategic Guidance
@@ -172,24 +127,21 @@ The following analysis is based on my direct review of the current codebase. Use
 
 ### Relevant Existing Code
 *   **File:** `backend/src/main/java/com/scrumpoker/api/rest/RoomController.java`
-    *   **Summary:** Provides the five REST endpoints (create, read, update config, delete, and list user rooms) using Mutiny `Uni<Response>` wrappers, `SecurityContextImpl` helpers to resolve user IDs, manual pagination logic for user rooms, and helper methods for privacy-mode parsing plus status-specific error payloads.
-    *   **Recommendation:** Keep delegating business logic to `RoomService` and DTO conversions to `RoomMapper`; rely on the existing helper methods (`resolveOwner`, `requireCurrentUserId`, `ensureRoomOwner`, pagination validation) rather than reimplementing them when expanding behavior or adjusting responses.
+    *   **Summary:** Implements all five room endpoints with Mutiny `Uni<Response>` pipelines, `SecurityContextImpl` helpers for authentication data, manual pagination for `GET /users/{userId}/rooms`, and validation/error helpers that wrap consistent `ErrorResponse` payloads.
+    *   **Recommendation:** Delegate every mutation to `RoomService` and every DTO conversion to `RoomMapper`; keep leveraging the shared helper methods (`resolveOwner`, `requireCurrentUserId`, `ensureRoomOwner`, pagination validation) so authorization and error semantics remain uniform.
 *   **File:** `backend/src/main/java/com/scrumpoker/api/rest/mapper/RoomMapper.java`
-    *   **Summary:** MapStruct-based mapper that injects `ObjectMapper` to handle JSONB conversions, enforces sensible defaults for deck/timer/reveal fields, and converts owner/organization relationships into UUIDs for the DTO.
-    *   **Recommendation:** Always round-trip `RoomConfigDTO` through this mapper (`toConfig`, `toConfigDTO`) to preserve defaulting rules and to avoid duplicating Jackson serialization; letting it set defaults keeps controller code lean.
+    *   **Summary:** MapStruct mapper that injects `ObjectMapper` to handle JSONB config serialization while defaulting deck/timer/reveal settings and flattening owner/organization IDs.
+    *   **Recommendation:** Always pass request configs through `toConfig` and emit responses via `toDTO`; this preserves defaults, avoids manual JSON handling, and keeps DTOs aligned with MapStruct generation.
 *   **File:** `backend/src/main/java/com/scrumpoker/domain/room/RoomService.java`
-    *   **Summary:** Houses all transactional room operations with validation (title length, privacy mode, config deck type), tier enforcement via `FeatureGate`, owner assignment, soft deletion, and reactive lookups via Panache.
-    *   **Recommendation:** Use the provided service methods (`createRoom`, `updateRoomTitle`, `updateRoomConfig`, `updatePrivacyMode`, `deleteRoom`, `findByOwnerId`) exactly as-is to ensure invariants (e.g., deck type required, soft delete semantics) remain enforced—do not attempt to mutate entities directly in the controller.
-*   **File:** `api/openapi.yaml`
-    *   **Summary:** Documents the REST contract; for rooms it specifies that `POST /api/v1/rooms` and `GET /api/v1/rooms/{roomId}` allow anonymous access, while config updates, deletion, and listing are secured and must return `RoomDTO`/`RoomListResponse` bodies matching schemas.
-    *   **Recommendation:** Align status codes and body shapes with the spec (201 + `RoomDTO` on creation, 200 on reads/updates, 204 on deletes, paginated payload on list) and honor the documented security posture (Bearer + optional anonymous for certain endpoints) when adjusting annotations.
-*   **Files:** `backend/src/main/java/com/scrumpoker/api/rest/dto/{CreateRoomRequest, UpdateRoomConfigRequest, RoomDTO, RoomListResponse}.java`
-    *   **Summary:** DTOs mirror the OpenAPI schemas, including validation limits for titles and JSON property names expected by the frontend.
-    *   **Recommendation:** Use these DTOs verbatim; if request/response shapes need tweaks, update both DTOs and `RoomMapper` simultaneously to keep API-consumer expectations aligned.
+    *   **Summary:** Owns room lifecycle logic (nanoid generation, validation, tier enforcement, config serialization, soft delete) and exposes reactive CRUD operations consumed by the controller.
+    *   **Recommendation:** Use the service methods (`createRoomWithOwnerId`, `updateRoomConfig`, `updateRoomTitle`, `updatePrivacyMode`, `deleteRoom`, `findByOwnerId`) exactly as defined, letting it raise domain exceptions that the registered `ExceptionMapper`s already translate for HTTP responses.
+*   **Files:** `backend/src/main/java/com/scrumpoker/api/rest/dto/{CreateRoomRequest.java, UpdateRoomConfigRequest.java, RoomDTO.java, RoomListResponse.java}`
+    *   **Summary:** DTOs mirror the OpenAPI schemas with validation annotations (title length, required fields) and Jackson property names expected by the frontend.
+    *   **Recommendation:** Reuse these DTOs verbatim; when adjusting schema fields ensure you update both DTOs and `RoomMapper` so API and documentation stay consistent.
 
 ### Implementation Tips & Notes
-*   **Tip:** Let `RoomService` throw `RoomNotFoundException`/`FeatureNotAvailableException`; the registered `ExceptionMapper`s already translate them into the standardized `ErrorResponse`, so the controller can stay focused on happy-path transformations.
-*   **Tip:** `RoomService.findByOwnerId(UUID)` returns a `Multi<Room>`; continue collecting it with `.collect().asList()` before applying pagination so you can reuse the existing manual paging math with proper bounds checks and early `badRequest` responses.
-*   **Tip:** Privacy mode strings should flow through `resolvePrivacyMode` so invalid values trigger a consistent `IllegalArgumentException` and `400` response listing the allowed enum values.
-*   **Note:** Authentication is currently permissive for create/get endpoints (per OpenAPI security array); keep the annotations (`@PermitAll`, `@RolesAllowed("USER")`) consistent so that Iteration 3's JWT filter can enforce them without code churn.
-*   **Note:** Use the builder-style helpers (`badRequest`, `forbiddenResponse`, `unauthorizedException`) when you must short-circuit requests (e.g., pagination bounds) to keep error payloads uniform with the rest of the API.
+*   **Tip:** Let `RoomService` throw `RoomNotFoundException`/`FeatureNotAvailableException`; the existing JAX-RS `ExceptionMapper`s already convert them to the standardized `ErrorResponse`, so controller methods can stay lean.
+*   **Tip:** Continue collecting `roomService.findByOwnerId(UUID)` into a list before manual pagination so you can reuse the bounds checks and build `RoomListResponse` consistently.
+*   **Tip:** Feed privacy-mode strings through `resolvePrivacyMode` so invalid modes bubble up as `IllegalArgumentException`, which the mapper turns into a `400` with a helpful "Valid values" list.
+*   **Tip:** Authentication is currently permissive on create/get endpoints; keep annotations (`@PermitAll` vs. `@RolesAllowed("USER")`) aligned with the OpenAPI security definitions so the Iteration 3 JWT filter can enforce them without extra churn.
+*   **Note:** Always use the helper builders (`badRequest`, `forbiddenResponse`, `unauthorizedException`) when short-circuiting requests (e.g., pagination overflow) to keep error payloads uniform for frontend consumers.

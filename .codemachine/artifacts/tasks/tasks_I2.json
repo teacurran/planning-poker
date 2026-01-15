@@ -72,7 +72,7 @@
     "acceptance_criteria": "*   Endpoints accessible via `curl` or Postman against running Quarkus dev server\n        *   POST creates room, returns 201 Created with RoomDTO body\n        *   GET retrieves room by ID, returns 200 OK or 404 Not Found\n        *   PUT updates config, returns 200 OK with updated RoomDTO\n        *   DELETE soft deletes room, returns 204 No Content\n        *   GET user's rooms returns paginated list (if many rooms)\n        *   DTOs match OpenAPI schema definitions exactly\n        *   Authorization prevents unauthorized users from deleting other users' rooms",
     "dependencies": [],
     "parallelizable": false,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I2.T6",

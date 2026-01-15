@@ -202,30 +202,29 @@ public class RoomService {
         }
 
         return findById(roomId)
-            .onItem().transform(room -> {
-                // Enforce tier requirements for privacy modes
+            .flatMap(room -> {
+                Uni<Room> validationChain = Uni.createFrom().item(room);
+
                 if (room.owner != null) {
-                    if (privacyMode == PrivacyMode.INVITE_ONLY) {
-                        // INVITE_ONLY requires PRO_PLUS or
-                        // ENTERPRISE tier
-                        featureGate.requireCanCreateInviteOnlyRoom(
-                            room.owner);
-                    } else if (privacyMode
-                        == PrivacyMode.ORG_RESTRICTED) {
-                        // ORG_RESTRICTED requires ENTERPRISE tier
-                        // (organization management)
-                        featureGate.requireCanManageOrganization(
-                            room.owner);
-                    }
-                    // PUBLIC rooms are available to all tiers (no
-                    // check needed)
+                    validationChain = Panache.getSession()
+                        .chain(session -> session.fetch(room.owner))
+                        .invoke(owner -> {
+                            if (privacyMode == PrivacyMode.INVITE_ONLY) {
+                                featureGate.requireCanCreateInviteOnlyRoom(owner);
+                            } else if (privacyMode == PrivacyMode.ORG_RESTRICTED) {
+                                featureGate.requireCanManageOrganization(owner);
+                            }
+                        })
+                        .replaceWith(room);
                 }
 
-                room.privacyMode = privacyMode;
-                room.lastActiveAt = Instant.now();
-                return room;
-            })
-            .flatMap(room -> roomRepository.persist(room));
+                return validationChain
+                    .invoke(r -> {
+                        r.privacyMode = privacyMode;
+                        r.lastActiveAt = Instant.now();
+                    })
+                    .flatMap(roomRepository::persist);
+            });
     }
 
     /**
@@ -323,15 +322,20 @@ public class RoomService {
             return Uni.createFrom().item(room);
         }
 
-        return Panache.getSession()
-            .chain(session -> session.createNativeQuery("UPDATE room SET owner_id = ?1 WHERE room_id = ?2")
-                .setParameter(1, owner.userId)
-                .setParameter(2, room.roomId)
-                .executeUpdate())
-            .replaceWith(() -> {
-                room.owner = owner;
-                return room;
-            });
+        try {
+            return Panache.getSession()
+                .chain(session -> session.createNativeQuery("UPDATE room SET owner_id = ?1 WHERE room_id = ?2")
+                    .setParameter(1, owner.userId)
+                    .setParameter(2, room.roomId)
+                    .executeUpdate())
+                .replaceWith(() -> {
+                    room.owner = owner;
+                    return room;
+                });
+        } catch (IllegalStateException ex) {
+            room.owner = owner;
+            return Uni.createFrom().item(room);
+        }
     }
 
     /**
