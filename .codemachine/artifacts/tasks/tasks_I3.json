@@ -12,7 +12,7 @@
     "acceptance_criteria": "*   OAuth2 flow completes successfully for Google (test with real OAuth code)\n        *   OAuth2 flow completes for Microsoft (test with real OAuth code)\n        *   ID token validation rejects expired/invalid tokens\n        *   OAuthUserInfo correctly populated from ID token claims\n        *   Environment variables used for sensitive config (client secrets)",
     "dependencies": [],
     "parallelizable": true,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I3.T2",
@@ -27,7 +27,7 @@
     "acceptance_criteria": "*   Generated access token validates successfully\n        *   Token includes correct user claims (userId, email, subscription tier)\n        *   Expired token validation throws JwtException\n        *   Refresh token lookup succeeds from Redis\n        *   Token rotation invalidates old refresh token\n        *   Signature validation uses RSA public key correctly",
     "dependencies": [],
     "parallelizable": true,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I3.T3",
@@ -42,7 +42,7 @@
     "acceptance_criteria": "*   POST /oauth/callback with valid code returns 200 with access + refresh tokens\n        *   New user created in database on first OAuth login\n        *   Existing user found and tokens issued on subsequent login\n        *   POST /refresh with valid refresh token returns new token pair\n        *   POST /logout deletes refresh token from Redis (subsequent refresh fails)\n        *   Invalid codes/tokens return 401 Unauthorized",
     "dependencies": [],
     "parallelizable": false,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I3.T4",

@@ -14,6 +14,7 @@ import com.scrumpoker.domain.user.User;
 import com.scrumpoker.domain.user.UserService;
 import com.scrumpoker.integration.oauth.OAuth2Adapter;
 import com.scrumpoker.integration.oauth.OAuthUserInfo;
+import com.scrumpoker.integration.oauth.OAuth2AuthenticationException;
 import com.scrumpoker.integration.sso.SsoAdapter;
 import com.scrumpoker.repository.OrganizationRepository;
 import com.scrumpoker.security.JwtTokenService;
@@ -177,6 +178,11 @@ public class AuthController {
                         return createErrorResponse(throwable);
                     });
 
+        } catch (OAuth2AuthenticationException e) {
+            LOG.warnf(e, "OAuth authentication failed for provider: %s",
+                    request.provider);
+            return createUnauthorizedResponse("OAUTH_AUTHENTICATION_FAILED",
+                    "Authentication failed. Please try again.");
         } catch (IllegalArgumentException e) {
             LOG.warnf("Invalid OAuth callback request: %s", e.getMessage());
             return createBadRequestResponse("INVALID_REQUEST", e.getMessage());
@@ -652,8 +658,15 @@ public class AuthController {
      * @return Response with appropriate status code and error details
      */
     private Response createErrorResponse(final Throwable throwable) {
-        // OAuth2AuthenticationException is handled by exception mapper
-        // but we can also handle it here for consistency
+        if (throwable instanceof OAuth2AuthenticationException) {
+            ErrorResponse error = new ErrorResponse(
+                    "OAUTH_AUTHENTICATION_FAILED",
+                    "Authentication failed. Please try again.");
+            return Response.status(Response.Status.UNAUTHORIZED)
+                    .entity(error)
+                    .build();
+        }
+
         if (throwable instanceof IllegalArgumentException) {
             ErrorResponse error = new ErrorResponse(
                     "INVALID_REQUEST", throwable.getMessage());

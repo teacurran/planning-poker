@@ -10,26 +10,20 @@ This is the full specification of the task you must complete.
 
 ```json
 {
-  "task_id": "I2.T8",
-  "iteration_id": "I2",
-  "iteration_goal": "Implement foundational domain services (Room Service, basic User Service), define REST API contracts (OpenAPI specification), and establish WebSocket protocol specification to enable frontend integration and parallel feature development.",
-  "description": "Create integration tests for `RoomController` and `UserController` using `@QuarkusTest` and Rest Assured. Test HTTP endpoints end-to-end: request → controller → service → repository → database → response. Use Testcontainers for PostgreSQL. Test CRUD operations, DTOmapping, error responses (404, 400), authorization (403 for unauthorized access). Validate response JSON against OpenAPI schema where possible.",
+  "task_id": "I3.T3",
+  "iteration_id": "I3",
+  "iteration_goal": "Implement OAuth2 authentication (Google, Microsoft), JWT token generation/validation, user registration/login flows, and frontend authentication UI to enable secured access to the application.",
+  "description": "Create `AuthController` with endpoints per OpenAPI spec: `POST /api/v1/auth/oauth/callback` (exchange OAuth code for JWT tokens), `POST /api/v1/auth/refresh` (refresh access token), `POST /api/v1/auth/logout` (revoke refresh token). Inject `OAuth2Adapter`, `UserService`, `JwtTokenService`. OAuth callback flow: validate code, exchange for user info, find or create user in database, generate JWT tokens, return TokenPair. Refresh flow: validate refresh token, generate new tokens, rotate refresh token. Logout flow: delete refresh token from Redis.",
   "agent_type_hint": "BackendAgent",
-  "inputs": "*   REST controllers from I2.T5, I2.T6\n        *   OpenAPI specification for expected responses",
-  "target_files": [
-    "backend/src/test/java/com/scrumpoker/api/rest/RoomControllerTest.java",
-    "backend/src/test/java/com/scrumpoker/api/rest/UserControllerTest.java"
-  ],
-  "input_files": [
-    "backend/src/main/java/com/scrumpoker/api/rest/RoomController.java",
-    "backend/src/main/java/com/scrumpoker/api/rest/UserController.java",
-    "api/openapi.yaml"
-  ],
-  "deliverables": "*   RoomControllerTest with tests for all 5 endpoints\n        *   UserControllerTest with tests for all 4 endpoints\n        *   Testcontainers PostgreSQL setup for integration tests\n        *   Rest Assured assertions for status codes, headers, response bodies\n        *   Tests for error scenarios (404, 400, 403)",
-  "acceptance_criteria": "*   `mvn verify` runs integration tests successfully\n        *   POST /api/v1/rooms creates room in database, returns valid JSON\n        *   GET /api/v1/rooms/{roomId} retrieves persisted room\n        *   PUT endpoints update database and return updated DTOs\n        *   DELETE endpoints soft delete (verify `deleted_at` set)\n        *   Unauthorized access returns 403 Forbidden\n        *   Response JSON structure matches OpenAPI spec",
+  "inputs": "*   OAuth2 sequence diagram from architecture blueprint\n        *   OpenAPI specification for auth endpoints\n        *   OAuth2Adapter and JwtTokenService from I3.T1, I3.T2",
+  "target_files": [],
+  "input_files": [],
+  "deliverables": "*   AuthController with 3 endpoints: /oauth/callback, /refresh, /logout\n        *   OAuth callback handler: code exchange → user provisioning → token generation\n        *   User provisioning logic (find by oauth_provider + oauth_subject, create if new user)\n        *   Refresh token rotation implementation\n        *   Logout implementation (Redis DELETE refresh token key)",
+  "acceptance_criteria": "*   POST /oauth/callback with valid code returns 200 with access + refresh tokens\n        *   New user created in database on first OAuth login\n        *   Existing user found and tokens issued on subsequent login\n        *   POST /refresh with valid refresh token returns new token pair\n        *   POST /logout deletes refresh token from Redis (subsequent refresh fails)\n        *   Invalid codes/tokens return 401 Unauthorized",
   "dependencies": [
-    "I2.T5",
-    "I2.T6"
+    "I3.T1",
+    "I3.T2",
+    "I2.T4"
   ],
   "parallelizable": false,
   "done": false
@@ -42,94 +36,124 @@ This is the full specification of the task you must complete.
 
 The following are the relevant sections from the architecture and plan documents, which I found by analyzing the task description.
 
-### Context: Task 2.8 – Write Integration Tests for REST Controllers (from .codemachine/artifacts/plan/02_Iteration_I2.md)
+### Context: Task 3.3 – Implement Authentication REST Controller (from .codemachine/artifacts/plan/02_Iteration_I3.md)
 
 ```markdown
-<!-- anchor: task-i2-t8 -->
-*   **Task 2.8: Write Integration Tests for REST Controllers**
-    *   **Task ID:** `I2.T8`
-    *   **Description:** Create integration tests for `RoomController` and `UserController` using `@QuarkusTest` and Rest Assured. Test HTTP endpoints end-to-end: request → controller → service → repository → database → response. Use Testcontainers for PostgreSQL. Test CRUD operations, DTOmapping, error responses (404, 400), authorization (403 for unauthorized access). Validate response JSON against OpenAPI schema where possible.
+*   **Task 3.3: Implement Authentication REST Controller**
+    *   **Task ID:** `I3.T3`
+    *   **Description:** Create `AuthController` with endpoints per OpenAPI spec: `POST /api/v1/auth/oauth/callback` (exchange OAuth code for JWT tokens), `POST /api/v1/auth/refresh` (refresh access token), `POST /api/v1/auth/logout` (revoke refresh token). Inject `OAuth2Adapter`, `UserService`, `JwtTokenService`. OAuth callback flow: validate code, exchange for user info, find or create user in database, generate JWT tokens, return TokenPair. Refresh flow: validate refresh token, generate new tokens, rotate refresh token. Logout flow: delete refresh token from Redis.
     *   **Agent Type Hint:** `BackendAgent`
     *   **Inputs:**
-        *   REST controllers from I2.T5, I2.T6
-        *   OpenAPI specification for expected responses
+        *   OAuth2 sequence diagram from architecture blueprint
+        *   OpenAPI specification for auth endpoints
+        *   OAuth2Adapter and JwtTokenService from I3.T1, I3.T2
     *   **Input Files:**
-        *   `backend/src/main/java/com/scrumpoker/api/rest/RoomController.java`
-        *   `backend/src/main/java/com/scrumpoker/api/rest/UserController.java`
-        *   `api/openapi.yaml`
+        *   `api/openapi.yaml` (auth endpoint specs)
+        *   `backend/src/main/java/com/scrumpoker/integration/oauth/OAuth2Adapter.java`
+        *   `backend/src/main/java/com/scrumpoker/security/JwtTokenService.java`
+        *   `backend/src/main/java/com/scrumpoker/domain/user/UserService.java`
     *   **Target Files:**
-        *   `backend/src/test/java/com/scrumpoker/api/rest/RoomControllerTest.java`
-        *   `backend/src/test/java/com/scrumpoker/api/rest/UserControllerTest.java`
+        *   `backend/src/main/java/com/scrumpoker/api/rest/AuthController.java`
+        *   `backend/src/main/java/com/scrumpoker/api/rest/dto/OAuthCallbackRequest.java`
+        *   `backend/src/main/java/com/scrumpoker/api/rest/dto/TokenResponse.java`
+        *   `backend/src/main/java/com/scrumpoker/api/rest/dto/RefreshTokenRequest.java`
     *   **Deliverables:**
-        *   RoomControllerTest with tests for all 5 endpoints
-        *   UserControllerTest with tests for all 4 endpoints
-        *   Testcontainers PostgreSQL setup for integration tests
-        *   Rest Assured assertions for status codes, headers, response bodies
-        *   Tests for error scenarios (404, 400, 403)
+        *   AuthController with 3 endpoints: /oauth/callback, /refresh, /logout
+        *   OAuth callback handler: code exchange → user provisioning → token generation
+        *   User provisioning logic (find by oauth_provider + oauth_subject, create if new user)
+        *   Refresh token rotation implementation
+        *   Logout implementation (Redis DELETE refresh token key)
     *   **Acceptance Criteria:**
-        *   `mvn verify` runs integration tests successfully
-        *   POST /api/v1/rooms creates room in database, returns valid JSON
-        *   GET /api/v1/rooms/{roomId} retrieves persisted room
-        *   PUT endpoints update database and return updated DTOs
-        *   DELETE endpoints soft delete (verify `deleted_at` set)
-        *   Unauthorized access returns 403 Forbidden
-        *   Response JSON structure matches OpenAPI spec
-    *   **Dependencies:** [I2.T5, I2.T6]
-    *   **Parallelizable:** No (depends on controller implementation)
+        *   POST /oauth/callback with valid code returns 200 with access + refresh tokens
+        *   New user created in database on first OAuth login
+        *   Existing user found and tokens issued on subsequent login
+        *   POST /refresh with valid refresh token returns new token pair
+        *   POST /logout deletes refresh token from Redis (subsequent refresh fails)
+        *   Invalid codes/tokens return 401 Unauthorized
+    *   **Dependencies:** [I3.T1, I3.T2, I2.T4]
+    *   **Parallelizable:** No (depends on OAuth2Adapter, JwtTokenService, UserService)
 ```
 
-### Context: REST API Endpoints Overview (from .codemachine/artifacts/architecture/04_Behavior_and_Communication.md)
+### Context: Key Interaction Flow – OAuth2 Authentication (from .codemachine/artifacts/architecture/04_Behavior_and_Communication.md)
 
 ```markdown
-<!-- anchor: rest-api-endpoints -->
-#### REST API Endpoints Overview
+#### Key Interaction Flow: OAuth2 Authentication (Google/Microsoft)
 
-**Authentication & User Management:**
-- `POST /api/v1/auth/oauth/callback` - Exchange OAuth2 code for JWT tokens
-- `POST /api/v1/auth/refresh` - Refresh expired access token
-- `POST /api/v1/auth/logout` - Revoke refresh token
-- `GET /api/v1/users/{userId}` - Retrieve user profile
-- `PUT /api/v1/users/{userId}` - Update profile (display name, avatar)
-- `GET /api/v1/users/{userId}/preferences` - Get user preferences
-- `PUT /api/v1/users/{userId}/preferences` - Update default room settings, theme
+This sequence demonstrates the OAuth2 authorization code flow for user authentication via Google or Microsoft identity providers, JWT token generation, and session establishment.
 
-**Room Management:**
-- `POST /api/v1/rooms` - Create new room (authenticated or anonymous)
-- `GET /api/v1/rooms/{roomId}` - Get room configuration and current state
-- `PUT /api/v1/rooms/{roomId}/config` - Update room settings (host only)
-- `DELETE /api/v1/rooms/{roomId}` - Delete room (owner only)
-- `GET /api/v1/users/{userId}/rooms` - List user's owned rooms
+~~~plantuml
+@startuml
+
+actor "User" as User
+participant "SPA\n(React App)" as SPA
+participant "Quarkus API\n(/api/v1/auth)" as API
+participant "OAuth2 Adapter" as OAuth
+participant "User Service" as UserService
+participant "PostgreSQL" as DB
+participant "Google/Microsoft\nOAuth2 Provider" as Provider
+
+User -> SPA : Clicks "Sign in with Google"
+SPA -> SPA : Generate PKCE code_verifier & code_challenge,\nstore in sessionStorage
+SPA -> Provider : Redirect to authorization URL (Google/Microsoft)
+Provider -> SPA : Redirect to callback with ?code=AUTH_CODE
+SPA -> API : POST /api/v1/auth/oauth/callback {provider, code, codeVerifier}
+API -> OAuth : exchangeCodeForToken(provider, code, codeVerifier)
+OAuth -> Provider : POST /token {code, client_id, client_secret, code_verifier}
+Provider --> OAuth : {"access_token":"...", "id_token":"..."}
+OAuth -> OAuth : Validate id_token signature, extract claims {sub, email, name, picture}
+OAuth --> API : OAuthUserInfo{subject, email, name, avatarUrl}
+API -> UserService : findOrCreateUser(provider, subject, email, name)
+UserService -> DB : Lookup user; insert new record + default preferences if missing
+UserService --> API : Persisted User entity (id, email, subscriptionTier)
+API -> API : Generate JWT access token (sub, email, tier, exp)
+API -> API : Generate refresh token (UUID) and store in Redis (30-day TTL)
+API --> SPA : 200 OK {accessToken, refreshToken, user}
+SPA -> SPA : Store tokens + user state, redirect to dashboard
+
+@enduml
+~~~
 ```
 
-### Context: Integration Testing Strategy (from .codemachine/artifacts/plan/03_Verification_and_Glossary.md)
+### Context: Authentication Mechanisms (from .codemachine/artifacts/architecture/05_Operational_Architecture.md)
 
 ```markdown
-<!-- anchor: integration-testing -->
-#### Integration Testing
+##### Authentication Mechanisms
 
-**Scope:** Multiple components working together with real infrastructure (database, cache, message queue)
+**OAuth2 Social Login (Free/Pro Tiers):**
+- Providers: Google OAuth2, Microsoft Identity Platform
+- Flow: Authorization Code Flow with PKCE for browser clients
+- Implementation: Quarkus OIDC extension handles token exchange/validation
+- Token Storage: JWT access tokens (1-hour expiration) in browser localStorage, refresh tokens (30-day expiration) in httpOnly cookies
+- User Provisioning: Automatic user creation on first login with `oauth_provider` + `oauth_subject`
+- Profile Sync: Email, display name, avatar URL synced from provider on each login
 
-**Framework:** Quarkus Test (`@QuarkusTest`), Testcontainers, REST Assured
+**Enterprise SSO (Enterprise Tier):**
+- Protocols: OIDC and SAML2 with organization-specific config in `Organization.sso_config`
+- Domain Enforcement: Email domain matching ties logins to org workspaces
+- JIT Provisioning: Accounts created on first SSO login with membership assigned
 
-**Coverage Target:** Critical integration points (API → Service → Repository → Database)
+**Anonymous Play:**
+- Anonymous participants tracked via session UUID, limited capabilities, and 24-hour data retention
+```
 
-**Approach:**
-- Use Testcontainers for PostgreSQL and Redis (real instances, not mocks)
-- Test REST endpoints end-to-end (request → response with database persistence)
-- Test WebSocket flows (connection → message handling → database → Pub/Sub broadcast)
-- Verify transaction boundaries and data consistency
-- Run in CI pipeline (longer execution time acceptable: 10-15 minutes)
+### Context: Authorization Strategy (from .codemachine/artifacts/architecture/05_Operational_Architecture.md)
 
-**Examples:**
-- `RoomControllerTest`: POST /rooms creates database record, GET retrieves it
-- `VotingFlowIntegrationTest`: WebSocket vote message → database insert → Redis Pub/Sub → client broadcast
-- `StripeWebhookControllerTest`: Webhook event → signature verification → database update
+```markdown
+##### Authorization Strategy
 
-**Acceptance Criteria:**
-- All integration tests pass (`mvn verify`)
-- Testcontainers start successfully (PostgreSQL, Redis)
-- Database schema migrations execute correctly in tests
-- No test pollution (each test isolated with database cleanup)
+**Role-Based Access Control (RBAC):**
+- Roles: `ANONYMOUS`, `USER`, `PRO_USER`, `ORG_ADMIN`, `ORG_MEMBER`
+- Enforcement: Quarkus `@RolesAllowed` annotations rely on `roles` array inside JWT claims
+- Dynamic Role Mapping: Subscription tiers map to RBAC roles at token generation time
+
+**Resource-Level Permissions:**
+- Room access governed by privacy mode (public/invite-only/org-restricted)
+- Report access depth tied to subscription tier (summary vs. detailed analytics)
+
+**Enforcement Points:**
+1. Ingress + REST controllers validate JWT signatures and roles
+2. WebSocket handshake validates tokens before upgrading
+3. Service layer applies feature gating (subscription + org rules)
 ```
 
 ---
@@ -139,21 +163,22 @@ The following are the relevant sections from the architecture and plan documents
 The following analysis is based on my direct review of the current codebase. Use these notes and tips to guide your implementation.
 
 ### Relevant Existing Code
-*   **File:** `backend/src/main/java/com/scrumpoker/api/rest/RoomController.java`
-    *   **Summary:** Reactive JAX-RS controller that exposes POST/GET/PUT/DELETE room endpoints plus `/users/{userId}/rooms` pagination. It enforces ownership rules through `SecurityContextImpl`, validates privacy modes, and orchestrates `RoomService` mutations before mapping responses with `RoomMapper`.
-    *   **Recommendation:** Integration tests should drive all five routes, covering success and validation branches, verifying pagination metadata, and asserting the error payloads returned by helper methods like `badRequest`/`forbiddenResponse`.
-*   **File:** `backend/src/main/java/com/scrumpoker/api/rest/UserController.java`
-    *   **Summary:** Provides four endpoints (profile + preferences CRUD) guarded by `@RolesAllowed` and `authorizeUserAccess`. It relies on `UserService` + `UserMapper` to fetch entities and transform JSONB-backed preference data.
-    *   **Recommendation:** Target both happy paths (existing profiles/preferences) and guardrails (403 when hitting other users, 404 when entities missing). Ensure tests seed/persist users before hitting the endpoints.
-*   **File:** `backend/src/test/java/com/scrumpoker/api/rest/RoomControllerTest.java`
-    *   **Summary:** Already contains comprehensive Rest Assured-based integration cases executed under `@QuarkusTest` + `NoSecurityTestProfile`. It uses `TestUserData` to create the default owner, cleans tables through `Panache` transactions, and validates DB state via `RoomRepository`.
-    *   **Recommendation:** When extending or refactoring, keep the `@RunOnVertxContext` + `UniAsserter` patterns for DB assertions, reuse helper builders for payloads, and make sure each of the five controller endpoints has both success and failure coverage.
-*   **File:** `backend/src/test/java/com/scrumpoker/api/rest/UserControllerTest.java`
-    *   **Summary:** Exercises all four user endpoints with Rest Assured, persisting users/preferences via repositories and asserting JSONB fields plus authorization behavior.
-    *   **Recommendation:** Follow the existing structure—set up data via `Panache.withTransaction`, leverage `TestSecurityIdentityAugmentor.setTestUserId` to impersonate request principals, and make sure response assertions cover DTO shape as defined in `api/openapi.yaml`.
+*   **File:** `backend/src/main/java/com/scrumpoker/api/rest/AuthController.java`
+    *   **Summary:** Quarkus JAX-RS resource exposing `/api/v1/auth` endpoints for OAuth callback, token refresh, logout, and the SSO callback. Each handler validates input, orchestrates adapters/services, and builds `TokenResponse` DTOs (wrapping access/refresh tokens plus mapped `UserDTO`). Helper methods like `createBadRequestResponse`, `createUnauthorizedResponse`, and `createErrorResponse` centralize error payloads, while `buildTokenResponse` injects `expiresIn` via `JwtTokenService`.
+    *   **Recommendation:** Implement any new behaviour inside these existing methods—e.g., extend validation, logging, or mapping—but keep the reactive `Uni<Response>` contract, reuse helper response builders, and ensure sensitive errors (OAuth failures) surface standardized codes so Playwright tests and consumers remain stable.
+*   **File:** `backend/src/main/java/com/scrumpoker/integration/oauth/OAuth2Adapter.java`
+    *   **Summary:** Application-scoped strategy adapter delegating to provider-specific classes (`GoogleOAuthProvider`, `MicrosoftOAuthProvider`). `exchangeCodeForToken` enforces non-null parameters, logs provider operations, invokes the provider implementation, and returns an `OAuthUserInfo` (subject, email, name, avatar). `validateIdToken` exposes shared validation logic for cached tokens.
+    *   **Recommendation:** During OAuth callback handling always call `exchangeCodeForToken` exactly once per request and rely on the returned DTO—do not reimplement provider logic. Handle provider names case-insensitively and propagate `OAuth2AuthenticationException` to the provided exception mapper to keep audit visibility consistent.
+*   **File:** `backend/src/main/java/com/scrumpoker/security/JwtTokenService.java`
+    *   **Summary:** Centralized JWT lifecycle manager. Generates RS256 access tokens with issuer from `mp.jwt.verify.issuer`, includes `email`, `roles`, `tier` claims, and writes refresh tokens to Redis with prefix `refresh_token:` plus TTL (`mp.jwt.refresh.token.expiration`). Exposes helpers for validation (`validateAccessToken`), refresh rotation (`refreshTokens`), lookup (`getUserIdFromRefreshToken`), invalidation, and retrieving expiration seconds for responses.
+    *   **Recommendation:** Always call `generateTokens`, `refreshTokens`, and `invalidateRefreshToken` rather than manipulating Redis directly. When returning HTTP responses, use `getAccessTokenExpirationSeconds()` so clients know TTL. Avoid logging raw tokens—follow existing metadata-style logs for compliance.
+*   **File:** `backend/src/main/java/com/scrumpoker/domain/user/UserService.java`
+    *   **Summary:** Reactive domain service for user CRUD plus preference management. Method `findOrCreateUser` looks up by `(oauthProvider, oauthSubject)` and either updates stale profile fields or calls `createUser`, which persists the entity (defaulting tier FREE) and creates default user preferences within transaction boundaries (`@WithTransaction`).
+    *   **Recommendation:** During OAuth callback keep business logic here by invoking `findOrCreateUser`. If you need user details later (e.g., refresh flow), call `getUserById` which respects soft deletes and throws `UserNotFoundException` for invalid IDs.
 
 ### Implementation Tips & Notes
-*   **Tip:** `NoSecurityTestProfile` disables authentication while still applying role annotations through `TestSecurityIdentityAugmentor`; use this profile for every controller integration test to avoid wiring the OAuth stack.
-*   **Tip:** `backend/src/test/resources/application.properties` is configured for Quarkus Dev Services, so you don’t need manual Testcontainers bootstrapping—just keep the tests reactive-friendly and let Flyway run migrations automatically.
-*   **Tip:** Use `TestUserData.ensureTestUser(userRepository)` when room tests need an owner; for user tests, call `persistUserAndAuthenticate` to seed the repository and align `TestSecurityIdentityAugmentor` with the user ID under test.
-*   **Tip:** Keep assertions strict: validate both status codes and payload structure (including `error`/`message` fields on 4xx responses) to satisfy the OpenAPI contract referenced in the iteration plan.
+*   **Tip:** DTOs used by the controller (`OAuthCallbackRequest`, `RefreshTokenRequest`, `TokenResponse`) already enforce bean validation; pair these with explicit null/blank checks (as seen in existing methods) to return descriptive `ErrorResponse` payloads.
+*   **Tip:** All controller methods are annotated with `@PermitAll` because they rely on refresh tokens or OAuth codes; authorization happens through token issuance rather than JAX-RS security—keep that model to avoid circular dependencies with `JwtAuthenticationFilter`.
+*   **Tip:** For refresh flow, chain `jwtTokenService.getUserIdFromRefreshToken()` → `userService.getUserById()` → `jwtTokenService.refreshTokens()`. Handle null futures with `.onItem().ifNull().failWith(...)` to ensure invalid tokens return 401 as specified.
+*   **Tip:** Logging already uses `LOG.infof/LOG.warnf` across the controller—maintain similar detail (provider, userId) but never log access/refresh tokens themselves.
+*   **Tip:** The `OrganizationService`/`AuditLogService` wiring in this controller is leveraged by the SSO endpoint—if you add new dependencies, annotate them with `@Inject` at the top to maintain CDI conventions and to keep constructor ordering consistent for tests like `SsoAuthenticationIntegrationTest`.
