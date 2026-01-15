@@ -10,6 +10,11 @@ jobs:
   build-and-test:
     runs-on: ubuntu-22.04
     timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write
+    env:
+      REGISTRY_IMAGE: planning-poker-backend:${{ github.sha }}
 
     steps:
       - name: Checkout code
@@ -28,8 +33,37 @@ jobs:
         env:
           MAVEN_OPTS: -Xmx2g
 
+      - name: Build backend Docker image
+        working-directory: ./backend
+        run: docker build -t ${{ env.REGISTRY_IMAGE }} .
+
+      - name: Run Trivy security scan
+        id: trivy-scan
+        uses: aquasecurity/trivy-action@0.24.0
+        continue-on-error: true
+        with:
+          image-ref: ${{ env.REGISTRY_IMAGE }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          exit-code: '1'
+
+      - name: Upload Trivy results to GitHub Security
+        if: always() && steps.trivy-scan.outcome != 'skipped'
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+      - name: Fail workflow if Trivy found vulnerabilities
+        if: steps.trivy-scan.outcome == 'failure'
+        run: |
+          echo "Trivy detected CRITICAL or HIGH vulnerabilities."
+          exit 1
+
       - name: SonarQube analysis
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.SONAR_TOKEN != ''
         working-directory: ./backend
         run: |
           mvn sonar:sonar \
@@ -39,26 +73,6 @@ jobs:
             -Dsonar.login=${{ secrets.SONAR_TOKEN }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        continue-on-error: true
-
-      # Note: Trivy container scanning will be implemented in I8.T1 when Dockerfile is created
-      # - name: Build Docker image
-      #   working-directory: ./backend
-      #   run: docker build -t planning-poker-backend:${{ github.sha }} .
-      #
-      # - name: Run Trivy security scan
-      #   uses: aquasecurity/trivy-action@master
-      #   with:
-      #     image-ref: planning-poker-backend:${{ github.sha }}
-      #     format: 'sarif'
-      #     output: 'trivy-results.sarif'
-      #     severity: 'CRITICAL,HIGH'
-      #
-      # - name: Upload Trivy results to GitHub Security
-      #   uses: github/codeql-action/upload-sarif@v2
-      #   if: always()
-      #   with:
-      #     sarif_file: 'trivy-results.sarif'
 
       - name: Publish test results
         if: always()

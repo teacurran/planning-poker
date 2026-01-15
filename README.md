@@ -4,7 +4,10 @@
 
 A real-time Scrum Planning Poker application built with Quarkus Reactive, Hibernate Reactive with Panache, Vue.js 3, and PrimeVue.
 
-> **Note:** Replace `YOUR_GITHUB_ORG` in the badge URLs above with your GitHub organization or username.
+## CI/CD Status
+
+- **Backend CI**: Validates Java 17 compilation, runs unit and integration tests with Testcontainers, performs SonarQube code quality analysis, and executes security scanning.
+- **Frontend CI**: Validates Node.js 18 build, runs ESLint checks, executes test suite, builds production bundle, and uploads build artifacts.
 
 ## Features
 

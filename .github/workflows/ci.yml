@@ -1,3 +1,8 @@
+# DEPRECATED: This workflow is superseded by backend-ci.yml and frontend-ci.yml
+# It predates the backend/frontend split and uses Docker Compose for testing.
+# Consider removing this workflow once the new CI workflows have been validated.
+# New workflows provide better separation of concerns and run in parallel.
+
 name: ci
 
 on:
