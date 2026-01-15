@@ -1014,6 +1014,359 @@ class UserServiceTest {
         verify(userRepository, never()).persist(any(User.class));
     }
 
+    // ===== Multi-Parameter Update Preferences Tests =====
+
+    @Test
+    void testUpdatePreferences_WithAllParameters_UpdatesAllFields() throws JsonProcessingException {
+        // Given
+        UUID userId = UUID.randomUUID();
+        User existingUser = createTestUser("test@example.com", "Test Name");
+        existingUser.userId = userId;
+
+        UserPreference existingPref = new UserPreference();
+        existingPref.userId = userId;
+        existingPref.defaultDeckType = "FIBONACCI";
+        existingPref.theme = "light";
+
+        Object roomConfig = new Object();
+        Object notificationSettings = new Object();
+        String roomConfigJson = "{\"deckType\":\"T_SHIRT\"}";
+        String notificationJson = "{\"emailEnabled\":true}";
+
+        when(userRepository.findById(userId)).thenReturn(Uni.createFrom().item(existingUser));
+        when(userPreferenceRepository.findByUserId(userId)).thenReturn(Uni.createFrom().item(existingPref));
+        when(objectMapper.writeValueAsString(roomConfig)).thenReturn(roomConfigJson);
+        when(objectMapper.writeValueAsString(notificationSettings)).thenReturn(notificationJson);
+        when(userPreferenceRepository.persist(any(UserPreference.class))).thenAnswer(invocation -> {
+            UserPreference pref = invocation.getArgument(0);
+            return Uni.createFrom().item(pref);
+        });
+
+        // When
+        UserPreference result = userService.updatePreferences(userId, "dark", "T_SHIRT", roomConfig, notificationSettings, null)
+                .await().indefinitely();
+
+        // Then
+        assertThat(result).isNotNull();
+        assertThat(result.theme).isEqualTo("dark");
+        assertThat(result.defaultDeckType).isEqualTo("T_SHIRT");
+        assertThat(result.defaultRoomConfig).isEqualTo(roomConfigJson);
+        assertThat(result.notificationSettings).isEqualTo(notificationJson);
+        verify(objectMapper).writeValueAsString(roomConfig);
+        verify(objectMapper).writeValueAsString(notificationSettings);
+        verify(userPreferenceRepository).persist(any(UserPreference.class));
+    }
+
+    @Test
+    void testUpdatePreferences_WithOnlyTheme_UpdatesOnlyTheme() throws JsonProcessingException {
+        // Given
+        UUID userId = UUID.randomUUID();
+        User existingUser = createTestUser("test@example.com", "Test Name");
+        existingUser.userId = userId;
+
+        UserPreference existingPref = new UserPreference();
+        existingPref.userId = userId;
+        existingPref.defaultDeckType = "FIBONACCI";
+        existingPref.theme = "light";
+        existingPref.defaultRoomConfig = "{\"deckType\":\"FIBONACCI\"}";
+
+        when(userRepository.findById(userId)).thenReturn(Uni.createFrom().item(existingUser));
+        when(userPreferenceRepository.findByUserId(userId)).thenReturn(Uni.createFrom().item(existingPref));
+        when(userPreferenceRepository.persist(any(UserPreference.class))).thenAnswer(invocation -> {
+            UserPreference pref = invocation.getArgument(0);
+            return Uni.createFrom().item(pref);
+        });
+
+        // When
+        UserPreference result = userService.updatePreferences(userId, "dark", null, null, null, null)
+                .await().indefinitely();
+
+        // Then
+        assertThat(result.theme).isEqualTo("dark");
+        assertThat(result.defaultDeckType).isEqualTo("FIBONACCI"); // Unchanged
+        assertThat(result.defaultRoomConfig).isEqualTo("{\"deckType\":\"FIBONACCI\"}"); // Unchanged
+        verify(userPreferenceRepository).persist(any(UserPreference.class));
+    }
+
+    @Test
+    void testUpdatePreferences_WithOnlyDeckType_UpdatesOnlyDeckType() throws JsonProcessingException {
+        // Given
+        UUID userId = UUID.randomUUID();
+        User existingUser = createTestUser("test@example.com", "Test Name");
+        existingUser.userId = userId;
+
+        UserPreference existingPref = new UserPreference();
+        existingPref.userId = userId;
+        existingPref.defaultDeckType = "FIBONACCI";
+        existingPref.theme = "light";
+
+        when(userRepository.findById(userId)).thenReturn(Uni.createFrom().item(existingUser));
+        when(userPreferenceRepository.findByUserId(userId)).thenReturn(Uni.createFrom().item(existingPref));
+        when(userPreferenceRepository.persist(any(UserPreference.class))).thenAnswer(invocation -> {
+            UserPreference pref = invocation.getArgument(0);
+            return Uni.createFrom().item(pref);
+        });
+
+        // When
+        UserPreference result = userService.updatePreferences(userId, null, "T_SHIRT", null, null, null)
+                .await().indefinitely();
+
+        // Then
+        assertThat(result.defaultDeckType).isEqualTo("T_SHIRT");
+        assertThat(result.theme).isEqualTo("light"); // Unchanged
+        verify(userPreferenceRepository).persist(any(UserPreference.class));
+    }
+
+    @Test
+    void testUpdatePreferences_EmptyTheme_DoesNotUpdate() throws JsonProcessingException {
+        // Given
+        UUID userId = UUID.randomUUID();
+        User existingUser = createTestUser("test@example.com", "Test Name");
+        existingUser.userId = userId;
+
+        UserPreference existingPref = new UserPreference();
+        existingPref.userId = userId;
+        existingPref.theme = "light";
+
+        when(userRepository.findById(userId)).thenReturn(Uni.createFrom().item(existingUser));
+        when(userPreferenceRepository.findByUserId(userId)).thenReturn(Uni.createFrom().item(existingPref));
+        when(userPreferenceRepository.persist(any(UserPreference.class))).thenAnswer(invocation -> {
+            UserPreference pref = invocation.getArgument(0);
+            return Uni.createFrom().item(pref);
+        });
+
+        // When
+        UserPreference result = userService.updatePreferences(userId, "", null, null, null, null)
+                .await().indefinitely();
+
+        // Then
+        assertThat(result.theme).isEqualTo("light"); // Unchanged
+        verify(userPreferenceRepository).persist(any(UserPreference.class));
+    }
+
+    @Test
+    void testUpdatePreferences_SerializationError_ThrowsException() throws JsonProcessingException {
+        // Given
+        UUID userId = UUID.randomUUID();
+        User existingUser = createTestUser("test@example.com", "Test Name");
+        existingUser.userId = userId;
+
+        UserPreference existingPref = new UserPreference();
+        existingPref.userId = userId;
+
+        Object roomConfig = new Object();
+
+        when(userRepository.findById(userId)).thenReturn(Uni.createFrom().item(existingUser));
+        when(userPreferenceRepository.findByUserId(userId)).thenReturn(Uni.createFrom().item(existingPref));
+        when(objectMapper.writeValueAsString(roomConfig)).thenThrow(new JsonProcessingException("Serialization failed") {});
+
+        // When/Then
+        assertThatThrownBy(() ->
+                userService.updatePreferences(userId, null, null, roomConfig, null, null)
+                        .await().indefinitely()
+        )
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Failed to serialize preferences");
+
+        verify(userPreferenceRepository, never()).persist(any(UserPreference.class));
+    }
+
+    @Test
+    void testUpdatePreferences_CreatesPreferencesIfNotExist() throws JsonProcessingException {
+        // Given
+        UUID userId = UUID.randomUUID();
+        User existingUser = createTestUser("test@example.com", "Test Name");
+        existingUser.userId = userId;
+
+        UserPreference newPref = new UserPreference();
+        newPref.userId = userId;
+        newPref.defaultDeckType = "fibonacci";
+
+        when(userRepository.findById(userId)).thenReturn(Uni.createFrom().item(existingUser));
+        when(userPreferenceRepository.findByUserId(userId)).thenReturn(Uni.createFrom().nullItem());
+        when(objectMapper.writeValueAsString(any())).thenReturn("{}");
+        when(userPreferenceRepository.persist(any(UserPreference.class))).thenReturn(Uni.createFrom().item(newPref));
+
+        // When
+        UserPreference result = userService.updatePreferences(userId, "dark", "T_SHIRT", null, null, null)
+                .await().indefinitely();
+
+        // Then
+        assertThat(result).isNotNull();
+        verify(userPreferenceRepository).findByUserId(userId);
+        verify(userPreferenceRepository, times(2)).persist(any(UserPreference.class)); // Once for creation, once for update
+    }
+
+    // ===== Additional Edge Cases =====
+
+    @Test
+    void testCreateUser_ValidEmailFormats_Succeeds() throws JsonProcessingException {
+        // Given
+        String[] validEmails = {
+                "user@example.com",
+                "user.name@example.com",
+                "user+tag@example.co.uk",
+                "user_name@example-domain.com",
+                "123@example.com"
+        };
+
+        UserPreference mockPref = new UserPreference();
+        when(objectMapper.writeValueAsString(any())).thenReturn("{}");
+        when(userRepository.persist(any(User.class))).thenAnswer(invocation -> {
+            User user = invocation.getArgument(0);
+            return Uni.createFrom().item(user);
+        });
+        when(userPreferenceRepository.persist(any(UserPreference.class))).thenReturn(Uni.createFrom().item(mockPref));
+
+        // When/Then - All should succeed
+        for (String email : validEmails) {
+            User result = userService.createUser("google", "subject", email, "Name", null)
+                    .await().indefinitely();
+            assertThat(result.email).isEqualTo(email);
+        }
+    }
+
+    @Test
+    void testDeleteUser_UpdatesDeletedAt() {
+        // Given
+        UUID userId = UUID.randomUUID();
+        User existingUser = createTestUser("test@example.com", "Test Name");
+        existingUser.userId = userId;
+        existingUser.deletedAt = null;
+
+        when(userRepository.findById(userId)).thenReturn(Uni.createFrom().item(existingUser));
+        when(userRepository.persist(any(User.class))).thenAnswer(invocation -> {
+            User user = invocation.getArgument(0);
+            return Uni.createFrom().item(user);
+        });
+
+        // When
+        User result = userService.deleteUser(userId)
+                .await().indefinitely();
+
+        // Then
+        assertThat(result.deletedAt).isNotNull();
+        assertThat(result.deletedAt).isBeforeOrEqualTo(Instant.now());
+        verify(userRepository).persist(any(User.class));
+    }
+
+    @Test
+    void testFindOrCreateUser_InvalidEmailOnNewUser_ThrowsException() {
+        // Given
+        String provider = "google";
+        String subject = "google-new";
+        String invalidEmail = "not-an-email";
+
+        when(userRepository.findByOAuthProviderAndSubject(provider, subject))
+                .thenReturn(Uni.createFrom().nullItem());
+
+        // When/Then
+        assertThatThrownBy(() ->
+                userService.findOrCreateUser(provider, subject, invalidEmail, "Name", null)
+                        .await().indefinitely()
+        )
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Invalid email format");
+
+        verify(userRepository, never()).persist(any(User.class));
+    }
+
+    @Test
+    void testGetPreferences_DeletedUser_ThrowsException() {
+        // Given
+        UUID userId = UUID.randomUUID();
+        User deletedUser = createTestUser("test@example.com", "Test Name");
+        deletedUser.userId = userId;
+        deletedUser.deletedAt = Instant.now();
+
+        when(userRepository.findById(userId)).thenReturn(Uni.createFrom().item(deletedUser));
+
+        // When/Then
+        assertThatThrownBy(() ->
+                userService.getPreferences(userId)
+                        .await().indefinitely()
+        )
+                .isInstanceOf(UserNotFoundException.class);
+
+        verify(userRepository).findById(userId);
+        verify(userPreferenceRepository, never()).findById(any());
+    }
+
+    @Test
+    void testUpdateProfile_NullParameters_NoChanges() {
+        // Given
+        UUID userId = UUID.randomUUID();
+        String originalName = "Original Name";
+        String originalAvatar = "https://original-avatar.jpg";
+
+        User existingUser = createTestUser("test@example.com", originalName);
+        existingUser.userId = userId;
+        existingUser.avatarUrl = originalAvatar;
+
+        when(userRepository.findById(userId)).thenReturn(Uni.createFrom().item(existingUser));
+        when(userRepository.persist(any(User.class))).thenAnswer(invocation -> {
+            User user = invocation.getArgument(0);
+            return Uni.createFrom().item(user);
+        });
+
+        // When
+        User result = userService.updateProfile(userId, null, null)
+                .await().indefinitely();
+
+        // Then
+        assertThat(result.displayName).isEqualTo(originalName);
+        assertThat(result.avatarUrl).isEqualTo(originalAvatar);
+        verify(userRepository).persist(any(User.class));
+    }
+
+    @Test
+    void testCreateUser_SubscriptionTierDefaultsToFree() throws JsonProcessingException {
+        // Given
+        UserPreference mockPref = new UserPreference();
+        when(objectMapper.writeValueAsString(any())).thenReturn("{}");
+        when(userRepository.persist(any(User.class))).thenAnswer(invocation -> {
+            User user = invocation.getArgument(0);
+            return Uni.createFrom().item(user);
+        });
+        when(userPreferenceRepository.persist(any(UserPreference.class))).thenReturn(Uni.createFrom().item(mockPref));
+
+        // When
+        User result = userService.createUser("google", "subject", "test@example.com", "Name", null)
+                .await().indefinitely();
+
+        // Then
+        assertThat(result.subscriptionTier).isEqualTo(SubscriptionTier.FREE);
+    }
+
+    @Test
+    void testFindOrCreateUser_ExistingDeletedUser_CreatesNewUser() throws JsonProcessingException {
+        // Given - This tests that soft-deleted users are truly "not found" for OAuth
+        String provider = "google";
+        String subject = "google-deleted";
+        User deletedUser = createTestUser("old@example.com", "Old Name");
+        deletedUser.deletedAt = Instant.now();
+
+        UserPreference mockPref = new UserPreference();
+
+        when(userRepository.findByOAuthProviderAndSubject(provider, subject))
+                .thenReturn(Uni.createFrom().nullItem()); // Repository should filter deleted users
+        when(objectMapper.writeValueAsString(any())).thenReturn("{}");
+        when(userRepository.persist(any(User.class))).thenAnswer(invocation -> {
+            User user = invocation.getArgument(0);
+            return Uni.createFrom().item(user);
+        });
+        when(userPreferenceRepository.persist(any(UserPreference.class))).thenReturn(Uni.createFrom().item(mockPref));
+
+        // When
+        User result = userService.findOrCreateUser(provider, subject, "new@example.com", "New Name", null)
+                .await().indefinitely();
+
+        // Then
+        assertThat(result).isNotNull();
+        assertThat(result.email).isEqualTo("new@example.com");
+        verify(userRepository).persist(any(User.class)); // New user created
+    }
+
     // ===== Helper Methods =====
 
     private User createTestUser(String email, String displayName) {

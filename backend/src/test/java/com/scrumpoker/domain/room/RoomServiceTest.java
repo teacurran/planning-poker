@@ -5,12 +5,16 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.scrumpoker.domain.user.User;
 import com.scrumpoker.repository.RoomRepository;
 import com.scrumpoker.repository.UserRepository;
+import com.scrumpoker.security.FeatureGate;
+import io.quarkus.hibernate.reactive.panache.Panache;
 import io.smallrye.mutiny.Uni;
+import org.hibernate.reactive.mutiny.Mutiny;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.MockedStatic;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.Instant;
@@ -21,6 +25,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
@@ -39,6 +44,9 @@ class RoomServiceTest {
 
     @Mock
     UserRepository userRepository;
+
+    @Mock
+    FeatureGate featureGate;
 
     @InjectMocks
     RoomService roomService;
@@ -255,6 +263,39 @@ class RoomServiceTest {
 
         // Then
         assertThat(result.owner).isEqualTo(testOwner);
+    }
+
+    @Test
+    void testCreateRoomWithOwnerId_ResolvesOwnerAndAssignsIt() throws JsonProcessingException {
+        // Given
+        UUID ownerId = UUID.randomUUID();
+        User ownerFromDb = new User();
+        ownerFromDb.userId = ownerId;
+        when(objectMapper.writeValueAsString(any())).thenReturn("{}");
+        when(roomRepository.persist(any(Room.class))).thenAnswer(invocation -> {
+            Room room = invocation.getArgument(0);
+            return Uni.createFrom().item(room);
+        });
+
+        Mutiny.Session session = mock(Mutiny.Session.class);
+        Mutiny.Query<Object> query = mock(Mutiny.Query.class);
+
+        try (MockedStatic<Panache> panacheMock = mockStatic(Panache.class)) {
+            panacheMock.when(Panache::getSession).thenReturn(Uni.createFrom().item(session));
+            when(session.find(User.class, ownerId)).thenReturn(Uni.createFrom().item(ownerFromDb));
+            when(session.createNativeQuery(anyString())).thenReturn(query);
+            when(query.setParameter(anyInt(), any())).thenReturn(query);
+            when(query.executeUpdate()).thenReturn(Uni.createFrom().item(1));
+
+            // When
+            Room result = roomService.createRoomWithOwnerId("Owned Room", PrivacyMode.PUBLIC, ownerId, testConfig)
+                    .await().indefinitely();
+
+            // Then
+            assertThat(result.owner).isEqualTo(ownerFromDb);
+            verify(session).find(User.class, ownerId);
+            verify(query).executeUpdate();
+        }
     }
 
     @Test
@@ -708,6 +749,280 @@ class RoomServiceTest {
                 .hasMessageContaining("Failed to deserialize room configuration");
 
         verify(roomRepository).findById(roomId);
+    }
+
+    // ===== Tier Enforcement Tests =====
+
+    @Test
+    void testCreateRoom_InviteOnlyWithProPlusTier_Succeeds() throws JsonProcessingException {
+        // Given
+        User proPlusOwner = new User();
+        proPlusOwner.userId = UUID.randomUUID();
+        proPlusOwner.subscriptionTier = com.scrumpoker.domain.user.SubscriptionTier.PRO_PLUS;
+
+        when(objectMapper.writeValueAsString(any())).thenReturn("{}");
+        when(roomRepository.persist(any(Room.class))).thenAnswer(invocation -> {
+            Room room = invocation.getArgument(0);
+            return Uni.createFrom().item(room);
+        });
+        doNothing().when(featureGate).requireCanCreateInviteOnlyRoom(proPlusOwner);
+
+        // When
+        Room result = roomService.createRoom("Test Room", PrivacyMode.INVITE_ONLY, proPlusOwner, testConfig)
+                .await().indefinitely();
+
+        // Then
+        assertThat(result).isNotNull();
+        assertThat(result.privacyMode).isEqualTo(PrivacyMode.INVITE_ONLY);
+        verify(featureGate).requireCanCreateInviteOnlyRoom(proPlusOwner);
+        verify(roomRepository).persist(any(Room.class));
+    }
+
+    @Test
+    void testCreateRoom_InviteOnlyWithFreeTier_ThrowsException() throws JsonProcessingException {
+        // Given
+        User freeOwner = new User();
+        freeOwner.userId = UUID.randomUUID();
+        freeOwner.subscriptionTier = com.scrumpoker.domain.user.SubscriptionTier.FREE;
+
+        doThrow(new com.scrumpoker.security.FeatureNotAvailableException(
+                com.scrumpoker.domain.user.SubscriptionTier.PRO_PLUS,
+                com.scrumpoker.domain.user.SubscriptionTier.FREE,
+                "Invite-Only Rooms"
+        )).when(featureGate).requireCanCreateInviteOnlyRoom(freeOwner);
+
+        // When/Then
+        assertThatThrownBy(() ->
+                roomService.createRoom("Test Room", PrivacyMode.INVITE_ONLY, freeOwner, testConfig)
+                        .await().indefinitely()
+        )
+                .isInstanceOf(com.scrumpoker.security.FeatureNotAvailableException.class)
+                .hasMessageContaining("Invite-Only Rooms");
+
+        verify(featureGate).requireCanCreateInviteOnlyRoom(freeOwner);
+        verify(roomRepository, never()).persist(any(Room.class));
+    }
+
+    @Test
+    void testCreateRoom_OrgRestrictedWithEnterpriseTier_Succeeds() throws JsonProcessingException {
+        // Given
+        User enterpriseOwner = new User();
+        enterpriseOwner.userId = UUID.randomUUID();
+        enterpriseOwner.subscriptionTier = com.scrumpoker.domain.user.SubscriptionTier.ENTERPRISE;
+
+        when(objectMapper.writeValueAsString(any())).thenReturn("{}");
+        when(roomRepository.persist(any(Room.class))).thenAnswer(invocation -> {
+            Room room = invocation.getArgument(0);
+            return Uni.createFrom().item(room);
+        });
+        doNothing().when(featureGate).requireCanManageOrganization(enterpriseOwner);
+
+        // When
+        Room result = roomService.createRoom("Test Room", PrivacyMode.ORG_RESTRICTED, enterpriseOwner, testConfig)
+                .await().indefinitely();
+
+        // Then
+        assertThat(result).isNotNull();
+        assertThat(result.privacyMode).isEqualTo(PrivacyMode.ORG_RESTRICTED);
+        verify(featureGate).requireCanManageOrganization(enterpriseOwner);
+        verify(roomRepository).persist(any(Room.class));
+    }
+
+    @Test
+    void testCreateRoom_OrgRestrictedWithProTier_ThrowsException() {
+        // Given
+        User proOwner = new User();
+        proOwner.userId = UUID.randomUUID();
+        proOwner.subscriptionTier = com.scrumpoker.domain.user.SubscriptionTier.PRO;
+
+        doThrow(new com.scrumpoker.security.FeatureNotAvailableException(
+                com.scrumpoker.domain.user.SubscriptionTier.ENTERPRISE,
+                com.scrumpoker.domain.user.SubscriptionTier.PRO,
+                "Organization Management"
+        )).when(featureGate).requireCanManageOrganization(proOwner);
+
+        // When/Then
+        assertThatThrownBy(() ->
+                roomService.createRoom("Test Room", PrivacyMode.ORG_RESTRICTED, proOwner, testConfig)
+                        .await().indefinitely()
+        )
+                .isInstanceOf(com.scrumpoker.security.FeatureNotAvailableException.class)
+                .hasMessageContaining("Organization Management");
+
+        verify(featureGate).requireCanManageOrganization(proOwner);
+        verify(roomRepository, never()).persist(any(Room.class));
+    }
+
+    @Test
+    void testCreateRoom_PublicRoomWithAnyTier_NoTierCheck() throws JsonProcessingException {
+        // Given - Public rooms should not trigger any tier checks
+        User freeOwner = new User();
+        freeOwner.userId = UUID.randomUUID();
+        freeOwner.subscriptionTier = com.scrumpoker.domain.user.SubscriptionTier.FREE;
+
+        when(objectMapper.writeValueAsString(any())).thenReturn("{}");
+        when(roomRepository.persist(any(Room.class))).thenAnswer(invocation -> {
+            Room room = invocation.getArgument(0);
+            return Uni.createFrom().item(room);
+        });
+
+        // When
+        Room result = roomService.createRoom("Test Room", PrivacyMode.PUBLIC, freeOwner, testConfig)
+                .await().indefinitely();
+
+        // Then
+        assertThat(result).isNotNull();
+        assertThat(result.privacyMode).isEqualTo(PrivacyMode.PUBLIC);
+        // Verify NO tier checks were performed
+        verifyNoInteractions(featureGate);
+        verify(roomRepository).persist(any(Room.class));
+    }
+
+    @Test
+    void testUpdatePrivacyMode_WithNoOwner_UpdatesSuccessfully() {
+        // Given - Room with no owner (anonymous room)
+        String roomId = "room123";
+        Room existingRoom = createTestRoom(roomId, "Test Room");
+        existingRoom.privacyMode = PrivacyMode.PUBLIC;
+        existingRoom.owner = null; // No owner - avoids Panache session fetch
+
+        when(roomRepository.findById(roomId)).thenReturn(Uni.createFrom().item(existingRoom));
+        when(roomRepository.persist(any(Room.class))).thenAnswer(invocation -> {
+            Room room = invocation.getArgument(0);
+            return Uni.createFrom().item(room);
+        });
+
+        // When
+        Room result = roomService.updatePrivacyMode(roomId, PrivacyMode.INVITE_ONLY)
+                .await().indefinitely();
+
+        // Then
+        assertThat(result.privacyMode).isEqualTo(PrivacyMode.INVITE_ONLY);
+        verifyNoInteractions(featureGate); // No owner means no tier check
+    }
+
+    @Test
+    void testUpdatePrivacyMode_WithOwnerFetchesAndValidatesTier() {
+        // Given
+        String roomId = "room321";
+        Room existingRoom = createTestRoom(roomId, "Owner Room");
+        User owner = new User();
+        owner.userId = UUID.randomUUID();
+        existingRoom.owner = owner;
+
+        when(roomRepository.findById(roomId)).thenReturn(Uni.createFrom().item(existingRoom));
+        when(roomRepository.persist(any(Room.class))).thenAnswer(invocation -> {
+            Room room = invocation.getArgument(0);
+            return Uni.createFrom().item(room);
+        });
+
+        Mutiny.Session session = mock(Mutiny.Session.class);
+        try (MockedStatic<Panache> panacheMock = mockStatic(Panache.class)) {
+            panacheMock.when(Panache::getSession).thenReturn(Uni.createFrom().item(session));
+            when(session.fetch(owner)).thenReturn(Uni.createFrom().item(owner));
+
+            // When
+            Room result = roomService.updatePrivacyMode(roomId, PrivacyMode.ORG_RESTRICTED)
+                    .await().indefinitely();
+
+            // Then
+            assertThat(result.privacyMode).isEqualTo(PrivacyMode.ORG_RESTRICTED);
+            verify(session).fetch(owner);
+            verify(featureGate).requireCanManageOrganization(owner);
+            verify(roomRepository).persist(existingRoom);
+        }
+    }
+
+    // ===== Edge Case Tests =====
+
+    @Test
+    void testCreateRoom_NullOwnerWithInviteOnly_NoTierCheck() throws JsonProcessingException {
+        // Given - No owner means no tier enforcement
+        when(objectMapper.writeValueAsString(any())).thenReturn("{}");
+        when(roomRepository.persist(any(Room.class))).thenAnswer(invocation -> {
+            Room room = invocation.getArgument(0);
+            return Uni.createFrom().item(room);
+        });
+
+        // When
+        Room result = roomService.createRoom("Test", PrivacyMode.INVITE_ONLY, null, testConfig)
+                .await().indefinitely();
+
+        // Then
+        assertThat(result).isNotNull();
+        verifyNoInteractions(featureGate);
+        verify(roomRepository).persist(any(Room.class));
+    }
+
+    @Test
+    void testFindByOwnerId_MultipleRooms_OrderedByActivity() {
+        // Given
+        UUID ownerId = UUID.randomUUID();
+        Room room1 = createTestRoom("room1", "Room 1");
+        room1.lastActiveAt = Instant.parse("2024-01-01T10:00:00Z");
+
+        Room room2 = createTestRoom("room2", "Room 2");
+        room2.lastActiveAt = Instant.parse("2024-01-02T10:00:00Z");
+
+        Room room3 = createTestRoom("room3", "Room 3");
+        room3.lastActiveAt = Instant.parse("2024-01-03T10:00:00Z");
+
+        List<Room> rooms = Arrays.asList(room3, room2, room1); // Most recent first
+
+        when(roomRepository.findActiveByOwnerId(ownerId)).thenReturn(Uni.createFrom().item(rooms));
+
+        // When
+        List<Room> result = roomService.findByOwnerId(ownerId)
+                .collect().asList()
+                .await().indefinitely();
+
+        // Then
+        assertThat(result).hasSize(3);
+        assertThat(result.get(0).lastActiveAt).isAfter(result.get(1).lastActiveAt);
+        assertThat(result.get(1).lastActiveAt).isAfter(result.get(2).lastActiveAt);
+    }
+
+    @Test
+    void testUpdateRoomConfig_UpdatesLastActiveAt() throws JsonProcessingException {
+        // Given
+        String roomId = "room123";
+        Room existingRoom = createTestRoom(roomId, "Test Room");
+        Instant originalLastActive = existingRoom.lastActiveAt;
+
+        when(roomRepository.findById(roomId)).thenReturn(Uni.createFrom().item(existingRoom));
+        when(objectMapper.writeValueAsString(any())).thenReturn("{}");
+        when(roomRepository.persist(any(Room.class))).thenAnswer(invocation -> {
+            Room room = invocation.getArgument(0);
+            return Uni.createFrom().item(room);
+        });
+
+        // When
+        Room result = roomService.updateRoomConfig(roomId, testConfig)
+                .await().indefinitely();
+
+        // Then
+        assertThat(result.lastActiveAt).isAfter(originalLastActive);
+    }
+
+    @Test
+    void testUpdateRoomTitle_UpdatesLastActiveAt() {
+        // Given
+        String roomId = "room123";
+        Room existingRoom = createTestRoom(roomId, "Old Title");
+        Instant originalLastActive = existingRoom.lastActiveAt;
+
+        when(roomRepository.findById(roomId)).thenReturn(Uni.createFrom().item(existingRoom));
+        when(roomRepository.persist(any(Room.class))).thenAnswer(invocation -> {
+            Room room = invocation.getArgument(0);
+            return Uni.createFrom().item(room);
+        });
+
+        // When
+        Room result = roomService.updateRoomTitle(roomId, "New Title")
+                .await().indefinitely();
+
+        // Then
+        assertThat(result.lastActiveAt).isAfter(originalLastActive);
     }
 
     // ===== Helper Methods =====

@@ -102,7 +102,7 @@
     "acceptance_criteria": "*   `mvn test` runs all unit tests successfully\n        *   Test coverage >90% for RoomService and UserService\n        *   All business validation scenarios tested (invalid input → exception)\n        *   Happy path tests verify correct repository method calls\n        *   Exception tests verify custom exceptions thrown with correct messages",
     "dependencies": [],
     "parallelizable": false,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I2.T8",

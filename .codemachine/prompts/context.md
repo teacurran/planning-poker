@@ -10,18 +10,18 @@ This is the full specification of the task you must complete.
 
 ```json
 {
-  "task_id": "I2.T6",
+  "task_id": "I2.T7",
   "iteration_id": "I2",
   "iteration_goal": "Implement foundational domain services (Room Service, basic User Service), define REST API contracts (OpenAPI specification), and establish WebSocket protocol specification to enable frontend integration and parallel feature development.",
-  "description": "Implement JAX-RS REST controllers for user profile and preference management per OpenAPI spec. Create `UserController` with endpoints: `GET /api/v1/users/{userId}` (get profile), `PUT /api/v1/users/{userId}` (update profile), `GET /api/v1/users/{userId}/preferences` (get preferences), `PUT /api/v1/users/{userId}/preferences` (update preferences). Inject `UserService`, use DTOs, handle exceptions, enforce authorization (users can only access their own data unless admin). Return reactive types.",
+  "description": "Create comprehensive unit tests for `RoomService` and `UserService` using JUnit 5 and Mockito. Mock repository dependencies. Test business logic: room creation with unique ID generation, config validation, soft delete behavior, user profile updates, preference persistence. Test exception scenarios (e.g., room not found, invalid email format). Use AssertJ for fluent assertions. Aim for >90% code coverage on service classes.",
   "agent_type_hint": "BackendAgent",
-  "inputs": "*   OpenAPI specification from I2.T1\n        *   UserService from I2.T4",
+  "inputs": "*   RoomService and UserService from I2.T3, I2.T4\n        *   JUnit 5 and Mockito testing patterns",
   "target_files": [],
   "input_files": [],
-  "deliverables": "*   UserController with 4 endpoint methods\n        *   DTO classes for User and UserPreference\n        *   MapStruct mapper for conversions\n        *   Authorization checks (user can only update own profile)\n        *   Exception handlers (404, 403 Forbidden)",
-  "acceptance_criteria": "*   GET /api/v1/users/{userId} returns 200 with UserDTO\n        *   PUT /api/v1/users/{userId} updates profile, returns 200\n        *   GET preferences returns UserPreferenceDTO with JSONB fields\n        *   PUT preferences updates JSONB settings correctly\n        *   Authorization prevents user A from accessing user B's data (403 Forbidden)\n        *   DTOs match OpenAPI schemas",
+  "deliverables": "*   RoomServiceTest with 10+ test methods covering create, update, delete, find operations\n        *   UserServiceTest with 10+ test methods covering profile, preferences, soft delete\n        *   Mocked repository interactions using Mockito\n        *   Exception scenario tests (assertThrows for custom exceptions)\n        *   AssertJ assertions for fluent readability",
+  "acceptance_criteria": "*   `mvn test` runs all unit tests successfully\n        *   Test coverage >90% for RoomService and UserService\n        *   All business validation scenarios tested (invalid input → exception)\n        *   Happy path tests verify correct repository method calls\n        *   Exception tests verify custom exceptions thrown with correct messages",
   "dependencies": [],
-  "parallelizable": true,
+  "parallelizable": false,
   "done": false
 }
 ```
@@ -32,68 +32,66 @@ This is the full specification of the task you must complete.
 
 The following are the relevant sections from the architecture and plan documents, which I found by analyzing the task description.
 
-### Context: User Account Requirements (from .codemachine/artifacts/architecture/01_Context_and_Drivers.md)
+### Context: Task 2.7 – Write Unit Tests for Domain Services (from .codemachine/artifacts/plan/02_Iteration_I2.md)
 
 ```markdown
-<!-- anchor: user-account-requirements -->
-#### User Account Requirements
-- **OAuth2 Authentication:** Google and Microsoft social login integration
-- **Profile Management:** Display name, avatar, theme preferences, default room settings
-- **Session History:** Persistent storage of past sessions with tier-based access controls
-- **Preference Persistence:** User-specific defaults for deck type, room rules, reveal behavior
-```
-
-### Context: REST API Endpoints Overview – Authentication & User Management (from .codemachine/artifacts/architecture/04_Behavior_and_Communication.md)
-
-```markdown
-<!-- anchor: rest-api-endpoints -->
-#### REST API Endpoints Overview
-
-**Authentication & User Management:**
-- `POST /api/v1/auth/oauth/callback` - Exchange OAuth2 code for JWT tokens
-- `POST /api/v1/auth/refresh` - Refresh expired access token
-- `POST /api/v1/auth/logout` - Revoke refresh token
-- `GET /api/v1/users/{userId}` - Retrieve user profile
-- `PUT /api/v1/users/{userId}` - Update profile (display name, avatar)
-- `GET /api/v1/users/{userId}/preferences` - Get user preferences
-- `PUT /api/v1/users/{userId}/preferences` - Update default room settings, theme
-```
-
-### Context: Task 2.6 – Create REST Controllers for User Management (from .codemachine/artifacts/plan/02_Iteration_I2.md)
-
-```markdown
-<!-- anchor: task-i2-t6 -->
-*   **Task 2.6: Create REST Controllers for User Management**
-    *   **Task ID:** `I2.T6`
-    *   **Description:** Implement JAX-RS REST controllers for user profile and preference management per OpenAPI spec. Create `UserController` with endpoints: `GET /api/v1/users/{userId}` (get profile), `PUT /api/v1/users/{userId}` (update profile), `GET /api/v1/users/{userId}/preferences` (get preferences), `PUT /api/v1/users/{userId}/preferences` (update preferences). Inject `UserService`, use DTOs, handle exceptions, enforce authorization (users can only access their own data unless admin). Return reactive types.
+<!-- anchor: task-i2-t7 -->
+*   **Task 2.7: Write Unit Tests for Domain Services**
+    *   **Task ID:** `I2.T7`
+    *   **Description:** Create comprehensive unit tests for `RoomService` and `UserService` using JUnit 5 and Mockito. Mock repository dependencies. Test business logic: room creation with unique ID generation, config validation, soft delete behavior, user profile updates, preference persistence. Test exception scenarios (e.g., room not found, invalid email format). Use AssertJ for fluent assertions. Aim for >90% code coverage on service classes.
     *   **Agent Type Hint:** `BackendAgent`
     *   **Inputs:**
-        *   OpenAPI specification from I2.T1
-        *   UserService from I2.T4
+        *   RoomService and UserService from I2.T3, I2.T4
+        *   JUnit 5 and Mockito testing patterns
     *   **Input Files:**
-        *   `api/openapi.yaml`
+        *   `backend/src/main/java/com/scrumpoker/domain/room/RoomService.java`
         *   `backend/src/main/java/com/scrumpoker/domain/user/UserService.java`
     *   **Target Files:**
-        *   `backend/src/main/java/com/scrumpoker/api/rest/UserController.java`
-        *   `backend/src/main/java/com/scrumpoker/api/rest/dto/UserDTO.java`
-        *   `backend/src/main/java/com/scrumpoker/api/rest/dto/UpdateProfileRequest.java`
-        *   `backend/src/main/java/com/scrumpoker/api/rest/dto/UserPreferenceDTO.java`
-        *   `backend/src/main/java/com/scrumpoker/api/rest/mapper/UserMapper.java`
+        *   `backend/src/test/java/com/scrumpoker/domain/room/RoomServiceTest.java`
+        *   `backend/src/test/java/com/scrumpoker/domain/user/UserServiceTest.java`
     *   **Deliverables:**
-        *   UserController with 4 endpoint methods
-        *   DTO classes for User and UserPreference
-        *   MapStruct mapper for conversions
-        *   Authorization checks (user can only update own profile)
-        *   Exception handlers (404, 403 Forbidden)
+        *   RoomServiceTest with 10+ test methods covering create, update, delete, find operations
+        *   UserServiceTest with 10+ test methods covering profile, preferences, soft delete
+        *   Mocked repository interactions using Mockito
+        *   Exception scenario tests (assertThrows for custom exceptions)
+        *   AssertJ assertions for fluent readability
     *   **Acceptance Criteria:**
-        *   GET /api/v1/users/{userId} returns 200 with UserDTO
-        *   PUT /api/v1/users/{userId} updates profile, returns 200
-        *   GET preferences returns UserPreferenceDTO with JSONB fields
-        *   PUT preferences updates JSONB settings correctly
-        *   Authorization prevents user A from accessing user B's data (403 Forbidden)
-        *   DTOs match OpenAPI schemas
-    *   **Dependencies:** [I2.T1, I2.T4]
-    *   **Parallelizable:** Yes (can work parallel with I2.T5)
+        *   `mvn test` runs all unit tests successfully
+        *   Test coverage >90% for RoomService and UserService
+        *   All business validation scenarios tested (invalid input → exception)
+        *   Happy path tests verify correct repository method calls
+        *   Exception tests verify custom exceptions thrown with correct messages
+    *   **Dependencies:** [I2.T3, I2.T4]
+    *   **Parallelizable:** No (depends on service implementation)
+```
+
+### Context: Unit Testing Strategy (from .codemachine/artifacts/plan/03_Verification_and_Glossary.md)
+
+```markdown
+<!-- anchor: unit-testing -->
+#### Unit Testing
+
+**Scope:** Individual classes and methods in isolation (services, utilities, validators)
+
+**Framework:** JUnit 5 (backend), Jest/Vitest (frontend)
+
+**Coverage Target:** >90% code coverage for service layer, >80% for overall codebase
+
+**Approach:**
+- Mock external dependencies (repositories, adapters, external services) using Mockito
+- Test business logic thoroughly (happy paths, edge cases, error scenarios)
+- Fast execution (<5 minutes for entire unit test suite)
+- Run on every developer commit and in CI pipeline
+
+**Examples:**
+- `RoomServiceTest`: Tests room creation with unique ID generation, config validation, soft delete
+- `VotingServiceTest`: Tests vote casting, consensus calculation with known inputs
+- `BillingServiceTest`: Tests subscription tier transitions, Stripe integration mocking
+
+**Acceptance Criteria:**
+- All unit tests pass (`mvn test`, `npm run test:unit`)
+- Coverage reports meet targets (verify with JaCoCo, Istanbul)
+- No flaky tests (consistent results across runs)
 ```
 
 ---
@@ -103,22 +101,22 @@ The following are the relevant sections from the architecture and plan documents
 The following analysis is based on my direct review of the current codebase. Use these notes and tips to guide your implementation.
 
 ### Relevant Existing Code
-*   **File:** `backend/src/main/java/com/scrumpoker/api/rest/UserController.java:1`
-    *   **Summary:** Defines all four user/profile endpoints with Mutiny `Uni<Response>` pipelines, OpenAPI annotations, and placeholder `@RolesAllowed("USER")` guards; comments note that authentication/authorization enforcement arrives in Iteration 3.
-    *   **Recommendation:** Keep delegating to `UserService` for persistence and `UserMapper` for DTO conversion, and structure each endpoint to simply transform the service result into the correct HTTP status—domain exceptions are already translated by the registered `ExceptionMapper`s so avoid manual error handling.
-*   **File:** `backend/src/main/java/com/scrumpoker/domain/user/UserService.java:1`
-    *   **Summary:** Owns validation, transactional persistence, and preference JSON serialization (e.g., `updateProfile`, `getPreferences`, `updatePreferences`, `deleteUser`) with `@WithTransaction`/`@WithSession` annotations and helpful helpers like `createDefaultPreferences`.
-    *   **Recommendation:** Reuse its public methods exactly as-is instead of duplicating validation logic; the controller should just pass through DTO fields, rely on `UserService` to enforce constraints, and let `UserNotFoundException` or `IllegalArgumentException` bubble up.
-*   **File:** `backend/src/main/java/com/scrumpoker/api/rest/mapper/UserMapper.java:1`
-    *   **Summary:** Converts between domain entities/configs and DTOs, handling JSONB deserialization into `RoomConfigDTO`/`NotificationSettingsDTO` and composing a `UserPreferenceConfig` from `UpdateUserPreferenceRequest`.
-    *   **Recommendation:** Always run responses through `toDTO`/`toPreferenceDTO` and build configs via `toConfig` rather than hand-rolling JSON, otherwise you risk drifting from the OpenAPI schema defaults and duplicating object-mapper work.
-*   **File:** `api/openapi.yaml:194`
-    *   **Summary:** Specifies the expected verbs, parameters, payload schemas, and success/error responses for `/api/v1/users/{userId}` and `/api/v1/users/{userId}/preferences`, referencing `UserDTO`, `UserPreferenceDTO`, `UpdateUserRequest`, and `UpdateUserPreferenceRequest`.
-    *   **Recommendation:** Mirror these shapes precisely—ensure the controller returns `200 OK` bodies with the DTOs, raises `403/404` where called out, and validates request bodies according to the schema (e.g., `@Size` on `UpdateProfileRequest`, enum-friendly values in preference payloads).
+*   **File:** `backend/src/main/java/com/scrumpoker/domain/room/RoomService.java`
+    *   **Summary:** Reactive domain service that validates titles/privacy, enforces tier checks via `FeatureGate`, serializes `RoomConfig` with `ObjectMapper`, and persists `Room` entities through `RoomRepository`/Panache sessions.
+    *   **Recommendation:** Mirror its validation matrix in the tests—focus on nanoid generation, config serialization failures, privacy/tier enforcement, and soft-delete behavior so regressions get caught before hitting the database layer.
+*   **File:** `backend/src/main/java/com/scrumpoker/domain/user/UserService.java`
+    *   **Summary:** Handles OAuth-based user creation, profile updates, preference CRUD, and soft-delete logic with regex email validation plus JSONB serialization helpers.
+    *   **Recommendation:** Structure tests around each public method (`createUser`, `updateProfile`, `findOrCreateUser`, `updatePreferences`, etc.) and exercise both happy-path persistence and failure modes (invalid email, deleted user, serialization errors) by mocking `UserRepository`, `UserPreferenceRepository`, and `ObjectMapper` responses.
+*   **File:** `backend/src/test/java/com/scrumpoker/domain/room/RoomServiceTest.java`
+    *   **Summary:** Already contains a comprehensive Mockito-based suite covering creation, updates, deletion, fetches, and config serialization/deserialization, using `@ExtendWith(MockitoExtension.class)` and Mutiny `Uni` operations via `.await().indefinitely()`.
+    *   **Recommendation:** Treat it as the baseline—extend or refactor carefully to keep >90% coverage, mock `FeatureGate` when testing tier-specific flows, and ensure new tests continue to avoid direct Panache session calls by keeping owners null unless mocking `Panache.getSession()`.
+*   **File:** `backend/src/test/java/com/scrumpoker/domain/user/UserServiceTest.java`
+    *   **Summary:** Mirrors the production methods with mocked repositories/object mapper, validating creation, profile edits, preference management, JSONB serialization fallbacks, and soft deletes.
+    *   **Recommendation:** Maintain the existing pattern of `when(...).thenReturn(Uni.createFrom().item(...))`, add missing scenarios (e.g., `findOrCreateUser` updates, `updatePreferences` JSON failures, `deleteUser` edge cases), and ensure AssertJ assertions verify both state mutations and interaction counts.
 
 ### Implementation Tips & Notes
-*   **Tip:** `UserController` already covers success-path piping; you can rely on the existing `UserNotFoundExceptionMapper`, `IllegalArgumentExceptionMapper`, and `ValidationExceptionMapper` (in `backend/src/main/java/com/scrumpoker/api/rest/exception`) to format failures uniformly, so keep controller methods minimal.
-*   **Tip:** Authorization checks are currently TODOs—leave the annotations and comments in place and design the logic so that once the JWT filter lands, it only needs to inject the authenticated user ID to enforce the “only self-access” rule.
-*   **Tip:** `UserService.updatePreferences` ensures a `UserPreference` row exists and serializes the JSONB fields using the injected `ObjectMapper`; don’t attempt manual serialization inside the controller—just forward DTO objects or use `UserMapper.toConfig` when the simplified overload is preferred.
-*   **Tip:** Stick with Mutiny transformation style (`onItem().transform(...)`) when shaping responses so the controller stays non-blocking; avoid calling `.await().indefinitely()` or other blocking constructs.
-*   **Note:** DTOs in `backend/src/main/java/com/scrumpoker/api/rest/dto` already match the OpenAPI schemas and include validation annotations—reuse them to keep the API contract and documentation synchronized.
+*   **Tip:** Keep all tests reactive-friendly by awaiting `Uni`/`Multi` results inside the test body only; never modify the service to expose synchronous methods just for testing purposes.
+*   **Tip:** Prefer strict mock verification (`verify(mock).persist(...)`, `verifyNoInteractions(...)`) so that business-rule regressions (like skipping validation) are immediately detectable.
+*   **Tip:** When testing tier or validation errors in `RoomService`, inject a mocked `FeatureGate` via `@Mock` + `@InjectMocks` and use `doThrow(new FeatureNotAvailableException(...))` to ensure the service propagates domain-specific exceptions cleanly.
+*   **Tip:** For `UserService` preference serialization, use `when(objectMapper.writeValueAsString(...)).thenThrow(...)` to simulate JSONB failures and assert that the service returns the documented fallback (`{}`) or wraps the error in `IllegalArgumentException`.
+*   **Note:** Coverage is tracked with JaCoCo in the Maven build; keep each test class lean but thorough so running `mvn test` stays under the 5-minute goal outlined in the verification strategy.
