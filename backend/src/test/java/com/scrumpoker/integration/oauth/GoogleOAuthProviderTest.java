@@ -1,5 +1,6 @@
 package com.scrumpoker.integration.oauth;
 
+import io.smallrye.jwt.auth.principal.JWTAuthContextInfo;
 import io.smallrye.jwt.auth.principal.JWTParser;
 import io.smallrye.jwt.auth.principal.ParseException;
 import org.eclipse.microprofile.jwt.JsonWebToken;
@@ -16,9 +17,12 @@ import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 /**
  * Unit tests for GoogleOAuthProvider.
@@ -48,6 +52,16 @@ class GoogleOAuthProviderTest {
         setPrivateField(googleProvider, "clientId", TEST_CLIENT_ID);
         setPrivateField(googleProvider, "clientSecret",
                 "test-secret");
+        setPrivateField(googleProvider, "tokenIssuer", GOOGLE_ISSUER);
+        setPrivateField(googleProvider, "configuredAudience",
+                TEST_CLIENT_ID);
+        setPrivateField(googleProvider, "jwksUri",
+                "https://www.googleapis.com/oauth2/v3/certs");
+        setPrivateField(googleProvider, "expectedAudienceSet", null);
+        setPrivateField(googleProvider, "jwtContextInfo", null);
+
+        lenient().when(jwtParser.parse(eq(VALID_ID_TOKEN),
+                any(JWTAuthContextInfo.class))).thenReturn(jwt);
     }
 
     // ===== Validate And Extract Claims Tests =====
@@ -59,7 +73,6 @@ class GoogleOAuthProviderTest {
         final long currentTime = System.currentTimeMillis() / 1000;
         final long expirationTime = currentTime + 3600; // 1 hour from now
 
-        when(jwtParser.parse(VALID_ID_TOKEN)).thenReturn(jwt);
         when(jwt.getExpirationTime()).thenReturn(expirationTime);
         when(jwt.getIssuer()).thenReturn(GOOGLE_ISSUER);
         when(jwt.getAudience())
@@ -82,7 +95,8 @@ class GoogleOAuthProviderTest {
         assertThat(result.getAvatarUrl())
                 .isEqualTo("https://avatar.example.com/test.jpg");
         assertThat(result.getProvider()).isEqualTo("google");
-        verify(jwtParser).parse(VALID_ID_TOKEN);
+        verify(jwtParser).parse(eq(VALID_ID_TOKEN),
+                any(JWTAuthContextInfo.class));
     }
 
     @Test
@@ -92,7 +106,6 @@ class GoogleOAuthProviderTest {
         final long currentTime = System.currentTimeMillis() / 1000;
         final long expirationTime = currentTime + 3600;
 
-        when(jwtParser.parse(VALID_ID_TOKEN)).thenReturn(jwt);
         when(jwt.getExpirationTime()).thenReturn(expirationTime);
         when(jwt.getIssuer()).thenReturn("accounts.google.com");
         when(jwt.getAudience())
@@ -119,7 +132,6 @@ class GoogleOAuthProviderTest {
         final long currentTime = System.currentTimeMillis() / 1000;
         final long expirationTime = currentTime + 3600;
 
-        when(jwtParser.parse(VALID_ID_TOKEN)).thenReturn(jwt);
         when(jwt.getExpirationTime()).thenReturn(expirationTime);
         when(jwt.getIssuer()).thenReturn(GOOGLE_ISSUER);
         when(jwt.getAudience())
@@ -146,7 +158,6 @@ class GoogleOAuthProviderTest {
         final long currentTime = System.currentTimeMillis() / 1000;
         final long expirationTime = currentTime + 3600;
 
-        when(jwtParser.parse(VALID_ID_TOKEN)).thenReturn(jwt);
         when(jwt.getExpirationTime()).thenReturn(expirationTime);
         when(jwt.getIssuer()).thenReturn(GOOGLE_ISSUER);
         when(jwt.getAudience())
@@ -172,7 +183,6 @@ class GoogleOAuthProviderTest {
         final long expirationTime = currentTime - 3600;
         // Expired 1 hour ago
 
-        when(jwtParser.parse(VALID_ID_TOKEN)).thenReturn(jwt);
         when(jwt.getExpirationTime()).thenReturn(expirationTime);
 
         // When/Then
@@ -189,7 +199,6 @@ class GoogleOAuthProviderTest {
         final long currentTime = System.currentTimeMillis() / 1000;
         final long expirationTime = currentTime + 3600;
 
-        when(jwtParser.parse(VALID_ID_TOKEN)).thenReturn(jwt);
         when(jwt.getExpirationTime()).thenReturn(expirationTime);
         when(jwt.getIssuer()).thenReturn("https://evil.com");
 
@@ -207,7 +216,6 @@ class GoogleOAuthProviderTest {
         final long currentTime = System.currentTimeMillis() / 1000;
         final long expirationTime = currentTime + 3600;
 
-        when(jwtParser.parse(VALID_ID_TOKEN)).thenReturn(jwt);
         when(jwt.getExpirationTime()).thenReturn(expirationTime);
         when(jwt.getIssuer()).thenReturn(null);
 
@@ -225,7 +233,6 @@ class GoogleOAuthProviderTest {
         final long currentTime = System.currentTimeMillis() / 1000;
         final long expirationTime = currentTime + 3600;
 
-        when(jwtParser.parse(VALID_ID_TOKEN)).thenReturn(jwt);
         when(jwt.getExpirationTime()).thenReturn(expirationTime);
         when(jwt.getIssuer()).thenReturn(GOOGLE_ISSUER);
         when(jwt.getAudience())
@@ -250,7 +257,6 @@ class GoogleOAuthProviderTest {
         audiences.add("other-client-id");
         audiences.add(TEST_CLIENT_ID);
 
-        when(jwtParser.parse(VALID_ID_TOKEN)).thenReturn(jwt);
         when(jwt.getExpirationTime()).thenReturn(expirationTime);
         when(jwt.getIssuer()).thenReturn(GOOGLE_ISSUER);
         when(jwt.getAudience()).thenReturn(audiences);
@@ -275,7 +281,6 @@ class GoogleOAuthProviderTest {
         final long currentTime = System.currentTimeMillis() / 1000;
         final long expirationTime = currentTime + 3600;
 
-        when(jwtParser.parse(VALID_ID_TOKEN)).thenReturn(jwt);
         when(jwt.getExpirationTime()).thenReturn(expirationTime);
         when(jwt.getIssuer()).thenReturn(GOOGLE_ISSUER);
         when(jwt.getAudience())
@@ -296,7 +301,6 @@ class GoogleOAuthProviderTest {
         final long currentTime = System.currentTimeMillis() / 1000;
         final long expirationTime = currentTime + 3600;
 
-        when(jwtParser.parse(VALID_ID_TOKEN)).thenReturn(jwt);
         when(jwt.getExpirationTime()).thenReturn(expirationTime);
         when(jwt.getIssuer()).thenReturn(GOOGLE_ISSUER);
         when(jwt.getAudience())
@@ -317,7 +321,6 @@ class GoogleOAuthProviderTest {
         final long currentTime = System.currentTimeMillis() / 1000;
         final long expirationTime = currentTime + 3600;
 
-        when(jwtParser.parse(VALID_ID_TOKEN)).thenReturn(jwt);
         when(jwt.getExpirationTime()).thenReturn(expirationTime);
         when(jwt.getIssuer()).thenReturn(GOOGLE_ISSUER);
         when(jwt.getAudience())
@@ -339,7 +342,6 @@ class GoogleOAuthProviderTest {
         final long currentTime = System.currentTimeMillis() / 1000;
         final long expirationTime = currentTime + 3600;
 
-        when(jwtParser.parse(VALID_ID_TOKEN)).thenReturn(jwt);
         when(jwt.getExpirationTime()).thenReturn(expirationTime);
         when(jwt.getIssuer()).thenReturn(GOOGLE_ISSUER);
         when(jwt.getAudience())
@@ -358,7 +360,8 @@ class GoogleOAuthProviderTest {
     void testValidateAndExtractClaims_ParseException_ThrowsOAuthException()
             throws ParseException {
         // Given
-        when(jwtParser.parse(anyString()))
+        when(jwtParser.parse(anyString(),
+                any(JWTAuthContextInfo.class)))
                 .thenThrow(new ParseException("Invalid JWT format"));
 
         // When/Then

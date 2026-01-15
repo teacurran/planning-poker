@@ -1,5 +1,6 @@
 package com.scrumpoker.integration.oauth;
 
+import io.smallrye.jwt.auth.principal.JWTAuthContextInfo;
 import io.smallrye.jwt.auth.principal.JWTParser;
 import io.smallrye.jwt.auth.principal.ParseException;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -16,8 +17,13 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -56,6 +62,9 @@ public class GoogleOAuthProvider {
     /** Length of "id_token" prefix plus colon and quote. */
     private static final int ID_TOKEN_PREFIX_LENGTH = 11;
 
+    /** Allowed JWT clock skew in seconds. */
+    private static final int CLOCK_SKEW_SECONDS = 60;
+
     /** Google OAuth2 client ID. */
     @ConfigProperty(name = "quarkus.oidc.google.client-id")
     private String clientId;
@@ -63,6 +72,18 @@ public class GoogleOAuthProvider {
     /** Google OAuth2 client secret. */
     @ConfigProperty(name = "quarkus.oidc.google.credentials.secret")
     private String clientSecret;
+
+    /** Configured Google issuer used for validation. */
+    @ConfigProperty(name = "quarkus.oidc.google.token.issuer")
+    private String tokenIssuer;
+
+    /** Configured Google audience claim (defaults to client ID). */
+    @ConfigProperty(name = "quarkus.oidc.google.token.audience")
+    private String configuredAudience;
+
+    /** Google JWKS endpoint for signature verification. */
+    @ConfigProperty(name = "quarkus.oidc.google.jwks-path")
+    private String jwksUri;
 
     /** JWT parser for ID token validation. */
     @Inject
@@ -72,6 +93,12 @@ public class GoogleOAuthProvider {
     private final HttpClient httpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(CONNECT_TIMEOUT_SECONDS))
             .build();
+
+    /** Cached JWT context used for JWKS-based signature validation. */
+    private transient volatile JWTAuthContextInfo jwtContextInfo;
+
+    /** Cached set of expected audience values. */
+    private transient volatile Set<String> expectedAudienceSet;
 
     /**
      * Exchanges authorization code for access token and ID token.
@@ -170,9 +197,9 @@ public class GoogleOAuthProvider {
 
         try {
             // Parse and validate JWT token
-            // JWTParser handles signature verification using JWKS
-            // endpoint
-            JsonWebToken jwt = jwtParser.parse(idToken);
+            // JWTParser handles signature verification using JWKS endpoint
+            JsonWebToken jwt = jwtParser.parse(idToken,
+                    getJwtContextInfo());
 
             // Validate token expiration
             long currentTime = System.currentTimeMillis()
@@ -184,16 +211,14 @@ public class GoogleOAuthProvider {
 
             // Validate issuer
             String issuer = jwt.getIssuer();
-            if (issuer == null
-                    || (!issuer.equals("https://accounts.google.com")
-                    && !issuer.equals("accounts.google.com"))) {
+            if (!isValidIssuer(issuer)) {
                 throw new OAuth2AuthenticationException(
                         "Invalid ID token issuer: " + issuer,
                         PROVIDER_NAME);
             }
 
             // Validate audience (must match client ID)
-            if (!jwt.getAudience().contains(clientId)) {
+            if (!isExpectedAudience(jwt.getAudience())) {
                 throw new OAuth2AuthenticationException(
                         "ID token audience does not match client ID",
                         PROVIDER_NAME);
@@ -261,6 +286,110 @@ public class GoogleOAuthProvider {
         }
 
         return jsonResponse.substring(startIndex + 1, endIndex);
+    }
+
+    /**
+     * Validates issuer value against configured Google issuers.
+     *
+     * @param issuer Issuer claim from token
+     * @return true if issuer is valid
+     */
+    private boolean isValidIssuer(final String issuer) {
+        if (issuer == null || issuer.trim().isEmpty()) {
+            return false;
+        }
+        final String normalizedIssuer = normalizeIssuer(issuer);
+        if ("https://accounts.google.com".equals(normalizedIssuer)
+                || "accounts.google.com".equals(normalizedIssuer)) {
+            return true;
+        }
+        final String normalizedConfigured = normalizeIssuer(tokenIssuer);
+        return normalizedConfigured != null
+                && normalizedConfigured.equals(normalizedIssuer);
+    }
+
+    /**
+     * Normalizes issuer values for comparison.
+     *
+     * @param issuerValue Issuer to normalize
+     * @return Normalized issuer
+     */
+    private String normalizeIssuer(final String issuerValue) {
+        if (issuerValue == null || issuerValue.trim().isEmpty()) {
+            return null;
+        }
+        String normalized = issuerValue.trim();
+        if (normalized.endsWith("/")) {
+            normalized = normalized.substring(0, normalized.length() - 1);
+        }
+        return normalized;
+    }
+
+    /**
+     * Checks if the token audiences contain expected client identifiers.
+     *
+     * @param tokenAudiences Audiences from ID token
+     * @return true if expected audience is present
+     */
+    private boolean isExpectedAudience(final Set<String> tokenAudiences) {
+        if (tokenAudiences == null || tokenAudiences.isEmpty()) {
+            return false;
+        }
+        Set<String> expectedAudiences = getExpectedAudienceSet();
+        return tokenAudiences.stream().anyMatch(expectedAudiences::contains);
+    }
+
+    /**
+     * Builds and caches JWT context with Google JWKS configuration.
+     *
+     * @return JWTAuthContextInfo referencing Google JWKS
+     */
+    private JWTAuthContextInfo getJwtContextInfo() {
+        if (jwtContextInfo == null) {
+            synchronized (this) {
+                if (jwtContextInfo == null) {
+                    JWTAuthContextInfo contextInfo =
+                            new JWTAuthContextInfo();
+                    contextInfo.setPublicKeyLocation(jwksUri);
+                    contextInfo.setClockSkew(CLOCK_SKEW_SECONDS);
+                    contextInfo.setExpectedAudience(
+                            new HashSet<>(getExpectedAudienceSet()));
+                    jwtContextInfo = contextInfo;
+                }
+            }
+        }
+        return jwtContextInfo;
+    }
+
+    /**
+     * Resolves the configured audience list.
+     *
+     * @return Immutable set of expected audience values
+     */
+    private Set<String> getExpectedAudienceSet() {
+        if (expectedAudienceSet == null) {
+            synchronized (this) {
+                if (expectedAudienceSet == null) {
+                    String audienceValue = configuredAudience;
+                    if (audienceValue == null
+                            || audienceValue.trim().isEmpty()) {
+                        audienceValue = clientId;
+                    }
+                    Set<String> computed = Arrays.stream(
+                                    audienceValue.split(","))
+                            .map(String::trim)
+                            .filter(value -> !value.isEmpty())
+                            .collect(Collectors.toCollection(
+                                    LinkedHashSet::new));
+                    if (computed.isEmpty()) {
+                        computed.add(clientId);
+                    }
+                    expectedAudienceSet =
+                            Collections.unmodifiableSet(computed);
+                }
+            }
+        }
+        return expectedAudienceSet;
     }
 
     /**

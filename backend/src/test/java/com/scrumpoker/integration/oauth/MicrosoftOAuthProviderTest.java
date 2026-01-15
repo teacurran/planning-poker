@@ -1,5 +1,6 @@
 package com.scrumpoker.integration.oauth;
 
+import io.smallrye.jwt.auth.principal.JWTAuthContextInfo;
 import io.smallrye.jwt.auth.principal.JWTParser;
 import io.smallrye.jwt.auth.principal.ParseException;
 import org.eclipse.microprofile.jwt.JsonWebToken;
@@ -14,7 +15,10 @@ import java.util.Collections;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
 /**
@@ -47,6 +51,16 @@ class MicrosoftOAuthProviderTest {
         setPrivateField(microsoftProvider, "clientId", TEST_CLIENT_ID);
         setPrivateField(microsoftProvider, "clientSecret",
                 "test-secret");
+        setPrivateField(microsoftProvider, "tokenIssuer", MS_ISSUER_V2);
+        setPrivateField(microsoftProvider, "configuredAudience",
+                TEST_CLIENT_ID);
+        setPrivateField(microsoftProvider, "jwksUri",
+                "https://login.microsoftonline.com/common/discovery/v2.0/keys");
+        setPrivateField(microsoftProvider, "expectedAudienceSet", null);
+        setPrivateField(microsoftProvider, "jwtContextInfo", null);
+
+        lenient().when(jwtParser.parse(eq(VALID_ID_TOKEN),
+                any(JWTAuthContextInfo.class))).thenReturn(jwt);
     }
 
     // ===== Validate And Extract Claims Tests =====
@@ -58,7 +72,6 @@ class MicrosoftOAuthProviderTest {
         final long currentTime = System.currentTimeMillis() / 1000;
         final long expirationTime = currentTime + 3600;
 
-        when(jwtParser.parse(VALID_ID_TOKEN)).thenReturn(jwt);
         when(jwt.getExpirationTime()).thenReturn(expirationTime);
         when(jwt.getIssuer()).thenReturn(MS_ISSUER_V2);
         when(jwt.getAudience())
@@ -90,7 +103,6 @@ class MicrosoftOAuthProviderTest {
         final long currentTime = System.currentTimeMillis() / 1000;
         final long expirationTime = currentTime + 3600;
 
-        when(jwtParser.parse(VALID_ID_TOKEN)).thenReturn(jwt);
         when(jwt.getExpirationTime()).thenReturn(expirationTime);
         when(jwt.getIssuer()).thenReturn(MS_ISSUER_LEGACY);
         when(jwt.getAudience())
@@ -117,7 +129,6 @@ class MicrosoftOAuthProviderTest {
         final long currentTime = System.currentTimeMillis() / 1000;
         final long expirationTime = currentTime + 3600;
 
-        when(jwtParser.parse(VALID_ID_TOKEN)).thenReturn(jwt);
         when(jwt.getExpirationTime()).thenReturn(expirationTime);
         when(jwt.getIssuer()).thenReturn(MS_ISSUER_V2);
         when(jwt.getAudience())
@@ -145,7 +156,6 @@ class MicrosoftOAuthProviderTest {
         final long currentTime = System.currentTimeMillis() / 1000;
         final long expirationTime = currentTime + 3600;
 
-        when(jwtParser.parse(VALID_ID_TOKEN)).thenReturn(jwt);
         when(jwt.getExpirationTime()).thenReturn(expirationTime);
         when(jwt.getIssuer()).thenReturn(MS_ISSUER_V2);
         when(jwt.getAudience())
@@ -173,7 +183,6 @@ class MicrosoftOAuthProviderTest {
         final long currentTime = System.currentTimeMillis() / 1000;
         final long expirationTime = currentTime + 3600;
 
-        when(jwtParser.parse(VALID_ID_TOKEN)).thenReturn(jwt);
         when(jwt.getExpirationTime()).thenReturn(expirationTime);
         when(jwt.getIssuer()).thenReturn(MS_ISSUER_V2);
         when(jwt.getAudience())
@@ -198,7 +207,6 @@ class MicrosoftOAuthProviderTest {
         final long currentTime = System.currentTimeMillis() / 1000;
         final long expirationTime = currentTime - 3600;
 
-        when(jwtParser.parse(VALID_ID_TOKEN)).thenReturn(jwt);
         when(jwt.getExpirationTime()).thenReturn(expirationTime);
 
         // When/Then
@@ -215,7 +223,6 @@ class MicrosoftOAuthProviderTest {
         final long currentTime = System.currentTimeMillis() / 1000;
         final long expirationTime = currentTime + 3600;
 
-        when(jwtParser.parse(VALID_ID_TOKEN)).thenReturn(jwt);
         when(jwt.getExpirationTime()).thenReturn(expirationTime);
         when(jwt.getIssuer()).thenReturn("https://evil.com");
 
@@ -233,7 +240,6 @@ class MicrosoftOAuthProviderTest {
         final long currentTime = System.currentTimeMillis() / 1000;
         final long expirationTime = currentTime + 3600;
 
-        when(jwtParser.parse(VALID_ID_TOKEN)).thenReturn(jwt);
         when(jwt.getExpirationTime()).thenReturn(expirationTime);
         when(jwt.getIssuer()).thenReturn(null);
 
@@ -251,7 +257,6 @@ class MicrosoftOAuthProviderTest {
         final long currentTime = System.currentTimeMillis() / 1000;
         final long expirationTime = currentTime + 3600;
 
-        when(jwtParser.parse(VALID_ID_TOKEN)).thenReturn(jwt);
         when(jwt.getExpirationTime()).thenReturn(expirationTime);
         when(jwt.getIssuer()).thenReturn(MS_ISSUER_V2);
         when(jwt.getAudience())
@@ -272,7 +277,6 @@ class MicrosoftOAuthProviderTest {
         final long currentTime = System.currentTimeMillis() / 1000;
         final long expirationTime = currentTime + 3600;
 
-        when(jwtParser.parse(VALID_ID_TOKEN)).thenReturn(jwt);
         when(jwt.getExpirationTime()).thenReturn(expirationTime);
         when(jwt.getIssuer()).thenReturn(MS_ISSUER_V2);
         when(jwt.getAudience())
@@ -293,7 +297,6 @@ class MicrosoftOAuthProviderTest {
         final long currentTime = System.currentTimeMillis() / 1000;
         final long expirationTime = currentTime + 3600;
 
-        when(jwtParser.parse(VALID_ID_TOKEN)).thenReturn(jwt);
         when(jwt.getExpirationTime()).thenReturn(expirationTime);
         when(jwt.getIssuer()).thenReturn(MS_ISSUER_V2);
         when(jwt.getAudience())
@@ -319,7 +322,6 @@ class MicrosoftOAuthProviderTest {
         final long currentTime = System.currentTimeMillis() / 1000;
         final long expirationTime = currentTime + 3600;
 
-        when(jwtParser.parse(VALID_ID_TOKEN)).thenReturn(jwt);
         when(jwt.getExpirationTime()).thenReturn(expirationTime);
         when(jwt.getIssuer()).thenReturn(MS_ISSUER_V2);
         when(jwt.getAudience())
@@ -342,7 +344,8 @@ class MicrosoftOAuthProviderTest {
     void testValidateAndExtractClaims_ParseException_ThrowsOAuthException()
             throws ParseException {
         // Given
-        when(jwtParser.parse(anyString()))
+        when(jwtParser.parse(anyString(),
+                any(JWTAuthContextInfo.class)))
                 .thenThrow(new ParseException("Invalid JWT format"));
 
         // When/Then

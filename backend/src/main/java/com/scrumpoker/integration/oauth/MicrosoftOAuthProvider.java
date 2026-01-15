@@ -1,5 +1,6 @@
 package com.scrumpoker.integration.oauth;
 
+import io.smallrye.jwt.auth.principal.JWTAuthContextInfo;
 import io.smallrye.jwt.auth.principal.JWTParser;
 import io.smallrye.jwt.auth.principal.ParseException;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -16,8 +17,13 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -59,6 +65,9 @@ public class MicrosoftOAuthProvider {
     /** Length of "id_token" prefix plus colon and quote. */
     private static final int ID_TOKEN_PREFIX_LENGTH = 11;
 
+    /** Allowed JWT clock skew in seconds. */
+    private static final int CLOCK_SKEW_SECONDS = 60;
+
     /** Microsoft OAuth2 client ID. */
     @ConfigProperty(name = "quarkus.oidc.microsoft.client-id")
     private String clientId;
@@ -66,6 +75,18 @@ public class MicrosoftOAuthProvider {
     /** Microsoft OAuth2 client secret. */
     @ConfigProperty(name = "quarkus.oidc.microsoft.credentials.secret")
     private String clientSecret;
+
+    /** Configured Microsoft issuer (used to derive base host). */
+    @ConfigProperty(name = "quarkus.oidc.microsoft.token.issuer")
+    private String tokenIssuer;
+
+    /** Expected Microsoft token audience values. */
+    @ConfigProperty(name = "quarkus.oidc.microsoft.token.audience")
+    private String configuredAudience;
+
+    /** Microsoft JWKS endpoint used for signature validation. */
+    @ConfigProperty(name = "quarkus.oidc.microsoft.jwks-path")
+    private String jwksUri;
 
     /** JWT parser for ID token validation. */
     @Inject
@@ -75,6 +96,12 @@ public class MicrosoftOAuthProvider {
     private final HttpClient httpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(CONNECT_TIMEOUT_SECONDS))
             .build();
+
+    /** Cached JWT context for Microsoft JWKS. */
+    private transient volatile JWTAuthContextInfo jwtContextInfo;
+
+    /** Cached expected audience set. */
+    private transient volatile Set<String> expectedAudienceSet;
 
     /**
      * Exchanges authorization code for access token and ID token.
@@ -181,9 +208,8 @@ public class MicrosoftOAuthProvider {
 
         try {
             // Parse and validate JWT token
-            // JWTParser handles signature verification using JWKS
-            // endpoint
-            JsonWebToken jwt = jwtParser.parse(idToken);
+            JsonWebToken jwt = jwtParser.parse(idToken,
+                    getJwtContextInfo());
 
             // Validate token expiration
             long currentTime = System.currentTimeMillis()
@@ -203,7 +229,7 @@ public class MicrosoftOAuthProvider {
             }
 
             // Validate audience (must match client ID)
-            if (!jwt.getAudience().contains(clientId)) {
+            if (!isExpectedAudience(jwt.getAudience())) {
                 throw new OAuth2AuthenticationException(
                         "ID token audience does not match client ID",
                         PROVIDER_NAME);
@@ -264,8 +290,29 @@ public class MicrosoftOAuthProvider {
      * @return true if issuer is valid Microsoft issuer
      */
     private boolean isValidMicrosoftIssuer(final String issuer) {
-        return issuer.startsWith("https://login.microsoftonline.com/")
-               || issuer.startsWith("https://sts.windows.net/");
+        if (issuer == null || issuer.trim().isEmpty()) {
+            return false;
+        }
+        final String normalized = issuer.trim();
+        return normalized.startsWith(getMicrosoftIssuerBase())
+               || normalized.startsWith("https://sts.windows.net/");
+    }
+
+    /**
+     * Derives issuer base URL from configuration.
+     *
+     * @return Base Microsoft issuer URL
+     */
+    private String getMicrosoftIssuerBase() {
+        if (tokenIssuer == null || tokenIssuer.trim().isEmpty()) {
+            return "https://login.microsoftonline.com/";
+        }
+        final String normalized = tokenIssuer.trim();
+        final int hostEnd = normalized.indexOf(".com/");
+        if (hostEnd == -1) {
+            return normalized;
+        }
+        return normalized.substring(0, hostEnd + 5);
     }
 
     /**
@@ -295,6 +342,73 @@ public class MicrosoftOAuthProvider {
         }
 
         return jsonResponse.substring(startIndex + 1, endIndex);
+    }
+
+    /**
+     * Checks if the ID token audience contains expected values.
+     *
+     * @param tokenAudiences Audiences from ID token
+     * @return true if audience matches configuration
+     */
+    private boolean isExpectedAudience(final Set<String> tokenAudiences) {
+        if (tokenAudiences == null || tokenAudiences.isEmpty()) {
+            return false;
+        }
+        Set<String> expected = getExpectedAudienceSet();
+        return tokenAudiences.stream().anyMatch(expected::contains);
+    }
+
+    /**
+     * Builds and caches JWT context pointing at Microsoft's JWKS endpoint.
+     *
+     * @return Configured JWTAuthContextInfo
+     */
+    private JWTAuthContextInfo getJwtContextInfo() {
+        if (jwtContextInfo == null) {
+            synchronized (this) {
+                if (jwtContextInfo == null) {
+                    JWTAuthContextInfo contextInfo =
+                            new JWTAuthContextInfo();
+                    contextInfo.setPublicKeyLocation(jwksUri);
+                    contextInfo.setClockSkew(CLOCK_SKEW_SECONDS);
+                    contextInfo.setExpectedAudience(
+                            new HashSet<>(getExpectedAudienceSet()));
+                    jwtContextInfo = contextInfo;
+                }
+            }
+        }
+        return jwtContextInfo;
+    }
+
+    /**
+     * Resolves configured audience values.
+     *
+     * @return Immutable set of audience strings
+     */
+    private Set<String> getExpectedAudienceSet() {
+        if (expectedAudienceSet == null) {
+            synchronized (this) {
+                if (expectedAudienceSet == null) {
+                    String audienceValue = configuredAudience;
+                    if (audienceValue == null
+                            || audienceValue.trim().isEmpty()) {
+                        audienceValue = clientId;
+                    }
+                    Set<String> computed = Arrays.stream(
+                                    audienceValue.split(","))
+                            .map(String::trim)
+                            .filter(value -> !value.isEmpty())
+                            .collect(Collectors.toCollection(
+                                    LinkedHashSet::new));
+                    if (computed.isEmpty()) {
+                        computed.add(clientId);
+                    }
+                    expectedAudienceSet =
+                            Collections.unmodifiableSet(computed);
+                }
+            }
+        }
+        return expectedAudienceSet;
     }
 
     /**
