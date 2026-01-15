@@ -10,16 +10,16 @@ This is the full specification of the task you must complete.
 
 ```json
 {
-  "task_id": "I1.T7",
+  "task_id": "I1.T8",
   "iteration_id": "I1",
   "iteration_goal": "Establish project scaffolding, configure development environment, define database schema, and set up CI/CD foundation to enable parallel backend and frontend development in subsequent iterations.",
-  "description": "Implement Panache repository interfaces for all entities using `PanacheRepositoryBase` pattern. Create repositories: `UserRepository`, `UserPreferenceRepository`, `OrganizationRepository`, `OrgMemberRepository`, `RoomRepository`, `RoomParticipantRepository`, `RoundRepository`, `VoteRepository`, `SessionHistoryRepository`, `SubscriptionRepository`, `PaymentHistoryRepository`, `AuditLogRepository`. Add custom finder methods (e.g., `UserRepository.findByEmail()`, `RoomRepository.findActiveByOwnerId()`, `VoteRepository.findByRoundId()`). Use reactive return types (`Uni<>`, `Multi<>`).",
+  "description": "Create integration tests for all Panache repositories using Testcontainers (PostgreSQL container). Write tests for: entity persistence (insert, update, delete), custom finder methods, relationship navigation, JSONB field serialization/deserialization, soft delete behavior (User, Room). Use Quarkus `@QuarkusTest` annotation with `@TestProfile` for test database configuration. Assert results using AssertJ or Rest Assured for fluent assertions.",
   "agent_type_hint": "BackendAgent",
-  "inputs": "*   Entity classes from I1.T4\n        *   Common query patterns from architecture blueprint (e.g., user lookup by email, rooms by owner)\n        *   Panache repository patterns from Quarkus docs",
+  "inputs": "*   Repository interfaces from I1.T7\n        *   Testcontainers setup patterns for PostgreSQL\n        *   Sample entity instances for testing",
   "target_files": [],
   "input_files": [],
-  "deliverables": "*   12 Panache repository classes implementing `PanacheRepositoryBase<Entity, UUID>`\n        *   Custom finder methods with reactive return types (`Uni<User>`, `Multi<Room>`)\n        *   Query methods using Panache query syntax (e.g., `find(\"email\", email).firstResult()`)\n        *   ApplicationScoped CDI beans for dependency injection",
-  "acceptance_criteria": "*   Maven compilation successful\n        *   Repositories injectable via `@Inject` in service classes\n        *   Custom finder methods return correct reactive types\n        *   Query methods execute without errors against seeded database\n        *   Integration test for each repository demonstrates CRUD operations work",
+  "deliverables": "*   12 repository test classes with minimum 3 test methods each (create, findById, custom finder)\n        *   Testcontainers PostgreSQL configuration in test profile\n        *   Tests for JSONB field operations (Room.config, UserPreference.default_room_config)\n        *   Soft delete tests verifying `deleted_at` timestamp behavior\n        *   Foreign key relationship tests (e.g., deleting User cascades to UserPreference)",
+  "acceptance_criteria": "*   `mvn test` executes all repository tests successfully\n        *   Testcontainers starts PostgreSQL container automatically\n        *   All CRUD operations pass (insert, select, update, delete)\n        *   Custom finder methods return expected results\n        *   JSONB fields round-trip correctly (save and retrieve complex objects)\n        *   Soft delete tests confirm `deleted_at` set correctly\n        *   Test coverage >80% for repository classes",
   "dependencies": [],
   "parallelizable": false,
   "done": false
@@ -32,46 +32,72 @@ This is the full specification of the task you must complete.
 
 The following are the relevant sections from the architecture and plan documents, which I found by analyzing the task description.
 
-### Context: task-i1-t7 (from 02_Iteration_I1.md)
+### Context: task-i1-t8 (from 02_Iteration_I1.md)
 
 ```markdown
-*   **Task 1.7: Create Panache Repository Interfaces**
-    *   **Task ID:** `I1.T7`
-    *   **Description:** Implement Panache repository interfaces for all entities using `PanacheRepositoryBase` pattern. Create repositories: `UserRepository`, `UserPreferenceRepository`, `OrganizationRepository`, `OrgMemberRepository`, `RoomRepository`, `RoomParticipantRepository`, `RoundRepository`, `VoteRepository`, `SessionHistoryRepository`, `SubscriptionRepository`, `PaymentHistoryRepository`, `AuditLogRepository`. Add custom finder methods (e.g., `UserRepository.findByEmail()`, `RoomRepository.findActiveByOwnerId()`, `VoteRepository.findByRoundId()`). Use reactive return types (`Uni<>`, `Multi<>`).
+*   **Task 1.8: Write Integration Tests for Repositories**
+    *   **Task ID:** `I1.T8`
+    *   **Description:** Create integration tests for all Panache repositories using Testcontainers (PostgreSQL container). Write tests for: entity persistence (insert, update, delete), custom finder methods, relationship navigation, JSONB field serialization/deserialization, soft delete behavior (User, Room). Use Quarkus `@QuarkusTest` annotation with `@TestProfile` for test database configuration. Assert results using AssertJ or Rest Assured for fluent assertions.
     *   **Agent Type Hint:** `BackendAgent`
     *   **Inputs:**
-        *   Entity classes from I1.T4
-        *   Common query patterns from architecture blueprint (e.g., user lookup by email, rooms by owner)
-        *   Panache repository patterns from Quarkus docs
+        *   Repository interfaces from I1.T7
+        *   Testcontainers setup patterns for PostgreSQL
+        *   Sample entity instances for testing
     *   **Input Files:**
-        *   `backend/src/main/java/com/scrumpoker/domain/user/User.java` (and other entity files)
-        *   `.codemachine/artifacts/architecture/03_System_Structure_and_Data.md` (indexing strategy shows common queries)
+        *   `backend/src/main/java/com/scrumpoker/repository/*.java` (all repository files)
+        *   `backend/src/main/java/com/scrumpoker/domain/**/*.java` (entity files)
     *   **Target Files:**
-        *   `backend/src/main/java/com/scrumpoker/repository/UserRepository.java`
-        *   `backend/src/main/java/com/scrumpoker/repository/UserPreferenceRepository.java`
-        *   `backend/src/main/java/com/scrumpoker/repository/OrganizationRepository.java`
-        *   `backend/src/main/java/com/scrumpoker/repository/OrgMemberRepository.java`
-        *   `backend/src/main/java/com/scrumpoker/repository/RoomRepository.java`
-        *   `backend/src/main/java/com/scrumpoker/repository/RoomParticipantRepository.java`
-        *   `backend/src/main/java/com/scrumpoker/repository/RoundRepository.java`
-        *   `backend/src/main/java/com/scrumpoker/repository/VoteRepository.java`
-        *   `backend/src/main/java/com/scrumpoker/repository/SessionHistoryRepository.java`
-        *   `backend/src/main/java/com/scrumpoker/repository/SubscriptionRepository.java`
-        *   `backend/src/main/java/com/scrumpoker/repository/PaymentHistoryRepository.java`
-        *   `backend/src/main/java/com/scrumpoker/repository/AuditLogRepository.java`
+        *   `backend/src/test/java/com/scrumpoker/repository/UserRepositoryTest.java`
+        *   `backend/src/test/java/com/scrumpoker/repository/RoomRepositoryTest.java`
+        *   `backend/src/test/java/com/scrumpoker/repository/VoteRepositoryTest.java`
+        *   (... test files for each of 12 repositories)
+        *   `backend/src/test/resources/application-test.properties`
     *   **Deliverables:**
-        *   12 Panache repository classes implementing `PanacheRepositoryBase<Entity, UUID>`
-        *   Custom finder methods with reactive return types (`Uni<User>`, `Multi<Room>`)
-        *   Query methods using Panache query syntax (e.g., `find("email", email).firstResult()`)
-        *   ApplicationScoped CDI beans for dependency injection
+        *   12 repository test classes with minimum 3 test methods each (create, findById, custom finder)
+        *   Testcontainers PostgreSQL configuration in test profile
+        *   Tests for JSONB field operations (Room.config, UserPreference.default_room_config)
+        *   Soft delete tests verifying `deleted_at` timestamp behavior
+        *   Foreign key relationship tests (e.g., deleting User cascades to UserPreference)
     *   **Acceptance Criteria:**
-        *   Maven compilation successful
-        *   Repositories injectable via `@Inject` in service classes
-        *   Custom finder methods return correct reactive types
-        *   Query methods execute without errors against seeded database
-        *   Integration test for each repository demonstrates CRUD operations work
-    *   **Dependencies:** [I1.T4]
-    *   **Parallelizable:** No (depends on entity classes)
+        *   `mvn test` executes all repository tests successfully
+        *   Testcontainers starts PostgreSQL container automatically
+        *   All CRUD operations pass (insert, select, update, delete)
+        *   Custom finder methods return expected results
+        *   JSONB fields round-trip correctly (save and retrieve complex objects)
+        *   Soft delete tests confirm `deleted_at` set correctly
+        *   Test coverage >80% for repository classes
+    *   **Dependencies:** [I1.T7]
+    *   **Parallelizable:** No (depends on repository implementation)
+```
+
+### Context: integration-testing (from 03_Verification_and_Glossary.md)
+
+```markdown
+#### Integration Testing
+
+**Scope:** Multiple components working together with real infrastructure (database, cache, message queue)
+
+**Framework:** Quarkus Test (`@QuarkusTest`), Testcontainers, REST Assured
+
+**Coverage Target:** Critical integration points (API → Service → Repository → Database)
+
+**Approach:**
+- Use Testcontainers for PostgreSQL and Redis (real instances, not mocks)
+- Test REST endpoints end-to-end (request → response with database persistence)
+- Test WebSocket flows (connection → message handling → database → Pub/Sub broadcast)
+- Verify transaction boundaries and data consistency
+- Run in CI pipeline (longer execution time acceptable: 10-15 minutes)
+
+**Examples:**
+- `RoomControllerTest`: POST /rooms creates database record, GET retrieves it
+- `VotingFlowIntegrationTest`: WebSocket vote message → database insert → Redis Pub/Sub → client broadcast
+- `StripeWebhookControllerTest`: Webhook event → signature verification → database update
+
+**Acceptance Criteria:**
+- All integration tests pass (`mvn verify`)
+- Testcontainers start successfully (PostgreSQL, Redis)
+- Database schema migrations execute correctly in tests
+- No test pollution (each test isolated with database cleanup)
 ```
 
 ### Context: data-model-overview-erd (from 03_System_Structure_and_Data.md)
@@ -107,29 +133,86 @@ The data model follows a relational schema leveraging PostgreSQL's ACID properti
 | **PaymentHistory** | Payment transaction log | `payment_id` (PK), `subscription_id` (FK), `stripe_invoice_id`, `amount`, `currency`, `status`, `paid_at` |
 | **AuditLog** | Compliance and security audit trail | `log_id` (PK), `org_id` (FK nullable), `user_id` (FK nullable), `action`, `resource_type`, `resource_id`, `ip_address`, `user_agent`, `timestamp` |
 
-#### Database Indexing Strategy
+#### Entity Relationship Diagram (PlantUML)
 
-**High-Priority Indexes:**
-- `User(email)` - OAuth login lookups
-- `User(oauth_provider, oauth_subject)` - OAuth subject resolution
-- `Room(owner_id, created_at DESC)` - User's recent rooms query
-- `Room(org_id, last_active_at DESC)` - Organization room listing
-- `RoomParticipant(room_id, connected_at)` - Active participants query
-- `Vote(round_id, participant_id)` - Vote aggregation for reveal
-- `Round(room_id, round_number)` - Round history retrieval
-- `SessionHistory(started_at)` - Partition pruning for date-range queries
-- `Subscription(entity_id, entity_type, status)` - Active subscription lookups
-- `AuditLog(org_id, timestamp DESC)` - Enterprise audit trail queries
+~~~plantuml
+@startuml
 
-**Composite Indexes:**
-- `Room(privacy_mode, last_active_at DESC) WHERE deleted_at IS NULL` - Public room discovery
-- `OrgMember(user_id, org_id) WHERE role = 'ADMIN'` - Admin permission checks
-- `Vote(round_id, voted_at) INCLUDE (card_value)` - Covering index for vote ordering
+' User and Authentication
+entity User {
+  *user_id : UUID <<PK>>
+  --
+  email : VARCHAR(255) <<UNIQUE>>
+  oauth_provider : VARCHAR(50)
+  oauth_subject : VARCHAR(255)
+  display_name : VARCHAR(100)
+  avatar_url : VARCHAR(500)
+  subscription_tier : ENUM(FREE, PRO)
+  created_at : TIMESTAMP
+  deleted_at : TIMESTAMP
+}
 
-**Partitioning:**
-- `SessionHistory` partitioned by `started_at` (monthly range partitions)
-- `AuditLog` partitioned by `timestamp` (monthly range partitions)
-- Automated partition creation via scheduled job or pg_partman extension
+entity UserPreference {
+  *user_id : UUID <<PK, FK>>
+  --
+  default_deck_type : VARCHAR(50)
+  default_room_config : JSONB
+  theme : VARCHAR(20)
+  notification_settings : JSONB
+}
+
+' Organization and Membership
+entity Organization {
+  *org_id : UUID <<PK>>
+  --
+  name : VARCHAR(200)
+  domain : VARCHAR(100)
+  sso_config : JSONB
+  branding : JSONB
+  subscription_id : UUID <<FK>>
+  created_at : TIMESTAMP
+}
+
+entity OrgMember {
+  *org_id : UUID <<PK, FK>>
+  *user_id : UUID <<PK, FK>>
+  --
+  role : ENUM(ADMIN, MEMBER)
+  joined_at : TIMESTAMP
+}
+
+' Room and Session
+entity Room {
+  *room_id : VARCHAR(6) <<PK>>
+  --
+  owner_id : UUID <<FK>> nullable
+  org_id : UUID <<FK>> nullable
+  title : VARCHAR(200)
+  privacy_mode : ENUM(PUBLIC, INVITE_ONLY, ORG_RESTRICTED)
+  config : JSONB
+  created_at : TIMESTAMP
+  last_active_at : TIMESTAMP
+  deleted_at : TIMESTAMP
+}
+
+entity RoomParticipant {
+  *participant_id : UUID <<PK>>
+  --
+  room_id : VARCHAR(6) <<FK>>
+  user_id : UUID <<FK>> nullable
+  anonymous_id : VARCHAR(50)
+  display_name : VARCHAR(100)
+  role : ENUM(HOST, VOTER, OBSERVER)
+  connected_at : TIMESTAMP
+  disconnected_at : TIMESTAMP
+}
+
+entity Round {
+  *round_id : UUID <<PK>>
+  --
+  room_id : VARCHAR(6) <<FK>>
+  round_number : INTEGER
+~~~
 ```
 
 ---
@@ -139,23 +222,24 @@ The data model follows a relational schema leveraging PostgreSQL's ACID properti
 The following analysis is based on my direct review of the current codebase. Use these notes and tips to guide your implementation.
 
 ### Relevant Existing Code
-*   **File:** `backend/src/main/java/com/scrumpoker/repository/UserRepository.java`
-    *   **Summary:** Defines the reactive Panache repository for `User`, exposing helpers such as `findByEmail`, `findByOAuthProviderAndSubject`, `findActiveByEmail`, and `countActive`, all returning `Uni` results and filtering out soft-deleted rows where needed.
-    *   **Recommendation:** Follow the same conventions for other user-centric queries: use property names (e.g., `oauthProvider`, `deletedAt`) and prefer `firstResult()`/`list()` for reactive operations so higher layers can compose `Uni`/`Multi` chains without blocking.
-*   **File:** `backend/src/main/java/com/scrumpoker/repository/RoomRepository.java`
-    *   **Summary:** Implements `PanacheRepositoryBase<Room, String>` (Room IDs are 6-character strings) and already includes methods for owner/org lookups, privacy filters, inactivity checks, and count helpers.
-    *   **Recommendation:** Mirror this approach when adding any new room queries: always filter on `deletedAt is null`, keep ordering deterministic (e.g., `lastActiveAt desc`), and return `Uni<List<Room>>` or `Uni<Long>` to remain reactive-friendly.
-*   **File:** `backend/src/main/java/com/scrumpoker/repository/VoteRepository.java`
-    *   **Summary:** Provides the full suite of vote lookups (`findByRoundId`, `findByRoomIdAndRoundNumber`, `findByParticipantId`, etc.) plus aggregation helpers like `countByRoundId`. Queries traverse relationships such as `round.room.roomId` when needed.
-    *   **Recommendation:** When you're authoring similar finder methods for other entities, model the JPQL paths exactly as mapped in the entities (`round.roundId`, `participant.participantId`) and keep the return types as `Uni<List<...>>` for lists or `Uni<Vote>` for singletons.
-*   **File:** `backend/src/main/java/com/scrumpoker/repository/SessionHistoryRepository.java`
-    *   **Summary:** Because SessionHistory uses an `@EmbeddedId`, every finder uses native SQL through `Panache.getSession()` to work around Hibernate Reactive bugs, providing helpers for room/date lookups, counts, and combined owner/date filters.
-    *   **Recommendation:** Leave the native-query pattern in place for composite-key tables; if you need new queries, build them as SQL strings executed via `Panache.getSession()` and documented with the bug link so future maintainers know why JPQL isn’t used.
+*   **File:** `backend/src/test/java/com/scrumpoker/repository/UserRepositoryTest.java`
+    *   **Summary:** Repository integration coverage for users already exists with `@QuarkusTest`, `@RunOnVertxContext`, and `UniAsserter`. It seeds data via helper `createTestUser`, persists through `Panache.withTransaction`, and exercises CRUD operations, finder variants (`findByEmail`, `findByOAuthProviderAndSubject`, `findActiveByEmail`), counters, and soft deletes.
+    *   **Recommendation:** Mirror this structure for other repositories—wrap every assert or mutation in `Panache.withTransaction`, reuse helper builders to avoid duplicate setup, and assert on key domain fields such as `deletedAt`, `subscriptionTier`, and `displayName` to prove mappings.
+*   **File:** `backend/src/test/java/com/scrumpoker/repository/RoomRepositoryTest.java`
+    *   **Summary:** Demonstrates how to test multi-entity interactions: rooms use string IDs, rely on JSONB `config` strings, and relate to both `User` (owner) and `Organization`. Tests cover relationship navigation, filtering, counting, and manual timestamp manipulation to bypass `@UpdateTimestamp`.
+    *   **Recommendation:** When testing repositories with relationships (e.g., `RoomParticipantRepository`, `RoundRepository`), persist parents first (user → room → round) exactly as shown to satisfy FK constraints, and include JSONB round-trip assertions for configurable columns.
+*   **File:** `backend/src/test/java/com/scrumpoker/repository/VoteRepositoryTest.java`
+    *   **Summary:** Exercises a complex hierarchy (User → Room → Round → RoomParticipant → Vote) and shows how to chain persistence calls reactively. Coverage includes relationship navigation, list finders, counts, and verifying ordering semantics.
+    *   **Recommendation:** Use this file as the blueprint for other repositories that require deep graph setup (SessionHistory, AuditLog). Pay attention to the cleanup order in `@BeforeEach` (children first) to prevent FK violations and to the use of explicit timestamps when ordering should be deterministic.
+*   **File:** `backend/src/test/resources/application.properties`
+    *   **Summary:** Configures Quarkus tests to rely on Dev Services/Testcontainers (no explicit datasource URLs), disables security layers during repository tests, enables Flyway migrations, and tweaks logging plus Redis/Testcontainers behavior.
+    *   **Recommendation:** Keep this profile untouched; when adding new tests ensure they run under the default test config (no custom `@TestProfile` needed). If you require Redis or other services, Dev Services will bootstrap them as long as you avoid overriding hosts/ports in this file.
 
 ### Implementation Tips & Notes
-*   **Tip:** All repositories must be annotated with `@ApplicationScoped` and implement `PanacheRepositoryBase<Entity, KeyType>` so they can be injected into services without manual bean definitions.
-*   **Tip:** Prefer Mutiny's `Uni` for single-result queries (`firstResult()`, `singleResultOptional()`) and `Uni<List<...>>` for multi-row fetches—`Multi` is only necessary if you plan to stream results; existing code almost exclusively returns `Uni`.
-*   **Tip:** For soft-deletable entities (`User`, `Room`), always include `deletedAt is null` in finder predicates unless intentionally retrieving archived rows.
-*   **Note:** Room IDs are strings while most other entities use UUIDs; declare repository generics accordingly to avoid ClassCastExceptions.
-*   **Note:** SessionHistory’s composite key plus monthly partitions require native SQL finders; copying the established template prevents the Hibernate Reactive `EmbeddableInitializerImpl` bug cited in the comments.
-*   **Warning:** Repositories already exist for the listed entities—review their current method sets before adding new APIs to avoid duplication, and keep method names descriptive so the unit and integration tests (I1.T8) can exercise each path explicitly.
+*   **Tip:** Always annotate integration tests with both `@QuarkusTest` and `@RunOnVertxContext`; use `UniAsserter` to coordinate asynchronous operations and wrap repository calls in `Panache.withTransaction` to guarantee DB access happens within a reactive transaction.
+*   **Tip:** Helper factory methods should avoid manually assigning auto-generated IDs (UUIDs) and instead set only business fields; for `Room` string IDs, set the 6-character key explicitly as shown.
+*   **Tip:** Clean up tables in child-to-parent order inside `@BeforeEach` using `repository.deleteAll()` so subsequent tests start with a pristine state without violating foreign keys.
+*   **Tip:** For JSONB columns (Room.config, UserPreference.defaultRoomConfig, Organization.ssoConfig), persist actual JSON strings and assert on key fragments to verify serialization.
+*   **Note:** Soft-delete behavior is validated by setting `deletedAt = Instant.now()` and confirming finder methods that target “active” rows exclude the record; include similar checks wherever the domain uses soft deletes.
+*   **Note:** The project relies on Quarkus Dev Services to spin up PostgreSQL and Redis automatically—do not hardcode JDBC URLs or Redis hosts in tests, or Dev Services will not activate.
+*   **Warning:** Repository tests execute concurrently on Vert.x event loops; avoid blocking calls (`Thread.sleep`, synchronous waits) and prefer Mutiny constructs so the suite remains stable under CI load.

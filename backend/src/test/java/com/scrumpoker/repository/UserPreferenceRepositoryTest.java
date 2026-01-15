@@ -5,6 +5,7 @@ import com.scrumpoker.domain.user.User;
 import com.scrumpoker.domain.user.UserPreference;
 import io.quarkus.hibernate.reactive.panache.Panache;
 import io.quarkus.test.junit.QuarkusTest;
+import io.quarkus.test.junit.TestProfile;
 import io.quarkus.test.vertx.RunOnVertxContext;
 import io.quarkus.test.vertx.UniAsserter;
 import jakarta.inject.Inject;
@@ -21,6 +22,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Tests CRUD operations, JSONB field serialization, and 1:1 relationship with User.
  */
 @QuarkusTest
+@TestProfile(RepositoryTestProfile.class)
 class UserPreferenceRepositoryTest {
 
     @Inject

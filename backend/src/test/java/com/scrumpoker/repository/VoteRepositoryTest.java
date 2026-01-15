@@ -5,6 +5,7 @@ import com.scrumpoker.domain.user.SubscriptionTier;
 import com.scrumpoker.domain.user.User;
 import io.quarkus.hibernate.reactive.panache.Panache;
 import io.quarkus.test.junit.QuarkusTest;
+import io.quarkus.test.junit.TestProfile;
 import io.quarkus.test.vertx.RunOnVertxContext;
 import io.quarkus.test.vertx.UniAsserter;
 import io.smallrye.mutiny.Uni;
@@ -24,6 +25,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * and complex queries using Testcontainers PostgreSQL.
  */
 @QuarkusTest
+@TestProfile(RepositoryTestProfile.class)
 class VoteRepositoryTest {
 
     @Inject
