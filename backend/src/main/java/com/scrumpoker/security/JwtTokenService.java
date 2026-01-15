@@ -2,9 +2,11 @@ package com.scrumpoker.security;
 
 import com.scrumpoker.domain.user.SubscriptionTier;
 import com.scrumpoker.domain.user.User;
+import com.scrumpoker.domain.user.UserNotFoundException;
+import com.scrumpoker.domain.user.UserService;
 import io.quarkus.redis.datasource.ReactiveRedisDataSource;
-import io.smallrye.jwt.build.Jwt;
 import io.smallrye.jwt.auth.principal.JWTParser;
+import io.smallrye.jwt.build.Jwt;
 import io.smallrye.mutiny.Uni;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -12,7 +14,6 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.eclipse.microprofile.jwt.JsonWebToken;
 import org.jboss.logging.Logger;
 
-import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -74,6 +75,9 @@ public class JwtTokenService {
 
     @Inject
     JWTParser jwtParser;
+
+    @Inject
+    UserService userService;
 
     @ConfigProperty(name = "mp.jwt.verify.issuer")
     String issuer;
@@ -150,7 +154,9 @@ public class JwtTokenService {
         } catch (Exception e) {
             LOG.errorf(e, "Failed to generate tokens for user: %s", user.userId);
             return Uni.createFrom().failure(
-                new RuntimeException("Failed to generate tokens: " + e.getMessage(), e)
+                new JwtException("Failed to generate tokens: " + e.getMessage(),
+                    e,
+                    JwtException.Reason.TOKEN_STORAGE_FAILURE)
             );
         }
     }
@@ -175,7 +181,7 @@ public class JwtTokenService {
      * @param token The JWT access token to validate (must not be null or blank)
      * @return Uni containing JwtClaims with extracted user claims (userId, email, roles, tier)
      * @throws IllegalArgumentException if token is null or blank
-     * @throws RuntimeException if token is invalid, expired, or signature verification fails
+     * @throws JwtException if token is invalid, expired, or signature verification fails
      */
     public Uni<com.scrumpoker.security.JwtClaims> validateAccessToken(String token) {
         if (token == null || token.isBlank()) {
@@ -210,9 +216,44 @@ public class JwtTokenService {
 
             } catch (Exception e) {
                 LOG.errorf(e, "Token validation failed: %s", e.getMessage());
-                throw new RuntimeException("Invalid or expired token: " + e.getMessage(), e);
+                boolean expired = isExpiredException(e);
+                if (expired) {
+                    throw new JwtException("Access token has expired", e,
+                        JwtException.Reason.EXPIRED_ACCESS_TOKEN);
+                }
+                throw new JwtException("Invalid access token: " + e.getMessage(), e,
+                    JwtException.Reason.INVALID_ACCESS_TOKEN);
             }
         });
+    }
+
+    /**
+     * Refreshes tokens using only the refresh token value.
+     * <p>
+     * This overload is convenient when the calling code does not already have the
+     * {@link User} entity. It resolves the user ID from Redis, loads the user,
+     * and delegates to the primary refresh workflow.
+     * </p>
+     *
+     * @param refreshToken The refresh token to rotate
+     * @return Uni containing a new {@link TokenPair}
+     */
+    public Uni<TokenPair> refreshTokens(String refreshToken) {
+        if (refreshToken == null || refreshToken.isBlank()) {
+            throw new IllegalArgumentException("Refresh token cannot be null or blank");
+        }
+
+        return getUserIdFromRefreshToken(refreshToken)
+            .onItem().ifNull().failWith(() ->
+                new JwtException("Invalid or expired refresh token",
+                    JwtException.Reason.INVALID_REFRESH_TOKEN))
+            .flatMap(userId -> userService.getUserById(userId)
+                .flatMap(user -> refreshTokens(refreshToken, user))
+                .onFailure(UserNotFoundException.class).transform(throwable -> new JwtException(
+                    "User not found for refresh token",
+                    throwable,
+                    JwtException.Reason.USER_NOT_FOUND
+                )));
     }
 
     /**
@@ -238,7 +279,7 @@ public class JwtTokenService {
      * @param user         The user for whom to refresh tokens (must not be null, must match refresh token)
      * @return Uni containing new TokenPair with rotated access and refresh tokens
      * @throws IllegalArgumentException if refreshToken or user is null/blank
-     * @throws RuntimeException         if refresh token is invalid or expired
+     * @throws JwtException             if refresh token is invalid or expired
      */
     public Uni<TokenPair> refreshTokens(String refreshToken, User user) {
         if (refreshToken == null || refreshToken.isBlank()) {
@@ -255,7 +296,8 @@ public class JwtTokenService {
                 if (!isValid) {
                     LOG.errorf("Invalid or expired refresh token for user: %s", user.userId);
                     return Uni.createFrom().failure(
-                        new RuntimeException("Invalid or expired refresh token")
+                        new JwtException("Invalid or expired refresh token",
+                            JwtException.Reason.INVALID_REFRESH_TOKEN)
                     );
                 }
 
@@ -401,6 +443,24 @@ public class JwtTokenService {
                     }
                     return UUID.fromString(storedUserId);
                 });
+    }
+
+    /**
+     * Determines if the provided throwable (or one of its causes) represents an expired token.
+     *
+     * @param throwable Throwable thrown during validation
+     * @return true if the throwable indicates token expiration
+     */
+    private boolean isExpiredException(Throwable throwable) {
+        Throwable current = throwable;
+        while (current != null) {
+            String message = current.getMessage();
+            if (message != null && message.toLowerCase().contains("expired")) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 
     /**

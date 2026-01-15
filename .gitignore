@@ -20,3 +20,9 @@ target/
 
 # Backups
 *.bak
+
+# Security - Never commit private keys
+**/privateKey.pem
+**/*.key
+**/*.p12
+**/*.jks

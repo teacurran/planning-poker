@@ -204,6 +204,17 @@ public class JwtAuthenticationFilter implements ContainerRequestFilter {
             LOG.debugf("Security context populated for user: %s with roles: %s",
                 claims.userId(), claims.roles());
 
+        } catch (JwtException e) {
+            LOG.warnf(e, "JWT validation failed for path %s: %s", path, e.getMessage());
+
+            String errorMessage;
+            if (e.reason() == JwtException.Reason.EXPIRED_ACCESS_TOKEN) {
+                errorMessage = "Authentication token has expired";
+            } else {
+                errorMessage = "Invalid authentication token";
+            }
+
+            abortWithUnauthorized(requestContext, "INVALID_TOKEN", errorMessage);
         } catch (Exception e) {
             // Token validation failed (invalid signature, expired, malformed, etc.)
             LOG.warnf(e, "JWT validation failed for path %s: %s", path, e.getMessage());

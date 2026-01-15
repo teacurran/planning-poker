@@ -54,6 +54,37 @@ Edit `.env` and update the following critical values:
 - `REDIS_PASSWORD` - Redis authentication password
 - `JWT_SECRET` - Must be at least 32 characters (generate with `openssl rand -base64 32`)
 
+#### RSA Key Pair Generation for JWT Signing
+
+The application uses RSA-256 asymmetric signing for JWT tokens. RSA key pairs should already exist in `backend/src/main/resources/`, but if you need to regenerate them:
+
+```bash
+# Generate RSA private key (2048-bit)
+openssl genpkey -algorithm RSA -out backend/src/main/resources/privateKey.pem -pkeyopt rsa_keygen_bits:2048
+
+# Extract public key from private key
+openssl rsa -pubout -in backend/src/main/resources/privateKey.pem -out backend/src/main/resources/publicKey.pem
+```
+
+**Security Notes:**
+- The `privateKey.pem` file is already added to `.gitignore` and should NEVER be committed to version control
+- For production deployments, load the private key from Kubernetes Secrets or a secure vault (e.g., AWS Secrets Manager, HashiCorp Vault)
+- Set the `JWT_PRIVATE_KEY` environment variable in production with the key content instead of using file location
+- Public keys can be safely committed to the repository as they are only used for signature verification
+- Consider rotating RSA keys periodically (recommended: every 90 days for production systems)
+
+**Production Deployment Example (Kubernetes Secret):**
+
+```bash
+# Create Kubernetes Secret with private key
+kubectl create secret generic jwt-keys \
+  --from-file=privateKey.pem=backend/src/main/resources/privateKey.pem \
+  --namespace=planning-poker
+
+# Mount the secret in your deployment and set environment variable
+# JWT_PRIVATE_KEY_LOCATION=/secrets/privateKey.pem
+```
+
 ### 2. Start Infrastructure Services
 
 Start all infrastructure services (PostgreSQL, Redis cluster, Prometheus, Grafana):
