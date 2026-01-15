@@ -2,6 +2,9 @@ package com.scrumpoker.domain.room;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 
+import java.util.Collections;
+import java.util.List;
+
 /**
  * Configuration POJO for room settings stored in JSONB config column.
  * Handles deck type, timer settings, and reveal behavior.
@@ -23,6 +26,12 @@ public class RoomConfig {
     @JsonProperty("allow_observers")
     private boolean allowObservers;
 
+    @JsonProperty("custom_deck")
+    private List<String> customDeck = Collections.emptyList();
+
+    @JsonProperty("allow_anonymous_voters")
+    private boolean allowAnonymousVoters = true;
+
     /**
      * Default constructor for Jackson deserialization.
      */
@@ -33,6 +42,7 @@ public class RoomConfig {
         this.timerDurationSeconds = 60;
         this.revealBehavior = "MANUAL";
         this.allowObservers = true;
+        this.allowAnonymousVoters = true;
     }
 
     /**
@@ -45,6 +55,7 @@ public class RoomConfig {
         this.timerDurationSeconds = timerDurationSeconds;
         this.revealBehavior = revealBehavior;
         this.allowObservers = allowObservers;
+        this.allowAnonymousVoters = true;
     }
 
     // Getters and setters
@@ -93,6 +104,22 @@ public class RoomConfig {
         this.allowObservers = allowObservers;
     }
 
+    public List<String> getCustomDeck() {
+        return customDeck;
+    }
+
+    public void setCustomDeck(List<String> customDeck) {
+        this.customDeck = customDeck != null ? customDeck : Collections.emptyList();
+    }
+
+    public boolean isAllowAnonymousVoters() {
+        return allowAnonymousVoters;
+    }
+
+    public void setAllowAnonymousVoters(boolean allowAnonymousVoters) {
+        this.allowAnonymousVoters = allowAnonymousVoters;
+    }
+
     @Override
     public String toString() {
         return "RoomConfig{" +
@@ -101,6 +128,8 @@ public class RoomConfig {
                 ", timerDurationSeconds=" + timerDurationSeconds +
                 ", revealBehavior='" + revealBehavior + '\'' +
                 ", allowObservers=" + allowObservers +
+                ", customDeck=" + customDeck +
+                ", allowAnonymousVoters=" + allowAnonymousVoters +
                 '}';
     }
 }

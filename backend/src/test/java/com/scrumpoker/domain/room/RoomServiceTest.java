@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.scrumpoker.domain.user.User;
 import com.scrumpoker.repository.RoomRepository;
+import com.scrumpoker.repository.UserRepository;
 import io.smallrye.mutiny.Uni;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -35,6 +36,9 @@ class RoomServiceTest {
 
     @Mock
     ObjectMapper objectMapper;
+
+    @Mock
+    UserRepository userRepository;
 
     @InjectMocks
     RoomService roomService;
@@ -244,6 +248,7 @@ class RoomServiceTest {
             Room room = invocation.getArgument(0);
             return Uni.createFrom().item(room);
         });
+        when(userRepository.findById(testOwner.userId)).thenReturn(Uni.createFrom().item(testOwner));
 
         // When
         Room result = roomService.createRoom("Test", PrivacyMode.PUBLIC, testOwner, testConfig)

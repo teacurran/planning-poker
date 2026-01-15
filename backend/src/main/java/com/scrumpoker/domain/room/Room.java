@@ -37,7 +37,7 @@ public class Room extends PanacheEntityBase {
     /**
      * Nullable to support anonymous room creation.
      */
-    @ManyToOne(fetch = FetchType.LAZY)
+    @ManyToOne(fetch = FetchType.LAZY, cascade = CascadeType.MERGE)
     @JoinColumn(name = "owner_id", foreignKey = @ForeignKey(name = "fk_room_owner"))
     public User owner;
 

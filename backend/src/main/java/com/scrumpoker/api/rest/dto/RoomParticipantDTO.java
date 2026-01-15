@@ -1,6 +1,7 @@
 package com.scrumpoker.api.rest.dto;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import java.time.Instant;
 import java.util.UUID;
 
 /**
@@ -8,6 +9,9 @@ import java.util.UUID;
  * Matches OpenAPI RoomParticipantDTO schema.
  */
 public class RoomParticipantDTO {
+
+    @JsonProperty("participantId")
+    public UUID participantId;
 
     @JsonProperty("userId")
     public UUID userId;
@@ -20,4 +24,7 @@ public class RoomParticipantDTO {
 
     @JsonProperty("role")
     public String role; // HOST, VOTER, OBSERVER
+
+    @JsonProperty("connectedAt")
+    public Instant connectedAt;
 }

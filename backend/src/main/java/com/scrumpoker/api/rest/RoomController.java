@@ -7,6 +7,7 @@ import com.scrumpoker.domain.room.Room;
 import com.scrumpoker.domain.room.RoomConfig;
 import com.scrumpoker.domain.room.RoomService;
 import com.scrumpoker.domain.user.User;
+import com.scrumpoker.security.SecurityContextImpl;
 import io.smallrye.mutiny.Uni;
 import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
@@ -14,6 +15,7 @@ import jakarta.validation.Valid;
 import jakarta.ws.rs.*;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
+import jakarta.ws.rs.WebApplicationException;
 import org.eclipse.microprofile.openapi.annotations.Operation;
 import org.eclipse.microprofile.openapi.annotations.media.Content;
 import org.eclipse.microprofile.openapi.annotations.media.Schema;
@@ -42,9 +44,12 @@ public class RoomController {
     @Inject
     RoomMapper roomMapper;
 
+    @Inject
+    SecurityContextImpl securityContext;
+
     /**
      * POST /api/v1/rooms - Create new room
-     * Security: Allows both authenticated and anonymous access (authentication in Iteration 3)
+     * Security: Allows both authenticated and anonymous access (assigns owner when authenticated)
      * Returns: 201 Created with RoomDTO
      */
     @POST
@@ -56,27 +61,19 @@ public class RoomController {
     @APIResponse(responseCode = "400", description = "Invalid request parameters",
         content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
     public Uni<Response> createRoom(@Valid CreateRoomRequest request) {
-        // For now, authentication is not implemented (Iteration 3)
-        // Pass null as owner for anonymous rooms
-        User owner = null; // TODO: Get from SecurityContext when auth is implemented
+        return resolveOwner()
+            .onItem().transformToUni(ownerId -> {
+                PrivacyMode privacyMode = resolvePrivacyMode(request.privacyMode, PrivacyMode.PUBLIC);
+                RoomConfig config = roomMapper.toConfig(request.config);
 
-        PrivacyMode privacyMode = request.privacyMode != null
-            ? PrivacyMode.valueOf(request.privacyMode.toUpperCase())
-            : PrivacyMode.PUBLIC;
-
-        // Convert RoomConfigDTO to RoomConfig
-        RoomConfig config = request.config != null
-            ? roomMapper.toConfig(request.config)
-            : null;
-
-        return roomService.createRoom(request.title, privacyMode, owner, config)
-            .onItem().transform(room -> {
-                RoomDTO dto = roomMapper.toDTO(room);
-                return Response.status(Response.Status.CREATED)
-                    .entity(dto)
-                    .build();
+                return roomService.createRoom(request.title, privacyMode, ownerId, config)
+                    .onItem().transform(room -> {
+                        RoomDTO dto = roomMapper.toDTO(room);
+                        return Response.status(Response.Status.CREATED)
+                            .entity(dto)
+                            .build();
+                    });
             });
-        // IllegalArgumentException is handled by IllegalArgumentExceptionMapper
     }
 
     /**
@@ -106,12 +103,12 @@ public class RoomController {
 
     /**
      * PUT /api/v1/rooms/{roomId}/config - Update room configuration
-     * Security: Requires authentication (will be enforced in Iteration 3)
+     * Security: Requires authenticated access (room owner only)
      * Returns: 200 OK with updated RoomDTO
      */
     @PUT
     @Path("/rooms/{roomId}/config")
-    @RolesAllowed("USER") // Will be enforced when auth is implemented in Iteration 3
+    @RolesAllowed("USER")
     @Operation(summary = "Update room configuration", description = "Updates room title, privacy mode, or configuration settings")
     @APIResponse(responseCode = "200", description = "Room updated successfully",
         content = @Content(schema = @Schema(implementation = RoomDTO.class)))
@@ -124,55 +121,26 @@ public class RoomController {
             @PathParam("roomId") String roomId,
             @Valid UpdateRoomConfigRequest request) {
 
-        // TODO: Verify user is the room host when auth is implemented
+        UUID currentUserId = requireCurrentUserId();
 
-        // Start with the current room state
-        Uni<Room> updateChain = roomService.findById(roomId);
-
-        // Update title if provided
-        if (request.title != null && !request.title.isEmpty()) {
-            updateChain = updateChain.flatMap(room ->
-                roomService.updateRoomTitle(roomId, request.title)
-            );
-        }
-
-        // Update privacy mode if provided
-        if (request.privacyMode != null && !request.privacyMode.isEmpty()) {
-            try {
-                PrivacyMode privacyMode = PrivacyMode.valueOf(request.privacyMode.toUpperCase());
-                updateChain = updateChain.flatMap(room ->
-                    roomService.updatePrivacyMode(roomId, privacyMode)
-                );
-            } catch (IllegalArgumentException e) {
-                ErrorResponse error = new ErrorResponse("VALIDATION_ERROR",
-                    "Invalid privacy mode: " + request.privacyMode + ". Valid values: PUBLIC, INVITE_ONLY, ORG_RESTRICTED");
-                return Uni.createFrom().item(Response.status(Response.Status.BAD_REQUEST).entity(error).build());
-            }
-        }
-
-        // Update config if provided
-        if (request.config != null) {
-            RoomConfig config = roomMapper.toConfig(request.config);
-            updateChain = updateChain.flatMap(room ->
-                roomService.updateRoomConfig(roomId, config)
-            );
-        }
-
-        return updateChain
-            .onItem().transform(room -> {
-                RoomDTO dto = roomMapper.toDTO(room);
+        return ensureRoomOwner(roomId, currentUserId)
+            .onItem().transformToUni(room ->
+                applyRoomUpdates(roomId, request, room)
+            )
+            .onItem().transform(updatedRoom -> {
+                RoomDTO dto = roomMapper.toDTO(updatedRoom);
                 return Response.ok(dto).build();
             });
     }
 
     /**
      * DELETE /api/v1/rooms/{roomId} - Soft delete room
-     * Security: Requires authentication (will be enforced in Iteration 3)
+     * Security: Requires authenticated access (room owner only)
      * Returns: 204 No Content
      */
     @DELETE
     @Path("/rooms/{roomId}")
-    @RolesAllowed("USER") // Will be enforced when auth is implemented in Iteration 3
+    @RolesAllowed("USER")
     @Operation(summary = "Delete room", description = "Soft deletes a room (sets deleted_at timestamp)")
     @APIResponse(responseCode = "204", description = "Room deleted successfully")
     @APIResponse(responseCode = "404", description = "Room not found",
@@ -181,18 +149,18 @@ public class RoomController {
             @Parameter(description = "Room ID (6-character nanoid)", required = true)
             @PathParam("roomId") String roomId) {
 
-        // TODO: Verify user is the room owner when auth is implemented
+        UUID currentUserId = requireCurrentUserId();
 
-        return roomService.deleteRoom(roomId)
-            .onItem().transform(room ->
-                Response.noContent().build()
-            );
+        return ensureRoomOwner(roomId, currentUserId)
+            .onItem().transformToUni(room ->
+                roomService.deleteRoom(roomId)
+            )
+            .replaceWith(Response.noContent().build());
     }
 
     /**
      * GET /api/v1/users/{userId}/rooms - List user's owned rooms
-     * Security: Requires authentication (will be enforced in Iteration 3)
-     * Users can only access their own rooms
+     * Security: Requires authentication (users can only access their own rooms)
      * Returns: 200 OK with RoomListResponse (paginated)
      */
     @GET
@@ -211,17 +179,18 @@ public class RoomController {
             @Parameter(description = "Page size (max 100)")
             @QueryParam("size") @DefaultValue("20") int size) {
 
-        // TODO: Verify user can only access their own rooms when auth is implemented
+        UUID currentUserId = requireCurrentUserId();
+        if (!userId.equals(currentUserId)) {
+            return Uni.createFrom().item(forbiddenResponse("Users can only access their own rooms"));
+        }
 
         // Validate page size
-        if (size > 100) {
-            ErrorResponse error = new ErrorResponse("VALIDATION_ERROR", "Page size cannot exceed 100");
-            return Uni.createFrom().item(Response.status(Response.Status.BAD_REQUEST).entity(error).build());
+        if (size < 1 || size > 100) {
+            return Uni.createFrom().item(badRequest("Page size must be between 1 and 100"));
         }
 
         if (page < 0) {
-            ErrorResponse error = new ErrorResponse("VALIDATION_ERROR", "Page number must be >= 0");
-            return Uni.createFrom().item(Response.status(Response.Status.BAD_REQUEST).entity(error).build());
+            return Uni.createFrom().item(badRequest("Page number must be >= 0"));
         }
 
         return roomService.findByOwnerId(userId)
@@ -229,9 +198,17 @@ public class RoomController {
             .onItem().transform(rooms -> {
                 // Implement pagination manually
                 int totalElements = rooms.size();
-                int totalPages = (int) Math.ceil((double) totalElements / size);
+                if (totalElements == 0 && page > 0) {
+                    throw new WebApplicationException(badRequest("Requested page exceeds available pages"));
+                }
+
+                int totalPages = totalElements == 0 ? 0 : (int) Math.ceil((double) totalElements / size);
                 int start = page * size;
                 int end = Math.min(start + size, totalElements);
+
+                if (totalElements > 0 && start >= totalElements) {
+                    throw new WebApplicationException(badRequest("Requested page exceeds available pages"));
+                }
 
                 List<RoomDTO> paginatedRooms = rooms.stream()
                     .skip(start)
@@ -248,5 +225,107 @@ public class RoomController {
 
                 return Response.ok(response).build();
             });
+    }
+
+    private Uni<UUID> resolveOwner() {
+        UUID userId;
+        try {
+            userId = securityContext.getCurrentUserId();
+        } catch (RuntimeException ex) {
+            return Uni.createFrom().item((UUID) null);
+        }
+
+        if (userId == null) {
+            return Uni.createFrom().item((UUID) null);
+        }
+
+        return Uni.createFrom().item(userId);
+    }
+
+    private UUID requireCurrentUserId() {
+        UUID userId;
+        try {
+            userId = securityContext.getCurrentUserId();
+        } catch (RuntimeException ex) {
+            throw unauthorizedException();
+        }
+
+        if (userId == null) {
+            throw unauthorizedException();
+        }
+        return userId;
+    }
+
+    private Uni<Room> ensureRoomOwner(String roomId, UUID userId) {
+        return roomService.findById(roomId)
+            .onItem().transform(room -> {
+                if (!isRoomOwner(room, userId)) {
+                    throw forbiddenException("Only the room owner can perform this action");
+                }
+                return room;
+            });
+    }
+
+    private Uni<Room> applyRoomUpdates(String roomId, UpdateRoomConfigRequest request, Room currentRoom) {
+        Uni<Room> updateChain = Uni.createFrom().item(currentRoom);
+
+        if (request.title != null && !request.title.isBlank()) {
+            updateChain = updateChain.flatMap(room ->
+                roomService.updateRoomTitle(roomId, request.title));
+        }
+
+        if (request.privacyMode != null && !request.privacyMode.isBlank()) {
+            PrivacyMode privacyMode = resolvePrivacyMode(request.privacyMode, null);
+            updateChain = updateChain.flatMap(room ->
+                roomService.updatePrivacyMode(roomId, privacyMode));
+        }
+
+        if (request.config != null) {
+            RoomConfig config = roomMapper.toConfig(request.config);
+            updateChain = updateChain.flatMap(room ->
+                roomService.updateRoomConfig(roomId, config));
+        }
+
+        return updateChain;
+    }
+
+    private PrivacyMode resolvePrivacyMode(String requestedMode, PrivacyMode defaultMode) {
+        if (requestedMode == null || requestedMode.isBlank()) {
+            return defaultMode;
+        }
+
+        try {
+            return PrivacyMode.valueOf(requestedMode.trim().toUpperCase());
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("Invalid privacy mode: " + requestedMode
+                + ". Valid values: PUBLIC, INVITE_ONLY, ORG_RESTRICTED");
+        }
+    }
+
+    private boolean isRoomOwner(Room room, UUID userId) {
+        return room != null
+            && room.owner != null
+            && room.owner.userId != null
+            && room.owner.userId.equals(userId);
+    }
+
+    private Response badRequest(String message) {
+        ErrorResponse error = new ErrorResponse("VALIDATION_ERROR", message);
+        return Response.status(Response.Status.BAD_REQUEST).entity(error).build();
+    }
+
+    private Response forbiddenResponse(String message) {
+        ErrorResponse error = new ErrorResponse("FORBIDDEN", message);
+        return Response.status(Response.Status.FORBIDDEN).entity(error).build();
+    }
+
+    private WebApplicationException unauthorizedException() {
+        ErrorResponse error = new ErrorResponse("UNAUTHORIZED", "User authentication required");
+        return new WebApplicationException(
+            Response.status(Response.Status.UNAUTHORIZED).entity(error).build());
+    }
+
+    private WebApplicationException forbiddenException(String message) {
+        return new WebApplicationException(forbiddenResponse(message));
     }
 }

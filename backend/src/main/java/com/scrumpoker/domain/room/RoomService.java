@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.scrumpoker.domain.user.User;
 import com.scrumpoker.repository.RoomRepository;
+import io.quarkus.hibernate.reactive.panache.Panache;
 import com.scrumpoker.security.FeatureGate;
 import io.quarkus.hibernate.reactive.panache.common.WithSession;
 import io.quarkus.hibernate.reactive.panache.common.WithTransaction;
@@ -56,7 +57,20 @@ public class RoomService {
      *         if user's tier is insufficient for privacy mode
      */
     @WithTransaction
-    public Uni<Room> createRoom(String title, PrivacyMode privacyMode, User owner, RoomConfig config) {
+    public Uni<Room> createRoom(String title, PrivacyMode privacyMode, UUID ownerId, RoomConfig config) {
+        return resolveOwner(ownerId)
+            .flatMap(resolvedOwner -> doCreateRoom(title, privacyMode, resolvedOwner, config));
+    }
+
+    private Uni<User> resolveOwner(UUID ownerId) {
+        if (ownerId == null) {
+            return Uni.createFrom().item((User) null);
+        }
+        return Panache.getSession()
+            .chain(session -> session.find(User.class, ownerId));
+    }
+
+    private Uni<Room> doCreateRoom(String title, PrivacyMode privacyMode, User owner, RoomConfig config) {
         // Validate inputs
         if (title == null || title.trim().isEmpty()) {
             return Uni.createFrom().failure(new IllegalArgumentException("Room title cannot be null or empty"));
@@ -94,13 +108,13 @@ public class RoomService {
         room.roomId = generateNanoid();
         room.title = title.trim();
         room.privacyMode = privacyMode;
-        room.owner = owner;
         room.config = serializeConfig(config);
         room.createdAt = Instant.now();
         room.lastActiveAt = Instant.now();
 
         // Persist and return
-        return roomRepository.persist(room);
+        return roomRepository.persist(room)
+            .flatMap(persisted -> assignOwner(persisted, owner));
     }
 
     /**
@@ -244,7 +258,7 @@ public class RoomService {
      * Returns rooms ordered by last activity (most recent first).
      *
      * @param ownerId The owner user ID
-     * @return Multi stream of rooms owned by the user
+     * @return Uni containing ordered list of rooms owned by the user
      */
     public Multi<Room> findByOwnerId(UUID ownerId) {
         return roomRepository.findActiveByOwnerId(ownerId)
@@ -288,6 +302,22 @@ public class RoomService {
         if (config.getDeckType() == null) {
             throw new IllegalArgumentException("Room config deck type cannot be null");
         }
+    }
+
+    private Uni<Room> assignOwner(Room room, User owner) {
+        if (owner == null || owner.userId == null) {
+            return Uni.createFrom().item(room);
+        }
+
+        return Panache.getSession()
+            .chain(session -> session.createNativeQuery("UPDATE room SET owner_id = ?1 WHERE room_id = ?2")
+                .setParameter(1, owner.userId)
+                .setParameter(2, room.roomId)
+                .executeUpdate())
+            .replaceWith(() -> {
+                room.owner = owner;
+                return room;
+            });
     }
 
     /**

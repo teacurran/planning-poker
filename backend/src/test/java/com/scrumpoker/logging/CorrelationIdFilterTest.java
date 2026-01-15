@@ -1,7 +1,13 @@
 package com.scrumpoker.logging;
 
+import com.scrumpoker.repository.UserRepository;
+import com.scrumpoker.testutil.TestUserData;
 import io.quarkus.test.junit.QuarkusTest;
+import io.quarkus.test.vertx.RunOnVertxContext;
+import io.quarkus.test.vertx.UniAsserter;
 import io.restassured.http.ContentType;
+import jakarta.inject.Inject;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import static io.restassured.RestAssured.given;
@@ -21,6 +27,15 @@ import static org.hamcrest.Matchers.matchesPattern;
  */
 @QuarkusTest
 class CorrelationIdFilterTest {
+
+    @Inject
+    UserRepository userRepository;
+
+    @BeforeEach
+    @RunOnVertxContext
+    void setUp(UniAsserter asserter) {
+        asserter.execute(() -> TestUserData.ensureTestUser(userRepository));
+    }
 
     /**
      * Test that a correlation ID is automatically generated and returned in response headers

@@ -5,11 +5,11 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.scrumpoker.api.rest.dto.RoomConfigDTO;
 import com.scrumpoker.api.rest.dto.RoomDTO;
 import com.scrumpoker.domain.room.DeckType;
-import com.scrumpoker.domain.room.PrivacyMode;
 import com.scrumpoker.domain.room.Room;
 import com.scrumpoker.domain.room.RoomConfig;
-import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import org.mapstruct.Mapper;
+import org.mapstruct.Mapping;
 
 import java.util.Collections;
 
@@ -17,36 +17,18 @@ import java.util.Collections;
  * Mapper for converting between Room entities and RoomDTOs.
  * Handles JSONB serialization/deserialization for room configuration.
  */
-@ApplicationScoped
-public class RoomMapper {
+@Mapper(componentModel = "cdi", imports = {Collections.class})
+public abstract class RoomMapper {
 
     @Inject
     ObjectMapper objectMapper;
 
-    /**
-     * Converts a Room entity to RoomDTO for REST API responses.
-     *
-     * @param room The room entity
-     * @return RoomDTO with all fields mapped
-     */
-    public RoomDTO toDTO(Room room) {
-        if (room == null) {
-            return null;
-        }
-
-        RoomDTO dto = new RoomDTO();
-        dto.roomId = room.roomId;
-        dto.ownerId = room.owner != null ? room.owner.userId : null;
-        dto.organizationId = room.organization != null ? room.organization.orgId : null;
-        dto.title = room.title;
-        dto.privacyMode = room.privacyMode != null ? room.privacyMode.name() : null;
-        dto.config = deserializeConfigToDTO(room.config);
-        dto.createdAt = room.createdAt;
-        dto.lastActiveAt = room.lastActiveAt;
-        dto.participants = Collections.emptyList(); // Will be populated by WebSocket state in future iterations
-
-        return dto;
-    }
+    @Mapping(target = "ownerId", expression = "java(room.owner != null ? room.owner.userId : null)")
+    @Mapping(target = "organizationId", expression = "java(room.organization != null ? room.organization.orgId : null)")
+    @Mapping(target = "privacyMode", expression = "java(room.privacyMode != null ? room.privacyMode.name() : null)")
+    @Mapping(target = "config", expression = "java(deserializeConfigToDTO(room.config))")
+    @Mapping(target = "participants", expression = "java(Collections.emptyList())")
+    public abstract RoomDTO toDTO(Room room);
 
     /**
      * Converts RoomConfigDTO to RoomConfig domain object.
@@ -56,19 +38,19 @@ public class RoomMapper {
      */
     public RoomConfig toConfig(RoomConfigDTO dto) {
         if (dto == null) {
-            return new RoomConfig(); // Return default config
+            return new RoomConfig();
         }
 
         RoomConfig config = new RoomConfig();
         if (dto.deckType != null) {
-            config.setDeckType(dto.deckType);
-        } else {
-            config.setDeckType(DeckType.FIBONACCI);
+            config.setDeckType(DeckType.fromValue(dto.deckType));
         }
         config.setTimerEnabled(dto.timerEnabled != null ? dto.timerEnabled : false);
         config.setTimerDurationSeconds(dto.timerDurationSeconds != null ? dto.timerDurationSeconds : 60);
         config.setRevealBehavior(dto.revealBehavior != null ? dto.revealBehavior : "MANUAL");
         config.setAllowObservers(dto.allowObservers != null ? dto.allowObservers : true);
+        config.setAllowAnonymousVoters(dto.allowAnonymousVoters != null ? dto.allowAnonymousVoters : true);
+        config.setCustomDeck(dto.customDeck);
 
         return config;
     }
@@ -90,8 +72,8 @@ public class RoomMapper {
         dto.timerDurationSeconds = config.getTimerDurationSeconds();
         dto.revealBehavior = config.getRevealBehavior();
         dto.allowObservers = config.isAllowObservers();
-        dto.customDeck = null; // Not yet implemented in domain model
-        dto.allowAnonymousVoters = true; // Default for now
+        dto.allowAnonymousVoters = config.isAllowAnonymousVoters();
+        dto.customDeck = config.getCustomDeck();
 
         return dto;
     }
@@ -102,15 +84,13 @@ public class RoomMapper {
      * @param configJson The JSON string from database
      * @return RoomConfigDTO or null if deserialization fails
      */
-    private RoomConfigDTO deserializeConfigToDTO(String configJson) {
+    protected RoomConfigDTO deserializeConfigToDTO(String configJson) {
         if (configJson == null || configJson.isEmpty()) {
             return null;
         }
 
         try {
-            // First deserialize to RoomConfig domain object
             RoomConfig config = objectMapper.readValue(configJson, RoomConfig.class);
-            // Then convert to DTO
             return toConfigDTO(config);
         } catch (JsonProcessingException e) {
             // Log error but don't fail the entire mapping

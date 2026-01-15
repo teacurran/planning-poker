@@ -3,10 +3,9 @@ package com.scrumpoker.api.rest;
 import com.scrumpoker.api.rest.dto.CreateRoomRequest;
 import com.scrumpoker.api.rest.dto.RoomConfigDTO;
 import com.scrumpoker.api.rest.dto.UpdateRoomConfigRequest;
-import com.scrumpoker.domain.user.SubscriptionTier;
-import com.scrumpoker.domain.user.User;
 import com.scrumpoker.repository.RoomRepository;
 import com.scrumpoker.repository.UserRepository;
+import com.scrumpoker.testutil.TestUserData;
 import io.quarkus.hibernate.reactive.panache.Panache;
 import io.quarkus.test.junit.QuarkusTest;
 import io.quarkus.test.junit.TestProfile;
@@ -18,7 +17,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
-import java.util.List;
 import java.util.UUID;
 
 import static io.restassured.RestAssured.given;
@@ -34,6 +32,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 @TestProfile(NoSecurityTestProfile.class)
 public class RoomControllerTest {
 
+    private static final UUID AUTHENTICATED_USER_ID = TestSecurityIdentityAugmentor.TEST_USER_ID;
+
     @Inject
     RoomRepository roomRepository;
 
@@ -46,6 +46,7 @@ public class RoomControllerTest {
         // Clean up test data before each test
         asserter.execute(() -> Panache.withTransaction(() -> roomRepository.deleteAll()));
         asserter.execute(() -> Panache.withTransaction(() -> userRepository.deleteAll()));
+        asserter.execute(() -> TestUserData.ensureTestUser(userRepository));
     }
 
     // ========================================
@@ -432,13 +433,6 @@ public class RoomControllerTest {
     @Test
     @RunOnVertxContext
     public void testGetUserRooms_DefaultPagination_Returns200(UniAsserter asserter) {
-        // Create a test user
-        User testUser = createTestUser("test@example.com", "google", "google-test");
-
-        asserter.execute(() -> Panache.withTransaction(() ->
-            userRepository.persist(testUser)
-        ));
-
         // Create rooms using the service by setting owner after creation
         CreateRoomRequest request1 = new CreateRoomRequest();
         request1.title = "User Room 1";
@@ -464,24 +458,11 @@ public class RoomControllerTest {
         .extract()
             .path("roomId");
 
-        // Update rooms to set owner manually in database
-        asserter.execute(() -> Panache.withTransaction(() ->
-            roomRepository.findById(roomId1).flatMap(room -> {
-                room.owner = testUser;
-                return roomRepository.persist(room);
-            }).flatMap(r1 ->
-                roomRepository.findById(roomId2).flatMap(room -> {
-                    room.owner = testUser;
-                    return roomRepository.persist(room);
-                })
-            )
-        ));
-
         // Get user's rooms with default pagination
         asserter.execute(() ->
             given()
             .when()
-                .get("/api/v1/users/" + testUser.userId + "/rooms")
+                .get("/api/v1/users/" + AUTHENTICATED_USER_ID + "/rooms")
             .then()
                 .statusCode(200)
                 .body("rooms", hasSize(2))
@@ -496,13 +477,6 @@ public class RoomControllerTest {
     @Test
     @RunOnVertxContext
     public void testGetUserRooms_CustomPagination_Returns200(UniAsserter asserter) {
-        // Create a test user
-        User testUser = createTestUser("paginated@example.com", "google", "google-page");
-
-        asserter.execute(() -> Panache.withTransaction(() ->
-            userRepository.persist(testUser)
-        ));
-
         // Create 3 rooms and assign to user
         for (int i = 1; i <= 3; i++) {
             CreateRoomRequest request = new CreateRoomRequest();
@@ -517,13 +491,6 @@ public class RoomControllerTest {
             .extract()
                 .path("roomId");
 
-            // Set owner
-            asserter.execute(() -> Panache.withTransaction(() ->
-                roomRepository.findById(roomId).flatMap(room -> {
-                    room.owner = testUser;
-                    return roomRepository.persist(room);
-                })
-            ));
         }
 
         // Request page 0 with size 2 (should get 2 rooms)
@@ -532,7 +499,7 @@ public class RoomControllerTest {
                 .queryParam("page", 0)
                 .queryParam("size", 2)
             .when()
-                .get("/api/v1/users/" + testUser.userId + "/rooms")
+                .get("/api/v1/users/" + AUTHENTICATED_USER_ID + "/rooms")
             .then()
                 .statusCode(200)
                 .body("rooms", hasSize(2))
@@ -548,7 +515,7 @@ public class RoomControllerTest {
                 .queryParam("page", 1)
                 .queryParam("size", 2)
             .when()
-                .get("/api/v1/users/" + testUser.userId + "/rooms")
+                .get("/api/v1/users/" + AUTHENTICATED_USER_ID + "/rooms")
             .then()
                 .statusCode(200)
                 .body("rooms", hasSize(1))
@@ -560,13 +527,11 @@ public class RoomControllerTest {
 
     @Test
     public void testGetUserRooms_ExceedMaxPageSize_Returns400() {
-        UUID userId = UUID.randomUUID();
-
         given()
             .queryParam("page", 0)
             .queryParam("size", 101) // Exceeds max of 100
         .when()
-            .get("/api/v1/users/" + userId + "/rooms")
+            .get("/api/v1/users/" + AUTHENTICATED_USER_ID + "/rooms")
         .then()
             .statusCode(400)
             .body("error", equalTo("VALIDATION_ERROR"))
@@ -575,13 +540,11 @@ public class RoomControllerTest {
 
     @Test
     public void testGetUserRooms_NegativePage_Returns400() {
-        UUID userId = UUID.randomUUID();
-
         given()
             .queryParam("page", -1)
             .queryParam("size", 20)
         .when()
-            .get("/api/v1/users/" + userId + "/rooms")
+            .get("/api/v1/users/" + AUTHENTICATED_USER_ID + "/rooms")
         .then()
             .statusCode(400)
             .body("error", equalTo("VALIDATION_ERROR"))
@@ -591,18 +554,11 @@ public class RoomControllerTest {
     @Test
     @RunOnVertxContext
     public void testGetUserRooms_EmptyList_Returns200(UniAsserter asserter) {
-        // Create a user with no rooms
-        User testUser = createTestUser("noroomuser@example.com", "google", "google-norooms");
-
-        asserter.execute(() -> Panache.withTransaction(() ->
-            userRepository.persist(testUser)
-        ));
-
         // Get user's rooms - should return empty list
         asserter.execute(() ->
             given()
             .when()
-                .get("/api/v1/users/" + testUser.userId + "/rooms")
+                .get("/api/v1/users/" + AUTHENTICATED_USER_ID + "/rooms")
             .then()
                 .statusCode(200)
                 .body("rooms", hasSize(0))
@@ -615,17 +571,4 @@ public class RoomControllerTest {
     // Helper Methods
     // ========================================
 
-    /**
-     * Helper method to create test users.
-     * User ID is auto-generated by Hibernate on persist.
-     */
-    private User createTestUser(String email, String provider, String subject) {
-        User user = new User();
-        user.email = email;
-        user.oauthProvider = provider;
-        user.oauthSubject = subject;
-        user.displayName = "Test User";
-        user.subscriptionTier = SubscriptionTier.FREE;
-        return user;
-    }
 }
