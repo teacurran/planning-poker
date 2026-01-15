@@ -23,6 +23,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.Spy;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -63,14 +64,8 @@ class ReportingServiceTest {
     @Mock
     ReactiveStreamCommands<String, String, String> streamCommands;
 
-    @Mock
-    ObjectMapper objectMapper;
-
-    @Mock
-    com.fasterxml.jackson.databind.type.TypeFactory typeFactory;
-
-    @Mock
-    com.fasterxml.jackson.databind.type.CollectionType collectionType;
+    @Spy
+    ObjectMapper objectMapper = new ObjectMapper();
 
     @InjectMocks
     ReportingService reportingService;
@@ -197,19 +192,9 @@ class ReportingServiceTest {
         testSession.endedAt = Instant.now().minus(10, ChronoUnit.MINUTES);
         testSession.totalRounds = 2;
         testSession.totalStories = 2;
-        testSession.participants = "[{\"participant_id\":\"" + participant1.participantId
-                + "\",\"display_name\":\"Alice\",\"role\":\"VOTER\",\"vote_count\":2,\"is_authenticated\":true}]";
-        testSession.summaryStats = "{\"total_votes\":4,\"consensus_rate\":0.5,\"avg_estimation_time_seconds\":120,\"rounds_with_consensus\":1}";
+        testSession.participants = objectMapper.writeValueAsString(participants);
+        testSession.summaryStats = objectMapper.writeValueAsString(summaryStats);
         testSession.createdAt = Instant.now();
-
-        // Setup ObjectMapper mock for TypeFactory (lenient to avoid unnecessary stubbing exceptions)
-        lenient().when(objectMapper.getTypeFactory()).thenReturn(typeFactory);
-        lenient().when(typeFactory.constructCollectionType(List.class, ParticipantSummary.class))
-                .thenReturn(collectionType);
-        lenient().when(objectMapper.readValue(anyString(), eq(SessionSummaryStats.class)))
-                .thenReturn(summaryStats);
-        lenient().when(objectMapper.readValue(anyString(), eq(collectionType)))
-                .thenReturn(participants);
     }
 
     // ===== Basic Session Summary Tests =====
@@ -375,10 +360,6 @@ class ReportingServiceTest {
         doNothing().when(featureGate).requireCanAccessAdvancedReports(proUser);
         when(sessionHistoryService.getSessionById(testSessionId))
                 .thenReturn(Uni.createFrom().item(testSession));
-        when(objectMapper.readValue(eq(testSession.summaryStats), eq(SessionSummaryStats.class)))
-                .thenReturn(summaryStats);
-        when(objectMapper.readValue(anyString(), any(com.fasterxml.jackson.databind.JavaType.class)))
-                .thenReturn(participants);
         when(roundRepository.findByRoomId(testRoomId))
                 .thenReturn(Uni.createFrom().item(List.of()));
 
@@ -408,10 +389,6 @@ class ReportingServiceTest {
         doNothing().when(featureGate).requireCanAccessAdvancedReports(proUser);
         when(sessionHistoryService.getSessionById(testSessionId))
                 .thenReturn(Uni.createFrom().item(testSession));
-        when(objectMapper.readValue(eq(testSession.summaryStats), eq(SessionSummaryStats.class)))
-                .thenReturn(summaryStats);
-        when(objectMapper.readValue(anyString(), any(com.fasterxml.jackson.databind.JavaType.class)))
-                .thenReturn(participants);
         when(roundRepository.findByRoomId(testRoomId))
                 .thenReturn(Uni.createFrom().item(List.of(testRound1, testRound2)));
         when(voteRepository.findByRoundId(testRound1.roundId))
@@ -605,10 +582,6 @@ class ReportingServiceTest {
         doNothing().when(featureGate).requireCanAccessAdvancedReports(proUser);
         when(sessionHistoryService.getSessionById(testSessionId))
                 .thenReturn(Uni.createFrom().item(testSession));
-        when(objectMapper.readValue(eq(testSession.summaryStats), eq(SessionSummaryStats.class)))
-                .thenReturn(summaryStats);
-        when(objectMapper.readValue(anyString(), any(com.fasterxml.jackson.databind.JavaType.class)))
-                .thenReturn(participants);
         when(roundRepository.findByRoomId(testRoomId))
                 .thenReturn(Uni.createFrom().item(List.of(testRound1, testRound2)));
         when(voteRepository.findByRoundId(testRound1.roundId))
@@ -638,10 +611,6 @@ class ReportingServiceTest {
         doNothing().when(featureGate).requireCanAccessAdvancedReports(proUser);
         when(sessionHistoryService.getSessionById(testSessionId))
                 .thenReturn(Uni.createFrom().item(testSession));
-        when(objectMapper.readValue(eq(testSession.summaryStats), eq(SessionSummaryStats.class)))
-                .thenReturn(summaryStats);
-        when(objectMapper.readValue(anyString(), any(com.fasterxml.jackson.databind.JavaType.class)))
-                .thenReturn(participants);
         when(roundRepository.findByRoomId(testRoomId))
                 .thenReturn(Uni.createFrom().item(List.of(testRound1)));
         when(voteRepository.findByRoundId(testRound1.roundId))
@@ -675,10 +644,6 @@ class ReportingServiceTest {
         doNothing().when(featureGate).requireCanAccessAdvancedReports(proUser);
         when(sessionHistoryService.getSessionById(testSessionId))
                 .thenReturn(Uni.createFrom().item(testSession));
-        when(objectMapper.readValue(eq(testSession.summaryStats), eq(SessionSummaryStats.class)))
-                .thenReturn(summaryStats);
-        when(objectMapper.readValue(anyString(), any(com.fasterxml.jackson.databind.JavaType.class)))
-                .thenReturn(participants);
         when(roundRepository.findByRoomId(testRoomId))
                 .thenReturn(Uni.createFrom().item(List.of(testRound1, testRound2, round3, round4)));
         when(voteRepository.findByRoundId(testRound1.roundId))

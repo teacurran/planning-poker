@@ -12,7 +12,7 @@
     "acceptance_criteria": "*   `mvn clean compile` executes without errors\n        *   `mvn quarkus:dev` starts Quarkus in dev mode and serves health check at `/q/health`\n        *   All required Quarkus extensions listed in `pom.xml` dependencies\n        *   Package structure matches specification (6+ top-level packages created)",
     "dependencies": [],
     "parallelizable": true,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I1.T2",

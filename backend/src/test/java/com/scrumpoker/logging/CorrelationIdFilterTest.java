@@ -1,7 +1,7 @@
 package com.scrumpoker.logging;
 
 import io.quarkus.test.junit.QuarkusTest;
-import io.restassured.RestAssured;
+import io.restassured.http.ContentType;
 import org.junit.jupiter.api.Test;
 
 import static io.restassured.RestAssured.given;
@@ -29,10 +29,12 @@ class CorrelationIdFilterTest {
     @Test
     void testCorrelationIdGeneratedAutomatically() {
         given()
-                .when()
-                .get("/q/health/ready")
-                .then()
-                .statusCode(200)
+                .contentType(ContentType.JSON)
+                .body("{\"title\":\"Correlation Test Room\"}")
+        .when()
+                .post("/api/v1/rooms")
+        .then()
+                .statusCode(201)
                 .header(LoggingConstants.CORRELATION_ID_HEADER, notNullValue())
                 // Verify it's a UUID format (8-4-4-4-12 hexadecimal pattern)
                 .header(LoggingConstants.CORRELATION_ID_HEADER,
@@ -48,27 +50,30 @@ class CorrelationIdFilterTest {
         String customCorrelationId = "test-correlation-id-12345";
 
         given()
+                .contentType(ContentType.JSON)
                 .header(LoggingConstants.CORRELATION_ID_HEADER, customCorrelationId)
-                .when()
-                .get("/q/health/ready")
-                .then()
-                .statusCode(200)
+                .body("{\"title\":\"Correlation Header Test\"}")
+        .when()
+                .post("/api/v1/rooms")
+        .then()
+                .statusCode(201)
                 .header(LoggingConstants.CORRELATION_ID_HEADER, customCorrelationId);
     }
 
     /**
      * Test that correlation ID works for API endpoints (not just health checks).
      * <p>
-     * Note: This test uses /api/v1/rooms endpoint which requires authentication,
-     * so we expect 401 Unauthorized, but the correlation ID should still be present.
+     * Note: This test uses /api/v1/rooms/{roomId} endpoint which returns 404 for nonexistent rooms,
+     * but the correlation ID should still be present even on error responses.
      * </p>
      */
     @Test
     void testCorrelationIdOnApiEndpoint() {
         given()
                 .when()
-                .get("/api/v1/rooms")
+                .get("/api/v1/rooms/nonexistent")
                 .then()
+                .statusCode(404)
                 .header(LoggingConstants.CORRELATION_ID_HEADER, notNullValue());
     }
 }
