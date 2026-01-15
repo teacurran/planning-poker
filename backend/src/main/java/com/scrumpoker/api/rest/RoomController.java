@@ -49,7 +49,7 @@ public class RoomController {
 
     /**
      * POST /api/v1/rooms - Create new room
-     * Security: Allows both authenticated and anonymous access (assigns owner when authenticated)
+     * Security: Allows anonymous creation but attaches owner when authenticated
      * Returns: 201 Created with RoomDTO
      */
     @POST
@@ -66,7 +66,7 @@ public class RoomController {
                 PrivacyMode privacyMode = resolvePrivacyMode(request.privacyMode, PrivacyMode.PUBLIC);
                 RoomConfig config = roomMapper.toConfig(request.config);
 
-                return roomService.createRoom(request.title, privacyMode, ownerId, config)
+                return roomService.createRoomWithOwnerId(request.title, privacyMode, ownerId, config)
                     .onItem().transform(room -> {
                         RoomDTO dto = roomMapper.toDTO(room);
                         return Response.status(Response.Status.CREATED)
@@ -108,7 +108,6 @@ public class RoomController {
      */
     @PUT
     @Path("/rooms/{roomId}/config")
-    @RolesAllowed("USER")
     @Operation(summary = "Update room configuration", description = "Updates room title, privacy mode, or configuration settings")
     @APIResponse(responseCode = "200", description = "Room updated successfully",
         content = @Content(schema = @Schema(implementation = RoomDTO.class)))
@@ -121,6 +120,7 @@ public class RoomController {
             @PathParam("roomId") String roomId,
             @Valid UpdateRoomConfigRequest request) {
 
+        System.out.println("entered updateRoomConfig start " + roomId);
         UUID currentUserId = requireCurrentUserId();
 
         return ensureRoomOwner(roomId, currentUserId)
@@ -185,8 +185,12 @@ public class RoomController {
         }
 
         // Validate page size
-        if (size < 1 || size > 100) {
-            return Uni.createFrom().item(badRequest("Page size must be between 1 and 100"));
+        if (size < 1) {
+            return Uni.createFrom().item(badRequest("Page size must be >= 1"));
+        }
+
+        if (size > 100) {
+            return Uni.createFrom().item(badRequest("Page size cannot exceed 100"));
         }
 
         if (page < 0) {

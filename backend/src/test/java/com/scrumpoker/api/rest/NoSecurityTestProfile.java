@@ -24,6 +24,8 @@ public class NoSecurityTestProfile implements QuarkusTestProfile {
         config.put("quarkus.security.auth.enabled", "false");
         // Allow unannotated endpoints (but annotated ones still need roles)
         config.put("quarkus.security.jaxrs.deny-unannotated-endpoints", "false");
+        // Provide fallback user ID for security context when auth is disabled
+        config.put("scrumpoker.security.test-user-id", TestSecurityIdentityAugmentor.TEST_USER_ID.toString());
         return config;
     }
 

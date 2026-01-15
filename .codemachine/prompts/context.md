@@ -72,42 +72,6 @@ The following are the relevant sections from the architecture and plan documents
     *   **Parallelizable:** No (depends on service and OpenAPI spec)
 ```
 
-### Context: Task 2.3 – Implement Room Service (from .codemachine/artifacts/plan/02_Iteration_I2.md)
-
-```markdown
-*   **Task 2.3: Implement Room Service (CRUD Operations)**
-    *   **Task ID:** `I2.T3`
-    *   **Description:** Create `RoomService` domain service implementing core room operations: create room (generate 6-character nanoid, validate privacy mode, initialize config JSONB), update room configuration (deck type, rules, title), delete room (soft delete with `deleted_at`), find room by ID, list rooms by owner. Use `RoomRepository` for database operations. Implement reactive methods returning `Uni<>` for single results, `Multi<>` for lists. Validate business rules (room title length, valid privacy modes, deck type enum). Handle JSONB serialization for room configuration. Add transaction boundaries with `@Transactional`.
-    *   **Agent Type Hint:** `BackendAgent`
-    *   **Inputs:**
-        *   Room entity and repository from I1
-        *   Room management requirements from product spec
-        *   Nanoid generation pattern (6 characters, a-z0-9)
-    *   **Input Files:**
-        *   `backend/src/main/java/com/scrumpoker/domain/room/Room.java`
-        *   `backend/src/main/java/com/scrumpoker/repository/RoomRepository.java`
-    *   **Target Files:**
-        *   `backend/src/main/java/com/scrumpoker/domain/room/RoomService.java`
-        *   `backend/src/main/java/com/scrumpoker/domain/room/RoomConfig.java` (POJO for JSONB mapping)
-        *   `backend/src/main/java/com/scrumpoker/domain/room/RoomNotFoundException.java` (custom exception)
-    *   **Deliverables:**
-        *   RoomService class with methods: `createRoom()`, `updateRoomConfig()`, `deleteRoom()`, `findById()`, `findByOwnerId()`
-        *   Nanoid generation utility for unique room IDs
-        *   RoomConfig POJO with fields: deckType, timerEnabled, timerDurationSeconds, revealBehavior
-        *   Business validation (title max 200 chars, valid privacy enum)
-        *   Reactive return types (Uni, Multi)
-        *   Custom exception for room not found scenarios
-    *   **Acceptance Criteria:**
-        *   Service methods compile and pass unit tests (mocked repository)
-        *   Room creation generates unique 6-character IDs (test collision resistance with 1000 iterations)
-        *   JSONB config serialization/deserialization works correctly
-        *   Soft delete sets `deleted_at` timestamp without removing database row
-        *   Business validation throws appropriate exceptions (e.g., `IllegalArgumentException` for invalid title)
-        *   Service transactional boundaries configured correctly
-    *   **Dependencies:** [I1.T4, I1.T7]
-    *   **Parallelizable:** No (depends on entity and repository)
-```
-
 ### Context: REST API Endpoints Overview (from .codemachine/artifacts/architecture/04_Behavior_and_Communication.md)
 
 ```markdown
@@ -149,9 +113,11 @@ The following are the relevant sections from the architecture and plan documents
 - `POST /api/v1/organizations/{orgId}/members` - Invite member
 - `DELETE /api/v1/organizations/{orgId}/members/{userId}` - Remove member
 - `GET /api/v1/organizations/{orgId}/audit-logs` - Query audit trail
+
+---
 ```
 
-### Context: Synchronous REST Pattern (from .codemachine/artifacts/architecture/04_Behavior_and_Communication.md)
+### Context: Synchronous REST (Request/Response) Pattern (from .codemachine/artifacts/architecture/04_Behavior_and_Communication.md)
 
 ```markdown
 ##### Synchronous REST (Request/Response)
@@ -176,16 +142,26 @@ The following are the relevant sections from the architecture and plan documents
 - `PUT /api/v1/users/{userId}/preferences` - Update user preferences
 - `POST /api/v1/subscriptions/{subscriptionId}/upgrade` - Upgrade subscription tier
 - `GET /api/v1/reports/sessions?from=2025-01-01&to=2025-01-31` - Query session history
+
+---
 ```
 
-### Context: Core Gameplay Requirements (from .codemachine/artifacts/architecture/01_Context_and_Drivers.md)
+### Context: API Contract Style (from .codemachine/artifacts/plan/01_Plan_Overview_and_Setup.md)
 
 ```markdown
-#### Core Gameplay Requirements
-- **Real-time Estimation:** WebSocket-based blind card selection with configurable deck types (Fibonacci, T-shirt, custom)
-- **Session Management:** Host controls for round lifecycle (start, lock, reveal, reset), participant management (kick, mute)
-- **Calculation Engine:** Automatic computation of average, median, and consensus indicators upon reveal
-- **Room Controls:** Unique room ID generation (6-character nanoid), shareable links, privacy modes
+*   **API Contract Style:**
+    *   **REST API:** RESTful JSON API documented with OpenAPI 3.1 specification
+        *   URL versioning: `/api/v1/`
+        *   Standard HTTP semantics (GET, POST, PUT, DELETE)
+        *   Error responses with consistent structure (4xx client errors, 5xx server errors)
+    *   **WebSocket Protocol:** Custom JSON-RPC style over WebSocket
+        *   Message format: `{\"type\": \"vote.cast.v1\", \"requestId\": \"uuid\", \"payload\": {...}}`
+        *   Versioned message types (e.g., `v1`, `v2`) for protocol evolution
+        *   Request/response correlation via `requestId`
+
+    **Planned Specification Files:**
+    *   OpenAPI 3.1 Specification (YAML) - Documents all REST endpoints (Created in I2.T1)
+    *   WebSocket Protocol Specification (Markdown) - Message type catalog with JSON schemas (Created in I2.T2)
 ```
 
 ---
@@ -196,20 +172,24 @@ The following analysis is based on my direct review of the current codebase. Use
 
 ### Relevant Existing Code
 *   **File:** `backend/src/main/java/com/scrumpoker/api/rest/RoomController.java`
-    *   **Summary:** Implements the five REST endpoints defined in the OpenAPI spec, using Mutiny `Uni<Response>` wrappers, manual pagination for listing rooms, and currently permits anonymous access until Iteration 3 security lands.
-    *   **Recommendation:** Keep leveraging `RoomService` and `RoomMapper` inside this controller; when adding new behavior ensure you continue returning `Uni<Response>` with appropriate status codes and let the existing JAX-RS exception mappers surface `RoomNotFoundException`/`IllegalArgumentException` rather than catching them here.
+    *   **Summary:** Provides the five REST endpoints (create, read, update config, delete, and list user rooms) using Mutiny `Uni<Response>` wrappers, `SecurityContextImpl` helpers to resolve user IDs, manual pagination logic for user rooms, and helper methods for privacy-mode parsing plus status-specific error payloads.
+    *   **Recommendation:** Keep delegating business logic to `RoomService` and DTO conversions to `RoomMapper`; rely on the existing helper methods (`resolveOwner`, `requireCurrentUserId`, `ensureRoomOwner`, pagination validation) rather than reimplementing them when expanding behavior or adjusting responses.
 *   **File:** `backend/src/main/java/com/scrumpoker/api/rest/mapper/RoomMapper.java`
-    *   **Summary:** Handles conversions between domain `Room`/`RoomConfig` objects and their DTO counterparts, including JSONB serialization defaults for timer, reveal behavior, and optional deck settings.
-    *   **Recommendation:** Always convert request DTOs via this mapper (e.g., `roomMapper.toConfig(request.config)`) to keep JSON handling consistent and avoid duplicating default configuration logic inside the controller.
+    *   **Summary:** MapStruct-based mapper that injects `ObjectMapper` to handle JSONB conversions, enforces sensible defaults for deck/timer/reveal fields, and converts owner/organization relationships into UUIDs for the DTO.
+    *   **Recommendation:** Always round-trip `RoomConfigDTO` through this mapper (`toConfig`, `toConfigDTO`) to preserve defaulting rules and to avoid duplicating Jackson serialization; letting it set defaults keeps controller code lean.
 *   **File:** `backend/src/main/java/com/scrumpoker/domain/room/RoomService.java`
-    *   **Summary:** Provides transactional room CRUD operations (create, title/config/privacy updates, deletion, owner queries) with tier enforcement through `FeatureGate` and built-in validation for titles, privacy modes, and config payloads.
-    *   **Recommendation:** Delegate all persistence work to this service; use its helper methods (`updateRoomTitle`, `updatePrivacyMode`, `updateRoomConfig`, `findByOwnerId`) rather than mutating entities directly so business validations remain centralized.
-*   **Files:** `backend/src/main/java/com/scrumpoker/api/rest/dto/{CreateRoomRequest,UpdateRoomConfigRequest,RoomDTO}.java`
-    *   **Summary:** DTOs align with the OpenAPI schemas, embed `jakarta.validation` annotations for title limits, and expose privacy/config fields expected by the frontend clients.
-    *   **Recommendation:** Reuse these DTOs (plus `RoomListResponse`) to match schema contracts; if additional fields surface, update DTOs and mapper together to keep serialization symmetrical.
+    *   **Summary:** Houses all transactional room operations with validation (title length, privacy mode, config deck type), tier enforcement via `FeatureGate`, owner assignment, soft deletion, and reactive lookups via Panache.
+    *   **Recommendation:** Use the provided service methods (`createRoom`, `updateRoomTitle`, `updateRoomConfig`, `updatePrivacyMode`, `deleteRoom`, `findByOwnerId`) exactly as-is to ensure invariants (e.g., deck type required, soft delete semantics) remain enforced—do not attempt to mutate entities directly in the controller.
+*   **File:** `api/openapi.yaml`
+    *   **Summary:** Documents the REST contract; for rooms it specifies that `POST /api/v1/rooms` and `GET /api/v1/rooms/{roomId}` allow anonymous access, while config updates, deletion, and listing are secured and must return `RoomDTO`/`RoomListResponse` bodies matching schemas.
+    *   **Recommendation:** Align status codes and body shapes with the spec (201 + `RoomDTO` on creation, 200 on reads/updates, 204 on deletes, paginated payload on list) and honor the documented security posture (Bearer + optional anonymous for certain endpoints) when adjusting annotations.
+*   **Files:** `backend/src/main/java/com/scrumpoker/api/rest/dto/{CreateRoomRequest, UpdateRoomConfigRequest, RoomDTO, RoomListResponse}.java`
+    *   **Summary:** DTOs mirror the OpenAPI schemas, including validation limits for titles and JSON property names expected by the frontend.
+    *   **Recommendation:** Use these DTOs verbatim; if request/response shapes need tweaks, update both DTOs and `RoomMapper` simultaneously to keep API-consumer expectations aligned.
 
 ### Implementation Tips & Notes
-*   **Tip:** Validation errors are already translated through `IllegalArgumentExceptionMapper`/`ValidationExceptionMapper` into `ErrorResponse`, so have the controller return `Uni<Response>` failures by simply letting exceptions propagate or by creating early `ErrorResponse` objects when pre-checks (like pagination bounds) fail.
-*   **Tip:** `RoomService.findByOwnerId(UUID)` returns a `Multi<Room>` that is converted to a `Uni<List<Room>>` via `.collect().asList()` before pagination; maintain this pattern so you can keep using Mutiny's fluent operators when altering pagination logic.
-*   **Note:** Privacy-mode strings arrive from clients in mixed case—normalize with `PrivacyMode.valueOf(request.privacyMode.toUpperCase())` and catch `IllegalArgumentException` to send a `400` with a clear enum list, as shown in the existing controller.
-*   **Note:** When authentication is added later, placeholders marked `TODO` will be enforced; avoid baking owner checks directly into the controller until the security context is wired up to prevent conflicts with Iteration 3 scope.
+*   **Tip:** Let `RoomService` throw `RoomNotFoundException`/`FeatureNotAvailableException`; the registered `ExceptionMapper`s already translate them into the standardized `ErrorResponse`, so the controller can stay focused on happy-path transformations.
+*   **Tip:** `RoomService.findByOwnerId(UUID)` returns a `Multi<Room>`; continue collecting it with `.collect().asList()` before applying pagination so you can reuse the existing manual paging math with proper bounds checks and early `badRequest` responses.
+*   **Tip:** Privacy mode strings should flow through `resolvePrivacyMode` so invalid values trigger a consistent `IllegalArgumentException` and `400` response listing the allowed enum values.
+*   **Note:** Authentication is currently permissive for create/get endpoints (per OpenAPI security array); keep the annotations (`@PermitAll`, `@RolesAllowed("USER")`) consistent so that Iteration 3's JWT filter can enforce them without code churn.
+*   **Note:** Use the builder-style helpers (`badRequest`, `forbiddenResponse`, `unauthorizedException`) when you must short-circuit requests (e.g., pagination bounds) to keep error payloads uniform with the rest of the API.

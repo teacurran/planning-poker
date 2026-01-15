@@ -57,9 +57,23 @@ public class RoomService {
      *         if user's tier is insufficient for privacy mode
      */
     @WithTransaction
-    public Uni<Room> createRoom(String title, PrivacyMode privacyMode, UUID ownerId, RoomConfig config) {
+    public Uni<Room> createRoomWithOwnerId(String title, PrivacyMode privacyMode, UUID ownerId, RoomConfig config) {
         return resolveOwner(ownerId)
             .flatMap(resolvedOwner -> doCreateRoom(title, privacyMode, resolvedOwner, config));
+    }
+
+    /**
+     * Variant of createRoom that accepts the fully loaded User entity.
+     * Retained for backward compatibility with existing service callers and tests.
+     *
+     * @param title The room title
+     * @param privacyMode Requested privacy mode
+     * @param owner Loaded owner entity (nullable for anonymous rooms)
+     * @param config Room configuration
+     * @return Uni emitting the created room
+     */
+    public Uni<Room> createRoom(String title, PrivacyMode privacyMode, User owner, RoomConfig config) {
+        return doCreateRoom(title, privacyMode, owner, config);
     }
 
     private Uni<User> resolveOwner(UUID ownerId) {
