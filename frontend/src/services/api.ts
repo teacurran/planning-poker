@@ -39,7 +39,12 @@ let isRefreshing = false;
  * Queue of pending requests waiting for token refresh to complete.
  * Each item is a promise resolver that will retry the original request.
  */
-let refreshSubscribers: ((token: string) => void)[] = [];
+type RefreshSubscriber = {
+  resolve: (token: string) => void;
+  reject: (error: unknown) => void;
+};
+
+let refreshSubscribers: RefreshSubscriber[] = [];
 
 /**
  * Callback for handling 403 FeatureNotAvailable errors.
@@ -61,8 +66,8 @@ export function registerFeatureNotAvailableHandler(
  * Subscribe a request to the refresh queue.
  * The callback will be invoked when the refresh completes with the new token.
  */
-function subscribeTokenRefresh(callback: (token: string) => void): void {
-  refreshSubscribers.push(callback);
+function subscribeTokenRefresh(subscriber: RefreshSubscriber): void {
+  refreshSubscribers.push(subscriber);
 }
 
 /**
@@ -70,7 +75,16 @@ function subscribeTokenRefresh(callback: (token: string) => void): void {
  * Each queued request will be retried with the new token.
  */
 function onTokenRefreshed(token: string): void {
-  refreshSubscribers.forEach((callback) => callback(token));
+  refreshSubscribers.forEach(({ resolve }) => resolve(token));
+  refreshSubscribers = [];
+}
+
+/**
+ * Notify queued requests that the refresh failed.
+ * Ensures pending promises reject and UI can surface the failure.
+ */
+function onTokenRefreshFailed(error: unknown): void {
+  refreshSubscribers.forEach(({ reject }) => reject(error));
   refreshSubscribers = [];
 }
 
@@ -145,12 +159,17 @@ apiClient.interceptors.response.use(
 
     // If a refresh is already in progress, queue this request
     if (isRefreshing) {
-      return new Promise((resolve) => {
-        subscribeTokenRefresh((token: string) => {
-          if (originalRequest.headers) {
-            originalRequest.headers.Authorization = `Bearer ${token}`;
-          }
-          resolve(apiClient(originalRequest));
+      return new Promise((resolve, reject) => {
+        subscribeTokenRefresh({
+          resolve: (token: string) => {
+            if (originalRequest.headers) {
+              originalRequest.headers.Authorization = `Bearer ${token}`;
+            }
+            resolve(apiClient(originalRequest));
+          },
+          reject: (refreshError: unknown) => {
+            reject(refreshError);
+          },
         });
       });
     }
@@ -165,6 +184,7 @@ apiClient.interceptors.response.use(
         // No refresh token available - clear auth and reject
         useAuthStore.getState().clearAuth();
         isRefreshing = false;
+        onTokenRefreshFailed(new Error('Refresh token missing'));
         return Promise.reject(error);
       }
 
@@ -189,7 +209,7 @@ apiClient.interceptors.response.use(
       // Refresh failed - clear auth and reject all queued requests
       useAuthStore.getState().clearAuth();
       isRefreshing = false;
-      refreshSubscribers = []; // Clear the queue
+      onTokenRefreshFailed(refreshError);
 
       return Promise.reject(refreshError);
     }

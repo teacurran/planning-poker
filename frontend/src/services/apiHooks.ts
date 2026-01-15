@@ -35,6 +35,7 @@ export const queryKeys = {
   },
   rooms: {
     all: ['rooms'] as const,
+    byUserBase: (userId: string) => ['rooms', 'user', userId] as const,
     byUser: (userId: string, page = 0, size = 20) => ['rooms', 'user', userId, page, size] as const,
     detail: (roomId: string) => ['rooms', roomId] as const,
   },
@@ -226,9 +227,11 @@ export function useCreateRoom(
       return response.data;
     },
     onSuccess: async (data) => {
-      // Invalidate rooms list to trigger refetch
+      // Invalidate all cached lists for this user to trigger refetch
       if (user?.userId) {
-        await queryClient.invalidateQueries({ queryKey: queryKeys.rooms.byUser(user.userId) });
+        await queryClient.invalidateQueries({
+          queryKey: queryKeys.rooms.byUserBase(user.userId),
+        });
       }
 
       // Also invalidate the general rooms query key
@@ -292,9 +295,11 @@ export function useDeleteRoom(
       await apiClient.delete(`/rooms/${roomId}`);
     },
     onSuccess: async (_data, roomId) => {
-      // Invalidate rooms list to trigger refetch
+      // Invalidate cached room lists for the user to trigger refetch
       if (user?.userId) {
-        await queryClient.invalidateQueries({ queryKey: queryKeys.rooms.byUser(user.userId) });
+        await queryClient.invalidateQueries({
+          queryKey: queryKeys.rooms.byUserBase(user.userId),
+        });
       }
 
       // Remove deleted room from cache

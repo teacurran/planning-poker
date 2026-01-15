@@ -87,7 +87,7 @@
     "acceptance_criteria": "*   API requests include Authorization header when user authenticated\n        *   Expired access token triggers refresh automatically\n        *   After refresh, original request retries successfully\n        *   If refresh fails (invalid refresh token), user logged out and redirected to login\n        *   React Query hooks return loading/error/data states correctly\n        *   Cache invalidation works (e.g., after room creation, useRooms refetches)",
     "dependencies": [],
     "parallelizable": false,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I3.T7",
