@@ -59,6 +59,11 @@
           "format": "uri",
           "maxLength": 500,
           "description": "Optional avatar URL"
+        },
+        "lastEventId": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Optional last event ID for reconnection event replay (enables server to replay missed events from disconnection window)"
         }
       },
       "additionalProperties": false
@@ -159,6 +164,133 @@
           "type": "string",
           "maxLength": 100,
           "description": "Optional custom status message"
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "RoomTopicUpdatePayload": {
+      "type": "object",
+      "required": ["topicTitle"],
+      "properties": {
+        "topicTitle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "description": "Primary story or topic title"
+        },
+        "topicDescription": {
+          "type": "string",
+          "maxLength": 2000,
+          "description": "Optional Markdown description shown to participants"
+        },
+        "acceptanceCriteria": {
+          "type": "string",
+          "maxLength": 3000,
+          "description": "Optional acceptance criteria text"
+        },
+        "referenceUrl": {
+          "type": "string",
+          "format": "uri",
+          "maxLength": 1000,
+          "description": "Optional URL to issue tracker or documentation"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 30
+          },
+          "maxItems": 5,
+          "uniqueItems": true,
+          "description": "Optional set of tags for filtering and grouping"
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "RoomDeckUpdatePayload": {
+      "type": "object",
+      "required": ["deckType"],
+      "properties": {
+        "deckType": {
+          "$ref": "#/definitions/DeckType",
+          "description": "Deck type identifier (fibonacci, tshirt, etc.)"
+        },
+        "customDeckValues": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 10
+          },
+          "minItems": 1,
+          "maxItems": 20,
+          "uniqueItems": true,
+          "description": "Custom card values when deckType is 'custom'"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "deckType": { "const": "custom" }
+            }
+          },
+          "then": {
+            "required": ["customDeckValues"]
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+
+    "VoteRetractPayload": {
+      "type": "object",
+      "properties": {
+        "reason": {
+          "type": "string",
+          "enum": ["changed_mind", "wrong_card", "switched_role", "other"],
+          "description": "Optional reason for retracting vote"
+        },
+        "comment": {
+          "type": "string",
+          "maxLength": 300,
+          "description": "Free-form context displayed in activity log"
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "ReactionTargetType": {
+      "type": "string",
+      "enum": ["ROOM", "MESSAGE", "ROUND"],
+      "description": "Entity that receives the reaction"
+    },
+
+    "ReactionAddPayload": {
+      "type": "object",
+      "required": ["reaction", "targetType", "targetId"],
+      "properties": {
+        "reaction": {
+          "type": "string",
+          "pattern": "^:[a-z0-9_+\\-]{2,30}:$",
+          "description": "Emoji alias wrapped in colons (e.g., :thumbsup:)"
+        },
+        "targetType": {
+          "$ref": "#/definitions/ReactionTargetType"
+        },
+        "targetId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "description": "Identifier of the message, room, or round receiving the reaction"
+        },
+        "context": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "Optional annotation for accessibility"
         }
       },
       "additionalProperties": false
@@ -564,6 +696,154 @@
       "additionalProperties": false
     },
 
+    "RoomTopicUpdatedBroadcastPayload": {
+      "type": "object",
+      "required": ["topicTitle", "topicVersion", "updatedBy", "updatedAt"],
+      "properties": {
+        "topicTitle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "topicDescription": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "acceptanceCriteria": {
+          "type": "string",
+          "maxLength": 3000
+        },
+        "referenceUrl": {
+          "type": "string",
+          "format": "uri",
+          "maxLength": 1000
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 30
+          },
+          "maxItems": 5,
+          "uniqueItems": true
+        },
+        "topicVersion": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Monotonic version counter for optimistic updates"
+        },
+        "updatedBy": {
+          "type": "string",
+          "description": "Participant ID of the updater"
+        },
+        "updatedDisplayName": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "RoomDeckUpdatedBroadcastPayload": {
+      "type": "object",
+      "required": ["deckType", "changedBy", "changedAt"],
+      "properties": {
+        "deckType": {
+          "$ref": "#/definitions/DeckType"
+        },
+        "customDeckValues": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 10
+          },
+          "maxItems": 20,
+          "uniqueItems": true
+        },
+        "changedBy": {
+          "type": "string",
+          "description": "Participant ID of host who changed deck"
+        },
+        "changedDisplayName": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "changedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "roundResetApplied": {
+          "type": "boolean",
+          "description": "Indicates if server cleared votes because of deck change"
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "VoteRetractedBroadcastPayload": {
+      "type": "object",
+      "required": ["participantId", "roundId", "retractedAt"],
+      "properties": {
+        "participantId": {
+          "type": "string"
+        },
+        "roundId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "retractedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "reason": {
+          "type": "string",
+          "enum": ["changed_mind", "wrong_card", "switched_role", "other"]
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "ReactionAddedBroadcastPayload": {
+      "type": "object",
+      "required": ["reactionId", "participantId", "reaction", "targetType", "targetId", "createdAt"],
+      "properties": {
+        "reactionId": {
+          "type": "string",
+          "description": "Server-generated identifier"
+        },
+        "participantId": {
+          "type": "string"
+        },
+        "reaction": {
+          "type": "string",
+          "pattern": "^:[a-z0-9_+\\-]{2,30}:$"
+        },
+        "targetType": {
+          "$ref": "#/definitions/ReactionTargetType"
+        },
+        "targetId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "context": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": false
+    },
+
     "ErrorPayload": {
       "type": "object",
       "required": ["code", "message", "timestamp"],
@@ -688,6 +968,50 @@
       }
     },
     {
+      "title": "room.topic_update.v1 (Client → Server, Host only)",
+      "description": "Host updates the active estimation topic metadata.",
+      "type": "object",
+      "required": ["type", "requestId", "payload"],
+      "properties": {
+        "type": { "const": "room.topic_update.v1" },
+        "requestId": { "type": "string", "format": "uuid" },
+        "payload": { "$ref": "#/definitions/RoomTopicUpdatePayload" }
+      }
+    },
+    {
+      "title": "room.deck_update.v1 (Client → Server, Host only)",
+      "description": "Host changes the room deck configuration.",
+      "type": "object",
+      "required": ["type", "requestId", "payload"],
+      "properties": {
+        "type": { "const": "room.deck_update.v1" },
+        "requestId": { "type": "string", "format": "uuid" },
+        "payload": { "$ref": "#/definitions/RoomDeckUpdatePayload" }
+      }
+    },
+    {
+      "title": "vote.retract.v1 (Client → Server)",
+      "description": "Participant retracts a previously submitted vote.",
+      "type": "object",
+      "required": ["type", "requestId", "payload"],
+      "properties": {
+        "type": { "const": "vote.retract.v1" },
+        "requestId": { "type": "string", "format": "uuid" },
+        "payload": { "$ref": "#/definitions/VoteRetractPayload" }
+      }
+    },
+    {
+      "title": "reaction.add.v1 (Client → Server)",
+      "description": "Participant adds an emoji reaction to a room artifact.",
+      "type": "object",
+      "required": ["type", "requestId", "payload"],
+      "properties": {
+        "type": { "const": "reaction.add.v1" },
+        "requestId": { "type": "string", "format": "uuid" },
+        "payload": { "$ref": "#/definitions/ReactionAddPayload" }
+      }
+    },
+    {
       "title": "room.state.v1 (Server → Client)",
       "description": "Server sends initial room state snapshot upon connection.",
       "type": "object",
@@ -795,6 +1119,50 @@
         "type": { "const": "presence.update.v1" },
         "requestId": { "type": "string", "format": "uuid" },
         "payload": { "$ref": "#/definitions/PresenceUpdateBroadcastPayload" }
+      }
+    },
+    {
+      "title": "room.topic_updated.v1 (Server → Client broadcast)",
+      "description": "Broadcast that the active topic metadata has changed.",
+      "type": "object",
+      "required": ["type", "requestId", "payload"],
+      "properties": {
+        "type": { "const": "room.topic_updated.v1" },
+        "requestId": { "type": "string", "format": "uuid" },
+        "payload": { "$ref": "#/definitions/RoomTopicUpdatedBroadcastPayload" }
+      }
+    },
+    {
+      "title": "room.deck_updated.v1 (Server → Client broadcast)",
+      "description": "Broadcast that the deck configuration changed.",
+      "type": "object",
+      "required": ["type", "requestId", "payload"],
+      "properties": {
+        "type": { "const": "room.deck_updated.v1" },
+        "requestId": { "type": "string", "format": "uuid" },
+        "payload": { "$ref": "#/definitions/RoomDeckUpdatedBroadcastPayload" }
+      }
+    },
+    {
+      "title": "vote.retracted.v1 (Server → Client broadcast)",
+      "description": "Broadcast that a participant's vote was retracted.",
+      "type": "object",
+      "required": ["type", "requestId", "payload"],
+      "properties": {
+        "type": { "const": "vote.retracted.v1" },
+        "requestId": { "type": "string", "format": "uuid" },
+        "payload": { "$ref": "#/definitions/VoteRetractedBroadcastPayload" }
+      }
+    },
+    {
+      "title": "reaction.added.v1 (Server → Client broadcast)",
+      "description": "Broadcast that a new reaction has been recorded.",
+      "type": "object",
+      "required": ["type", "requestId", "payload"],
+      "properties": {
+        "type": { "const": "reaction.added.v1" },
+        "requestId": { "type": "string", "format": "uuid" },
+        "payload": { "$ref": "#/definitions/ReactionAddedBroadcastPayload" }
       }
     },
     {

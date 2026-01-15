@@ -10,16 +10,16 @@ This is the full specification of the task you must complete.
 
 ```json
 {
-  "task_id": "I2.T1",
+  "task_id": "I2.T2",
   "iteration_id": "I2",
   "iteration_goal": "Implement foundational domain services (Room Service, basic User Service), define REST API contracts (OpenAPI specification), and establish WebSocket protocol specification to enable frontend integration and parallel feature development.",
-  "description": "Create comprehensive OpenAPI 3.1 YAML specification documenting all planned REST API endpoints. Define schemas for DTOs (UserDTO, RoomDTO, SubscriptionDTO, etc.), request bodies, response structures, error codes (400, 401, 403, 404, 500 with standardized error schema). Document endpoints for: user management (`/api/v1/users/*`), room CRUD (`/api/v1/rooms/*`), authentication (`/api/v1/auth/*`), subscriptions (`/api/v1/subscriptions/*`), reporting (`/api/v1/reports/*`), organizations (`/api/v1/organizations/*`). Include security schemes (Bearer JWT, OAuth2 flows). Add descriptions, examples, and validation rules (min/max lengths, patterns, required fields).",
+  "description": "Create comprehensive Markdown document specifying WebSocket communication protocol. Define message envelope structure (`{\"type\": \"message_type.v1\", \"requestId\": \"uuid\", \"payload\": {...}}`). Document all message types: client-to-server (`room.join.v1`, `vote.cast.v1`, `chat.message.v1`, `round.reveal.v1`), server-to-client (`vote.recorded.v1`, `round.revealed.v1`, `room.participant_joined.v1`, `error.v1`). Provide JSON schema for each payload type. Define error codes (4000-4999 for application errors). Specify connection lifecycle (handshake with JWT token, heartbeat protocol, graceful/ungraceful disconnection). Document versioning strategy for message types.",
   "agent_type_hint": "DocumentationAgent",
-  "inputs": "*   REST API endpoint overview from architecture blueprint (Section 4 - API Design)\n        *   Entity models from I1.T4 (for DTO schema definitions)\n        *   Authentication/authorization requirements",
+  "inputs": "*   WebSocket communication patterns from architecture blueprint (Section 4)\n        *   Vote casting sequence diagram\n        *   WebSocket message types overview",
   "target_files": [],
   "input_files": [],
-  "deliverables": "*   OpenAPI 3.1 YAML file with 30+ endpoint definitions\n        *   Complete schema definitions for all DTOs (User, Room, Vote, Subscription, Organization, etc.)\n        *   Error response schema with standardized structure (`{\"error\": \"...\", \"message\": \"...\", \"timestamp\": \"...\"}`)\n        *   Security scheme definitions (JWT Bearer, OAuth2 authorization code flow)\n        *   Request/response examples for critical endpoints\n        *   Validation rules in schemas (string formats, numeric ranges, enum values)",
-  "acceptance_criteria": "*   OpenAPI file validates against OpenAPI 3.1 schema (use Swagger Editor or spectral)\n        *   All CRUD endpoints for core entities documented\n        *   Security requirements specified for protected endpoints\n        *   DTO schemas match database entity structure (field names, types, nullability)\n        *   Error responses follow consistent structure across all endpoints\n        *   File imports successfully into Swagger UI or Redoc for documentation rendering",
+  "deliverables": "*   Markdown specification document (10+ pages)\n        *   Message envelope definition with required/optional fields\n        *   20+ message type definitions with JSON schema payloads\n        *   Error code catalog (4000: Unauthorized, 4001: Room not found, 4002: Invalid vote, etc.)\n        *   Connection lifecycle diagram (PlantUML or Mermaid)\n        *   Versioning policy explanation (backward compatibility guarantees)",
+  "acceptance_criteria": "*   All message types from architecture blueprint documented\n        *   JSON schemas validate sample messages (test with AJV or similar validator)\n        *   Error codes cover common failure scenarios (auth, validation, server error)\n        *   Connection lifecycle clearly explains handshake, heartbeat, reconnection\n        *   Versioning strategy enables protocol evolution without breaking clients\n        *   Document reviewed by backend and frontend leads for completeness",
   "dependencies": [],
   "parallelizable": true,
   "done": false
@@ -32,132 +32,101 @@ This is the full specification of the task you must complete.
 
 The following are the relevant sections from the architecture and plan documents, which I found by analyzing the task description.
 
-### Context: API Design Overview (from docs/api-design.md)
+### Context: Communication Patterns (from .codemachine/artifacts/plan/01_Plan_Overview_and_Setup.md)
 
 ```markdown
-# Planning Poker API Design
+*   **Communication Patterns:**
+    *   **Synchronous REST (Request/Response):** User authentication, room CRUD, subscription management, report triggers
+    *   **Asynchronous WebSocket (Event-Driven):** Real-time vote casting, room state sync, presence updates, chat
+    *   **Asynchronous Job Processing (Fire-and-Forget):** Report exports, email notifications, analytics aggregation
 
-## Overview
+    **Event Flow (WebSocket):**
+    1. Client sends message to WebSocket handler
+    2. Handler validates, persists to PostgreSQL
+    3. Handler publishes event to Redis Pub/Sub channel `room:{roomId}`
+    4. All application nodes subscribed to channel receive event
+    5. Each node broadcasts to locally connected clients in that room
 
-The Planning Poker API is a RESTful JSON API following OpenAPI 3.1 specification. It provides endpoints for user authentication, room management, subscription billing, reporting, and enterprise organization management.
-
-**OpenAPI Specification:** [`/api/openapi.yaml`](../api/openapi.yaml)
-
-**Base URL:** `https://api.planningpoker.example.com`
-
-**API Version:** v1 (all endpoints use `/api/v1/` prefix)
-...
-### Error Handling
-
-All error responses follow a consistent structure:
-
-```
-{
-  "error": "ERROR_CODE",
-  "message": "Human-readable error description",
-  "timestamp": "2025-01-15T10:30:00Z",
-  "details": {}
-}
-```
+    **Relevant Sequence Diagrams:**
+    *   Vote Casting & Round Reveal (Created in Architecture Blueprint reference)
+    *   OAuth2 Authentication Flow (Created in Architecture Blueprint reference)
 ```
 
-### Context: Authentication & User Management (from docs/api-design.md)
+### Context: Asynchronous WebSocket (Event-Driven) (from .codemachine/artifacts/architecture/04_Behavior_and_Communication.md)
 
 ```markdown
-### 1. Authentication (`/api/v1/auth/*`)
+##### Asynchronous WebSocket (Event-Driven)
 
-OAuth2 authentication with Google and Microsoft providers.
+**Use Cases:**
+- Real-time vote casting and vote state updates
+- Room state synchronization (participant joins/leaves, host controls)
+- Card reveal events with animated timing coordination
+- Presence updates (typing indicators, ready states)
+- Chat messages and emoji reactions
 
-**Endpoints:**
-- `POST /api/v1/auth/oauth/callback` - Exchange OAuth code for tokens
-- `POST /api/v1/auth/refresh` - Refresh access token
-- `POST /api/v1/auth/logout` - Revoke refresh token
+**Pattern Characteristics:**
+- Persistent connection maintained for session duration
+- Events broadcast via Redis Pub/Sub to all application nodes
+- Client-side event handlers update local state optimistically, reconcile on server confirmation
+- Heartbeat/ping-pong protocol for connection liveness detection
+- Automatic reconnection with exponential backoff on connection loss
 
-### 2. User Management (`/api/v1/users/*`)
+**Message Flow:**
+1. Client sends WebSocket message: `{"type": "vote.cast.v1", "requestId": "uuid", "payload": {"cardValue": "5"}}`
+2. Server validates, persists vote to PostgreSQL
+3. Server publishes event to Redis channel: `room:{roomId}`
+4. All application nodes subscribed to channel receive event
+5. Each node broadcasts to locally connected clients in that room
+6. Clients receive: `{"type": "vote.recorded.v1", "requestId": "uuid", "payload": {"participantId": "...", "votedAt": "..."}}`
 
-User profile and preference management.
-
-**Endpoints:**
-- `GET /api/v1/users/{userId}` - Get user profile
-- `PUT /api/v1/users/{userId}` - Update profile (display name, avatar)
-- `GET /api/v1/users/{userId}/preferences` - Get preferences
-- `PUT /api/v1/users/{userId}/preferences` - Update preferences (theme, default room config)
-
-**Permissions:** Users can only modify their own profile and preferences.
+**WebSocket Message Types:**
+- `room.join.v1` - Participant joins room
+- `room.leave.v1` - Participant exits room
+- `vote.cast.v1` - Participant submits vote
+- `vote.recorded.v1` - Server confirms vote persisted (broadcast to room)
+- `round.reveal.v1` - Host triggers card reveal
+- `round.revealed.v1` - Server broadcasts reveal with statistics
+- `round.reset.v1` - Host resets round for re-voting
+- `chat.message.v1` - Participant sends chat message
+- `presence.update.v1` - Participant status change (ready, away)
+- `error.v1` - Server-side validation or authorization error
 ```
 
-### Context: Room Management Requirements (from docs/api-design.md)
+### Context: WebSocket Connection Lifecycle (from .codemachine/artifacts/architecture/04_Behavior_and_Communication.md)
 
 ```markdown
-### 3. Room Management (`/api/v1/rooms/*`)
+#### WebSocket Connection Lifecycle
 
-Estimation room lifecycle and configuration.
+**Connection Establishment:**
+1. Client initiates WebSocket handshake: `wss://api.scrumpoker.com/ws/room/{roomId}?token={jwt}`
+2. Server validates JWT token, extracts user/participant identity
+3. Server checks room existence and user authorization (privacy mode enforcement)
+4. Server subscribes connection to Redis Pub/Sub channel: `room:{roomId}`
+5. Server broadcasts `room.participant_joined.v1` event to existing participants
+6. Server sends initial room state snapshot to newly connected client
 
-**Key Concepts:**
-- **Room ID Format**: 6-character nanoid (e.g., `abc123`) for short, shareable URLs
-- **Ownership**: Rooms can be owned by authenticated users or anonymous (ephemeral)
-- **Privacy Modes**: PUBLIC, INVITE_ONLY, ORG_RESTRICTED
+**Heartbeat Protocol:**
+- Client sends `ping` frame every 30 seconds
+- Server responds with `pong` frame
+- Connection terminated if no `ping` received within 60 seconds (2x interval)
 
-**Endpoints:**
-- `POST /api/v1/rooms` - Create room (authenticated or anonymous)
-- `GET /api/v1/rooms/{roomId}` - Get room configuration
-- `PUT /api/v1/rooms/{roomId}/config` - Update room settings (host only)
-- `DELETE /api/v1/rooms/{roomId}` - Soft delete room (owner only)
-- `GET /api/v1/users/{userId}/rooms` - List user's rooms
+**Graceful Disconnection:**
+1. Client sends `room.leave.v1` message before closing connection
+2. Server persists disconnection timestamp in `RoomParticipant` table
+3. Server broadcasts `room.participant_left.v1` to remaining participants
+4. Server unsubscribes from Redis channel if no more local connections to room
 
-**Room Configuration:**
-- Deck type (Fibonacci, T-shirt sizes, Powers of 2, Custom)
-- Timer settings (enabled, duration, reveal behavior)
-- Privacy and participant permissions
-```
+**Ungraceful Disconnection (Network Failure):**
+1. Server detects missing heartbeat, marks connection as stale
+2. Server broadcasts `room.participant_disconnected.v1` with grace period
+3. If client reconnects within 5 minutes, restores session without re-join
+4. If timeout expires, participant marked as left, votes remain valid
 
-### Context: Subscription & Reporting Domains (from docs/api-design.md)
-
-```markdown
-### 4. Subscription & Billing (`/api/v1/subscriptions/*`)
-
-Stripe integration for subscription management.
-
-**Tiers:** Free, Pro, Pro Plus, Enterprise with increasing limits.
-
-**Endpoints:**
-- `GET /api/v1/subscriptions/{userId}` - Get subscription status
-- `POST /api/v1/subscriptions/checkout` - Create Stripe checkout session
-- `POST /api/v1/subscriptions/{subscriptionId}/cancel` - Cancel subscription
-- `POST /api/v1/subscriptions/webhook` - Stripe webhook handler
-- `GET /api/v1/billing/invoices` - List payment history
-
-### 5. Reporting & Analytics (`/api/v1/reports/*`)
-
-Session history, detailed reports, and export jobs with tier restrictions.
-
-**Endpoints:**
-- `GET /api/v1/reports/sessions` - List session history
-- `GET /api/v1/reports/sessions/{sessionId}` - Detailed session report
-- `POST /api/v1/reports/export` - Create export job (CSV/PDF)
-- `GET /api/v1/jobs/{jobId}` - Poll export job status
-```
-
-### Context: Enterprise Organization Requirements (from docs/api-design.md)
-
-```markdown
-### 6. Organization Management (`/api/v1/organizations/*`)
-
-Enterprise SSO workspaces and member management.
-
-**Features (Enterprise Tier Only):**
-- OIDC/SAML2 SSO integration
-- Custom branding (logo, colors)
-- Member role management (ADMIN, MEMBER)
-- Audit log trail
-
-**Endpoints:**
-- `POST /api/v1/organizations` - Create organization
-- `GET /api/v1/organizations/{orgId}` - Get organization settings
-- `PUT /api/v1/organizations/{orgId}/sso` - Configure SSO (ADMIN only)
-- `POST /api/v1/organizations/{orgId}/members` - Invite member (ADMIN only)
-- `DELETE /api/v1/organizations/{orgId}/members/{userId}` - Remove member
-- `GET /api/v1/organizations/{orgId}/audit-logs` - Query audit trail (ADMIN only)
+**Reconnection Strategy (Client-Side):**
+- Detect connection loss via WebSocket `onclose` event
+- Attempt reconnection with exponential backoff: 1s, 2s, 4s, 8s, 16s (max)
+- Include `lastEventId` in reconnection handshake to retrieve missed events
+- Server replays events from Redis or database within 5-minute window
 ```
 
 ---
@@ -167,19 +136,16 @@ Enterprise SSO workspaces and member management.
 The following analysis is based on my direct review of the current codebase. Use these notes and tips to guide your implementation.
 
 ### Relevant Existing Code
-*   **File:** `api/openapi.yaml`
-    *   **Summary:** The repo already contains a comprehensive OpenAPI 3.1 document covering authentication, user, room, subscription, reporting, and organization domains plus shared components (parameters, responses, and DTO-style schemas). It establishes reusable error responses, enums (tiers, privacy modes, roles), pagination contracts, and detailed examples for every endpoint.
-    *   **Recommendation:** When extending or refining the spec, preserve the existing structure: group endpoints by tag, keep verbose `description` fields, link responses to shared components, and update schemas/enum lists in one place to avoid drift with backend DTOs.
-*   **File:** `backend/src/main/java/com/scrumpoker/api/rest/RoomController.java`
-    *   **Summary:** Implements the `/api/v1/rooms` family today, relying on `RoomService` and `RoomMapper`, with annotations documenting expected behavior (permit anonymous creation, `RolesAllowed` for updates/deletes, pagination query params). Comments reference the OpenAPI contract and note upcoming auth enforcement points.
-    *   **Recommendation:** Mirror these real endpoints when documenting path/operation details—reuse request/response DTO names from this controller, and ensure parameter descriptions (roomId format, pagination limits) stay synchronized with controller validations.
-*   **File:** `backend/src/main/java/com/scrumpoker/api/rest/UserController.java`
-    *   **Summary:** Provides the `/api/v1/users/{userId}` and preferences operations with `UserService` + `UserMapper`. It emphasises ownership restrictions, enumerates response codes, and references DTOs already in `api/rest/dto`.
-    *   **Recommendation:** Use the DTO fields defined here (e.g., `UpdateProfileRequest`, `UserPreferenceDTO`) when shaping schemas. Align the OpenAPI descriptions with controller comments so future changes to service expectations require updates in one place.
+*   **File:** `api/websocket-protocol.md`
+    *   **Summary:** Contains a 10+ section specification that already outlines the WebSocket endpoint, envelope structure, detailed client/server message catalogs, payload descriptions, connection lifecycle narrations, error taxonomy, versioning plan, troubleshooting guidance, and appendices linking to related docs. It reads like the deliverable for I2.T2.
+    *   **Recommendation:** Treat this file as the canonical spec—expand or refine it rather than starting from scratch. Ensure new requirements (additional message types, envelope clarifications, diagrams) fit the existing structure: keep headings, tables, and example payloads consistent, and update the “Last Updated” date/version as needed.
+*   **File:** `api/websocket-message-schemas.json`
+    *   **Summary:** Provides JSON Schema definitions for every message payload (join/leave, vote, round lifecycle, chat, presence, errors, room snapshots, heartbeat, reconnection). These schemas document validation rules (required fields, enums, string formats, numeric ranges) referenced by the Markdown spec.
+    *   **Recommendation:** When documenting or introducing message types, cross-reference these schemas. If you add or modify payload attributes in the Markdown file, update the corresponding schema definition to keep tooling (AJV validation, contract tests) in sync and mention schema IDs/linkbacks in the spec.
 
 ### Implementation Tips & Notes
-*   **Tip:** Follow the pattern from the current spec—each path starts with `summary`, `description`, `operationId`, `tags`, and enumerates both success and common error responses referencing `#/components/responses/*`.
-*   **Tip:** Schemas are centralized; if new DTOs/entities emerge, add them under `components.schemas` with clear `required` arrays, max lengths, formats, and sample payloads. Reference them from both requests and responses to avoid duplication.
-*   **Tip:** Maintain security definitions at both global (`security:` block) and per-operation levels. Public endpoints explicitly clear security with `security: []`, while protected operations inherit the top-level Bearer requirement.
-*   **Tip:** Keep validation/ref constraint parity with the backend—match UUID formats, `^[a-z0-9]{6}$` room ID pattern, enum values (e.g., `PrivacyMode`, `SubscriptionTier`), and include pagination parameter definitions from the shared `components.parameters` section.
-*   **Tip:** Before handing off, run `spectral lint api/openapi.yaml` (per docs/api-design.md) or import into Swagger Editor to ensure the YAML remains valid and human-readable.
+*   **Tip:** The Markdown spec already sections “Message Envelope Format”, “Message Types”, “Connection Lifecycle”, “Error Handling”, and “Versioning Strategy”; align your additions with those sections to preserve navigability and automate TOC generation.
+*   **Tip:** The existing message catalog covers the core interactions listed in the architecture blueprint. Verify completeness against the blueprint list (join/leave, vote cast/recorded, round start/reveal/reset, presence, chat, participant join/left/disconnected, error) and document bidirectional flow expectations in each entry.
+*   **Tip:** Error codes currently live in the spec—extend them to cover all 4000-4999 cases with consistent naming, and reference which REST error they map to for troubleshooting.
+*   **Tip:** When describing lifecycle/heartbeat behavior, mirror the enumerated steps from the blueprint (JWT handshake, Redis subscriptions, ping/pong, reconnection with `lastEventId`) and consider embedding a Mermaid or PlantUML diagram, as requested in the deliverables.
+*   **Tip:** Before finalizing, validate the JSON schemas (`api/websocket-message-schemas.json`) with AJV or Spectral to ensure syntax correctness; include a brief note in the spec referencing the validation status so reviewers know the contract is machine-verifiable.

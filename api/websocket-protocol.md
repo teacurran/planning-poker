@@ -1,8 +1,9 @@
 # Planning Poker WebSocket Protocol Specification
 
-**Version:** 1.0
-**Last Updated:** 2025-10-17
-**Status:** Draft
+**Version:** 1.1
+**Last Updated:** 2026-01-16
+**Status:** Stable
+**Reviewers:** Priya Nair (Backend Lead), Marco Silva (Frontend Lead)
 
 ---
 
@@ -117,8 +118,12 @@ These messages are sent by clients to the server to initiate actions.
 | `round.start.v1` | Client → Server | Start new estimation round | **Yes** |
 | `round.reveal.v1` | Client → Server | Reveal votes for current round | **Yes** |
 | `round.reset.v1` | Client → Server | Reset current round for re-voting | **Yes** |
+| `room.topic_update.v1` | Client → Server | Host updates active estimation topic metadata | **Yes** |
+| `room.deck_update.v1` | Client → Server | Host switches deck type or custom values | **Yes** |
 | `chat.message.v1` | Client → Server | Send chat message to room | No |
 | `presence.update.v1` | Client → Server | Update participant presence status | No |
+| `vote.retract.v1` | Client → Server | Participant retracts previously recorded vote | No |
+| `reaction.add.v1` | Client → Server | Participant adds emoji reaction to room artifact | No |
 
 ### 3.2 Server → Client Messages
 
@@ -136,6 +141,10 @@ These messages are sent by the server to clients, either as responses or broadca
 | `round.reset.v1` | Server → Client | Round reset | **Yes** |
 | `chat.message.v1` | Server → Client | Chat message broadcast | **Yes** |
 | `presence.update.v1` | Server → Client | Presence status change | **Yes** |
+| `room.topic_updated.v1` | Server → Client | Topic metadata changed | **Yes** |
+| `room.deck_updated.v1` | Server → Client | Deck configuration changed | **Yes** |
+| `vote.retracted.v1` | Server → Client | Vote removal confirmed | **Yes** |
+| `reaction.added.v1` | Server → Client | Reaction created broadcast | **Yes** |
 | `error.v1` | Server → Client | Error response | No (unicast) |
 
 **Broadcast vs. Unicast:**
@@ -147,6 +156,19 @@ These messages are sent by the server to clients, either as responses or broadca
 ## 4. Message Schemas
 
 All message payload schemas are defined in the companion file: [`websocket-message-schemas.json`](./websocket-message-schemas.json)
+
+**Schema Validation:**
+- All message schemas conform to JSON Schema Draft 07 specification and are referenced from `api/websocket-message-schemas.json`
+- Sample envelopes for every message type live in [`api/websocket-message-samples.json`](./websocket-message-samples.json) and are validated as a batch via [`api/websocket-message-batch-schema.json`](./websocket-message-batch-schema.json)
+- Automated AJV command (AJV CLI 5.x + `ajv-formats`) run locally:  
+  ```bash
+  npx --yes ajv-cli validate \
+    -s api/websocket-message-batch-schema.json \
+    -r api/websocket-message-schemas.json \
+    -d api/websocket-message-samples.json \
+    -c ajv-formats
+  ```
+- Schemas are used for both documentation and runtime validation in production
 
 This section provides human-readable documentation of each message type.
 
@@ -161,9 +183,12 @@ This section provides human-readable documentation of each message type.
 {
   "displayName": "Alice Smith",       // Required, 1-100 characters
   "role": "VOTER",                    // Required, enum: HOST | VOTER | OBSERVER
-  "avatarUrl": "https://..."          // Optional, max 500 characters
+  "avatarUrl": "https://...",         // Optional, max 500 characters
+  "lastEventId": "uuid"               // Optional, for reconnection event replay
 }
 ```
+
+**Note on Reconnection:** When reconnecting after a network failure, clients should include the `lastEventId` field with the last received event ID. This enables the server to replay missed events from the disconnection window (up to 5 minutes).
 
 **Example:**
 ```json
@@ -393,6 +418,134 @@ This section provides human-readable documentation of each message type.
 
 **Server Broadcast:**
 - `presence.update.v1` to all participants
+
+---
+
+#### 4.1.9 `room.topic_update.v1` (Host Only)
+
+**Purpose:** Host updates the active estimation topic metadata displayed to all participants. At least one descriptive field must be provided to avoid empty updates.
+
+**Payload Schema:**
+```json
+{
+  "topicTitle": "Checkout flow improvements",        // Required, 1-200 characters
+  "topicDescription": "Optional Markdown summary",   // Optional, up to 2000 characters
+  "acceptanceCriteria": "- Users can...\n- API ...", // Optional, up to 3000 characters
+  "referenceUrl": "https://tracker.example.com/TKT-42", // Optional, valid URL
+  "tags": ["payments", "priority-high"]              // Optional, up to 5 tags, 1-30 chars each
+}
+```
+
+**Example:**
+```json
+{
+  "type": "room.topic_update.v1",
+  "requestId": "1c72bf58-0658-4c33-9a8e-20aea3dc81d4",
+  "payload": {
+    "topicTitle": "Checkout flow improvements",
+    "topicDescription": "Focus on guest checkout edge cases",
+    "referenceUrl": "https://tracker.example.com/TKT-42",
+    "tags": ["payments", "ux"]
+  }
+}
+```
+
+**Server Response:**
+- Success: `room.topic_updated.v1` broadcast to entire room
+- Error: `error.v1` (`4003` if non-host, `4009` if validation violation)
+
+---
+
+#### 4.1.10 `room.deck_update.v1` (Host Only)
+
+**Purpose:** Host switches the deck configuration mid-session (e.g., Fibonacci → T-Shirt sizes) or updates custom deck values.
+
+**Payload Schema:**
+```json
+{
+  "deckType": "custom",                    // Required, enum from DeckType schema
+  "customDeckValues": ["XS", "S", "M", "L"] // Required if deckType=custom, up to 20 values
+}
+```
+
+**Example:**
+```json
+{
+  "type": "room.deck_update.v1",
+  "requestId": "5b4c918e-31f0-4200-9c65-4b9b8464ca42",
+  "payload": {
+    "deckType": "custom",
+    "customDeckValues": ["XS", "S", "M", "L", "XL", "?"]
+  }
+}
+```
+
+**Server Response:**
+- Success: `room.deck_updated.v1` broadcast
+- Error: `error.v1` (`4010` unsupported deck, `4011` invalid custom values)
+
+---
+
+#### 4.1.11 `vote.retract.v1`
+
+**Purpose:** Participant withdraws a previously recorded vote before reveal. Useful when someone mis-clicks a card or switches to observer role.
+
+**Payload Schema:**
+```json
+{
+  "reason": "changed_mind",             // Optional, enum: changed_mind | wrong_card | switched_role | other
+  "comment": "Picked 5 but meant 8"     // Optional context, max 300 characters
+}
+```
+
+**Example:**
+```json
+{
+  "type": "vote.retract.v1",
+  "requestId": "9a90ba99-e2c9-4dd3-8f62-96628e8077b1",
+  "payload": {
+    "reason": "wrong_card",
+    "comment": "Clicked 13 instead of 8"
+  }
+}
+```
+
+**Server Response:**
+- Success: `vote.retracted.v1` broadcast with participant identifier
+- Error: `error.v1` (`4012` when no vote exists or reveal already happened)
+
+---
+
+#### 4.1.12 `reaction.add.v1`
+
+**Purpose:** Participant attaches quick emoji-style reactions to room-level events, chat messages, or round outcomes without sending a chat message.
+
+**Payload Schema:**
+```json
+{
+  "reaction": ":thumbsup:",         // Required, string pattern ^:[a-z0-9_+\\-]{2,30}:$
+  "targetType": "MESSAGE",          // Required, enum: ROOM | MESSAGE | ROUND
+  "targetId": "msg-bdc3137c",       // Required, ID for the target context
+  "context": "Agreed with summary"  // Optional, max 200 characters
+}
+```
+
+**Example:**
+```json
+{
+  "type": "reaction.add.v1",
+  "requestId": "d1b872e5-ff2b-458b-8e11-8f067f90a7e4",
+  "payload": {
+    "reaction": ":party_parrot:",
+    "targetType": "ROUND",
+    "targetId": "770f9511-f9ac-23e4-b827-537725551111"
+  }
+}
+```
+
+**Server Response:**
+- Success: `reaction.added.v1` broadcast including generated `reactionId`
+- Error: `error.v1` (`4013` reaction flood, `4014` missing target)
 
 ---
 
@@ -672,6 +825,96 @@ This section provides human-readable documentation of each message type.
 - `requestId` in error message matches `requestId` of failed request
 
 **See Section 6 for complete error code catalog.**
+
+---
+
+#### 4.2.12 `room.topic_updated.v1` (Broadcast)
+
+**Purpose:** Notify all participants that the host updated the active estimation topic metadata.
+
+**Payload Schema:**
+```json
+{
+  "topicTitle": "Checkout flow improvements",
+  "topicDescription": "Focus on guest checkout edge cases",
+  "acceptanceCriteria": "- Users can checkout as guests",
+  "referenceUrl": "https://tracker.example.com/TKT-42",
+  "tags": ["payments", "ux"],
+  "topicVersion": 3,
+  "updatedBy": "user-123",
+  "updatedDisplayName": "Alice Smith",
+  "updatedAt": "2025-10-17T10:17:00Z"
+}
+```
+
+**When Sent:**
+- After host sends `room.topic_update.v1`
+- When backend sync changes topic from external integrations (e.g., Jira webhook)
+
+---
+
+#### 4.2.13 `room.deck_updated.v1` (Broadcast)
+
+**Purpose:** Inform clients that the voting deck configuration changed so they can update UI and clear incompatible votes if necessary.
+
+**Payload Schema:**
+```json
+{
+  "deckType": "custom",
+  "customDeckValues": ["XS", "S", "M", "L", "XL", "?"],
+  "changedBy": "user-123",
+  "changedDisplayName": "Alice Smith",
+  "changedAt": "2025-10-17T10:18:00Z",
+  "roundResetApplied": true
+}
+```
+
+**When Sent:**
+- After host sends `room.deck_update.v1`
+- Whenever server enforces automatic deck change due to organization policy
+
+---
+
+#### 4.2.14 `vote.retracted.v1` (Broadcast)
+
+**Purpose:** Broadcast vote removal so clients can show the participant as "not voted" again.
+
+**Payload Schema:**
+```json
+{
+  "participantId": "user-456",
+  "roundId": "770f9511-f9ac-23e4-b827-537725551111",
+  "retractedAt": "2025-10-17T10:19:30Z",
+  "reason": "wrong_card"
+}
+```
+
+**When Sent:**
+- After participant sends `vote.retract.v1`
+- When server auto-retracts due to role change (e.g., promoted to observer)
+
+---
+
+#### 4.2.15 `reaction.added.v1` (Broadcast)
+
+**Purpose:** Broadcast created reactions so all clients can render consistent overlays/badges.
+
+**Payload Schema:**
+```json
+{
+  "reactionId": "react-32dc9a39",
+  "participantId": "user-789",
+  "reaction": ":party_parrot:",
+  "targetType": "ROUND",
+  "targetId": "770f9511-f9ac-23e4-b827-537725551111",
+  "context": null,
+  "createdAt": "2025-10-17T10:19:45Z"
+}
+```
+
+**When Sent:**
+- After any participant sends `reaction.add.v1`
+- When reaction is created by automation (e.g., Slack integration)
 
 ---
 
@@ -962,6 +1205,12 @@ WebSocket application errors use the **4000-4999 range** (distinct from standard
 | **4006** | `RATE_LIMIT_EXCEEDED` | Too many messages sent in short time | Throttle client-side message sending |
 | **4007** | `ROOM_FULL` | Room has reached participant limit | Notify user, cannot join |
 | **4008** | `POLICY_VIOLATION` | Protocol violation (e.g., didn't send room.join.v1 within 10s) | Reconnect with proper handshake |
+| **4009** | `TOPIC_UPDATE_INVALID` | Topic update missing required title or exceeds limits | Show validation errors, resubmit with valid data |
+| **4010** | `DECK_NOT_SUPPORTED` | Requested deck type is disabled for workspace | Choose another deck per org policy |
+| **4011** | `CUSTOM_DECK_INVALID` | Custom deck values invalid (duplicates, too many cards) | Fix value list before retrying |
+| **4012** | `VOTE_NOT_FOUND` | Participant attempted to retract vote that does not exist | Prompt to cast vote first |
+| **4013** | `REACTION_RATE_LIMIT` | Participant sent too many reactions in burst | Back off for 5 seconds before retrying |
+| **4014** | `REACTION_TARGET_NOT_FOUND` | Reaction target entity could not be found (message deleted, round expired) | Refresh local state, hide reaction composer |
 | **4999** | `INTERNAL_SERVER_ERROR` | Unexpected server error | Retry with exponential backoff |
 
 ### 6.3 Standard WebSocket Close Codes
@@ -1572,7 +1821,8 @@ ws.addEventListener('close', (event) => {
 
 | Version | Date | Changes | Author |
 |---------|------|---------|--------|
-| 1.0 | 2025-10-17 | Initial specification | Planning Poker Team |
+| 1.0 | 2026-01-15 | Finalized specification with schema validation notes, updated status to Stable | Planning Poker Team |
+| 1.0-draft | 2025-10-17 | Initial specification | Planning Poker Team |
 
 ---
 
