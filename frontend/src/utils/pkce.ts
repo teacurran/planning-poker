@@ -52,6 +52,7 @@ function base64UrlEncode(array: Uint8Array): string {
  */
 export interface PKCESession {
   codeVerifier: string;
+  codeChallenge: string;
   redirectUri: string;
   provider: 'google' | 'microsoft';
 }

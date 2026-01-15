@@ -28,6 +28,7 @@ const LoginPage: React.FC = () => {
       // Step 3: Store PKCE session data in sessionStorage (needed for callback)
       storePKCESession({
         codeVerifier,
+        codeChallenge,
         redirectUri,
         provider,
       });

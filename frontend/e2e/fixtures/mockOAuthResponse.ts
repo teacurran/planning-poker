@@ -49,6 +49,7 @@ export const mockRefreshedTokenResponse: TokenResponse = {
  */
 export const mockPKCESession: PKCESession = {
   codeVerifier: 'mock-code-verifier-abc123',
+  codeChallenge: 'mock-code-challenge-xyz789',
   redirectUri: 'http://localhost:5173/auth/callback',
   provider: 'google',
 };

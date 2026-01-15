@@ -11,13 +11,14 @@ A real-time Scrum Planning Poker application built with Quarkus Reactive, Hibern
 
 ## Features
 
+- **OAuth2 Authentication**: Secure login with Google and Microsoft accounts
+- **Session Management**: JWT-based authentication with automatic token refresh
+- **Real-time Collaboration**: WebSocket-powered real-time card selection and reveal
 - Create and join planning poker rooms via unique room IDs
-- Real-time card selection and reveal using WebSockets
 - Fibonacci sequence voting values (0, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, ?, ☕)
 - Observer mode for non-voting participants
-- Instant vote updates visible to all participants
 - Statistics display after cards are revealed (average, consensus, distribution)
-- Responsive design with PrimeVue components
+- Responsive design with Tailwind CSS
 
 ## Tech Stack
 
@@ -53,6 +54,8 @@ Edit `.env` and update the following critical values:
 - `POSTGRES_PASSWORD` - PostgreSQL database password
 - `REDIS_PASSWORD` - Redis authentication password
 - `JWT_SECRET` - Must be at least 32 characters (generate with `openssl rand -base64 32`)
+- `VITE_GOOGLE_CLIENT_ID` - Google OAuth2 client ID for frontend authentication
+- `VITE_MICROSOFT_CLIENT_ID` - Microsoft OAuth2 client ID for frontend authentication
 
 #### RSA Key Pair Generation for JWT Signing
 
@@ -84,6 +87,47 @@ kubectl create secret generic jwt-keys \
 # Mount the secret in your deployment and set environment variable
 # JWT_PRIVATE_KEY_LOCATION=/secrets/privateKey.pem
 ```
+
+#### OAuth2 Provider Configuration
+
+The application supports OAuth2 authentication via Google and Microsoft. You'll need to configure OAuth2 clients for both providers.
+
+**Google OAuth2 Setup:**
+
+1. Go to [Google Cloud Console](https://console.cloud.google.com/apis/credentials)
+2. Create a new project or select an existing one
+3. Navigate to **APIs & Services** > **Credentials**
+4. Click **Create Credentials** > **OAuth 2.0 Client ID**
+5. Configure the OAuth consent screen if prompted
+6. Select **Web application** as the application type
+7. Add authorized redirect URIs:
+   - For local development: `http://localhost:8080/auth/callback`
+   - For production: `https://yourdomain.com/auth/callback`
+8. Copy the **Client ID** and update `VITE_GOOGLE_CLIENT_ID` in your `.env` file
+9. Required scopes: `openid`, `email`, `profile` (configured automatically)
+
+**Microsoft OAuth2 Setup:**
+
+1. Go to [Azure Portal](https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps)
+2. Navigate to **Azure Active Directory** > **App registrations**
+3. Click **New registration**
+4. Enter a name for your application
+5. Under **Supported account types**, select "Accounts in any organizational directory and personal Microsoft accounts"
+6. Add redirect URI:
+   - Platform: **Web**
+   - URI: `http://localhost:8080/auth/callback` (for local dev) or `https://yourdomain.com/auth/callback` (for production)
+7. Click **Register**
+8. Copy the **Application (client) ID** and update `VITE_MICROSOFT_CLIENT_ID` in your `.env` file
+9. Navigate to **API permissions** and ensure the following Microsoft Graph permissions are granted:
+   - `openid`
+   - `email`
+   - `profile`
+
+**Important Notes:**
+- The frontend uses **Authorization Code Flow with PKCE**, which doesn't require a client secret in the browser
+- Backend OAuth client credentials (`OIDC_CLIENT_ID` and `OIDC_CLIENT_SECRET`) are separate from frontend credentials and are used for token validation
+- Ensure redirect URIs match exactly (including protocol and trailing slashes) between your OAuth provider configuration and application settings
+- For production, use HTTPS redirect URIs only
 
 ### 2. Start Infrastructure Services
 
@@ -293,27 +337,85 @@ docker-compose down -v
 docker-compose up -d postgres
 ```
 
+## Authentication Flow
+
+The application implements OAuth2 Authorization Code Flow with PKCE for enhanced security:
+
+### OAuth2 Flow Overview
+
+1. **User clicks "Sign in with Google/Microsoft"**
+   - Frontend generates a cryptographically random PKCE code verifier
+   - Computes SHA-256 hash of verifier to create code challenge
+   - Stores verifier in sessionStorage for later use
+   - Redirects user to OAuth provider with code challenge
+
+2. **User authenticates at OAuth provider**
+   - User grants permission to the application
+   - OAuth provider redirects back with authorization code
+
+3. **Frontend exchanges code for tokens**
+   - Callback page extracts authorization code from URL
+   - Retrieves PKCE verifier from sessionStorage
+   - Sends code + verifier to backend `/api/v1/auth/oauth/callback`
+
+4. **Backend validates and issues JWT tokens**
+   - Exchanges code for OAuth provider tokens
+   - Validates ID token signature and claims
+   - Creates or updates user record in database
+   - Issues application JWT access and refresh tokens
+   - Returns tokens and user data to frontend
+
+5. **Frontend stores authentication state**
+   - Stores tokens in localStorage
+   - Updates Zustand auth store with user data
+   - Redirects to dashboard
+
+### Protected Routes
+
+Routes requiring authentication are wrapped with `<PrivateRoute>` component:
+- `/dashboard` - User dashboard
+- `/billing/settings` - Subscription settings
+- `/reports/sessions` - Session history
+- `/org/:orgId/*` - Organization management
+
+Unauthenticated users are automatically redirected to `/login`.
+
+### Token Management
+
+- **Access Token**: JWT with 1-hour expiration, stored in localStorage
+- **Refresh Token**: 30-day expiration, stored in localStorage
+- Tokens are automatically included in API requests via Authorization header
+- Token refresh is handled automatically when access token expires
+
 ## Development
 
 ### Backend Development
 
 The backend uses Quarkus reactive stack. Main packages:
 - `entity` - JPA entities with Panache
-- `resource` - REST endpoints
-- `service` - Business logic
+- `resource` - REST endpoints (including `AuthController`)
+- `service` - Business logic (including `AuthService`, `UserService`)
 - `websocket` - WebSocket endpoints and messages
 - `dto` - Data transfer objects
 
 ### Frontend Development
 
+The frontend is built with React, TypeScript, and Tailwind CSS. Key directories:
+- `frontend/src/pages/` - Page components (LoginPage, OAuthCallbackPage, DashboardPage, etc.)
+- `frontend/src/components/` - Reusable components (PrivateRoute, common UI components)
+- `frontend/src/stores/` - Zustand state management (authStore, roomStore)
+- `frontend/src/hooks/` - Custom React hooks (useAuth, useWebSocket)
+- `frontend/src/utils/` - Utility functions (PKCE implementation)
+- `frontend/src/types/` - TypeScript type definitions
+
 For frontend-only development with hot reload:
 
 ```bash
-cd src/main/webui
+cd frontend
 npm run dev
 ```
 
-This will start Vite dev server on http://localhost:3000 with proxy to backend.
+This will start Vite dev server on http://localhost:5173 with proxy to backend at http://localhost:8080.
 
 ### Database Migrations
 
