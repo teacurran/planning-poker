@@ -10,16 +10,16 @@ This is the full specification of the task you must complete.
 
 ```json
 {
-  "task_id": "I3.T6",
+  "task_id": "I3.T7",
   "iteration_id": "I3",
   "iteration_goal": "Implement OAuth2 authentication (Google, Microsoft), JWT token generation/validation, user registration/login flows, and frontend authentication UI to enable secured access to the application.",
-  "description": "Create API client wrapper using React Query integrating authentication. Configure Axios instance with base URL, request interceptor to add `Authorization: Bearer <token>` header from authStore, response interceptor to handle 401 errors (refresh token or logout). Implement token refresh logic: on 401, call `/api/v1/auth/refresh`, update tokens in store, retry original request. Create React Query hooks for common API calls: `useUser(userId)`, `useRooms()`, `useRoomById(roomId)`. Handle loading and error states.",
+  "description": "Implement `DashboardPage` component displaying user profile, list of owned rooms, recent session history, and quick actions (create new room, view preferences). Use `useUser` and `useRooms` hooks to fetch data. Display loading skeleton while fetching, error message on failure. Show user avatar, display name, email. List rooms in card grid with room title, privacy mode badge, last active timestamp, \"Open Room\" button. Add \"Create New Room\" button navigating to room creation form. Style with Tailwind CSS, responsive for mobile/tablet/desktop.",
   "agent_type_hint": "FrontendAgent",
-  "inputs": "*   OpenAPI spec for endpoint definitions\n        *   React Query patterns\n        *   Token refresh flow requirements",
+  "inputs": "*   Dashboard requirements from product spec\n        *   API hooks from I3.T6\n        *   Design system (Tailwind, Headless UI)",
   "target_files": [],
   "input_files": [],
-  "deliverables": "*   Axios instance configured with baseURL, timeout\n        *   Request interceptor adding Authorization header from authStore\n        *   Response interceptor detecting 401, triggering token refresh\n        *   Token refresh logic: call /refresh API, update authStore, retry request\n        *   React Query hooks: useUser, useRooms, useRoomById\n        *   Error handling: network errors, 500 server errors",
-  "acceptance_criteria": "*   API requests include Authorization header when user authenticated\n        *   Expired access token triggers refresh automatically\n        *   After refresh, original request retries successfully\n        *   If refresh fails (invalid refresh token), user logged out and redirected to login\n        *   React Query hooks return loading/error/data states correctly\n        *   Cache invalidation works (e.g., after room creation, useRooms refetches)",
+  "deliverables": "*   DashboardPage with user profile section (avatar, name, email, tier badge)\n        *   Room list grid (responsive, 1 col mobile, 2 col tablet, 3 col desktop)\n        *   Room card component showing title, privacy mode, last active date\n        *   Create room button with prominent styling\n        *   Loading skeleton using Tailwind animate-pulse\n        *   Error state UI (retry button, error message)",
+  "acceptance_criteria": "*   Dashboard loads user data from API on mount\n        *   User profile displays correct information (avatar, name, subscription tier)\n        *   Room list shows user's owned rooms from API\n        *   Clicking room card navigates to /room/{roomId}\n        *   Create room button navigates to /rooms/new\n        *   Loading state displayed while fetching data\n        *   Error state shows message if API call fails\n        *   Responsive layout works on mobile, tablet, desktop",
   "dependencies": [],
   "parallelizable": false,
   "done": false
@@ -31,6 +31,45 @@ This is the full specification of the task you must complete.
 ## 2. Architectural & Planning Context
 
 The following are the relevant sections from the architecture and plan documents, which I found by analyzing the task description.
+
+### Context: Task 3.7 – Create User Dashboard Page (Frontend) (from .codemachine/artifacts/plan/02_Iteration_I3.md)
+
+```markdown
+*   **Task 3.7: Create User Dashboard Page (Frontend)**
+    *   **Task ID:** `I3.T7`
+    *   **Description:** Implement `DashboardPage` component displaying user profile, list of owned rooms, recent session history, and quick actions (create new room, view preferences). Use `useUser` and `useRooms` hooks to fetch data. Display loading skeleton while fetching, error message on failure. Show user avatar, display name, email. List rooms in card grid with room title, privacy mode badge, last active timestamp, "Open Room" button. Add "Create New Room" button navigating to room creation form. Style with Tailwind CSS, responsive for mobile/tablet/desktop.
+    *   **Agent Type Hint:** `FrontendAgent`
+    *   **Inputs:**
+        *   Dashboard requirements from product spec
+        *   API hooks from I3.T6
+        *   Design system (Tailwind, Headless UI)
+    *   **Input Files:**
+        *   `frontend/src/services/apiHooks.ts`
+        *   `frontend/src/stores/authStore.ts`
+    *   **Target Files:**
+        *   `frontend/src/pages/DashboardPage.tsx`
+        *   `frontend/src/components/dashboard/UserProfileCard.tsx`
+        *   `frontend/src/components/dashboard/RoomListCard.tsx`
+        *   `frontend/src/components/dashboard/CreateRoomButton.tsx`
+    *   **Deliverables:**
+        *   DashboardPage with user profile section (avatar, name, email, tier badge)
+        *   Room list grid (responsive, 1 col mobile, 2 col tablet, 3 col desktop)
+        *   Room card component showing title, privacy mode, last active date
+        *   Create room button with prominent styling
+        *   Loading skeleton using Tailwind animate-pulse
+        *   Error state UI (retry button, error message)
+    *   **Acceptance Criteria:**
+        *   Dashboard loads user data from API on mount
+        *   User profile displays correct information (avatar, name, subscription tier)
+        *   Room list shows user's owned rooms from API
+        *   Clicking room card navigates to /room/{roomId}
+        *   Create room button navigates to /rooms/new
+        *   Loading state displayed while fetching data
+        *   Error state shows message if API call fails
+        *   Responsive layout works on mobile, tablet, desktop
+    *   **Dependencies:** [I3.T6]
+    *   **Parallelizable:** No (depends on API client hooks)
+```
 
 ### Context: Task 3.6 – Implement Frontend API Client with Authentication (from .codemachine/artifacts/plan/02_Iteration_I3.md)
 
@@ -68,59 +107,47 @@ The following are the relevant sections from the architecture and plan documents
     *   **Parallelizable:** No (depends on authStore)
 ```
 
-### Context: API Style (from .codemachine/artifacts/architecture/04_Behavior_and_Communication.md)
+### Context: REST API Endpoints Overview (from .codemachine/artifacts/architecture/04_Behavior_and_Communication.md)
 
 ```markdown
-#### API Style
+#### REST API Endpoints Overview
 
-**Primary API Style:** **RESTful JSON API (OpenAPI 3.1 Specification)**
+**Authentication & User Management:**
+- `POST /api/v1/auth/oauth/callback` - Exchange OAuth2 code for JWT tokens
+- `POST /api/v1/auth/refresh` - Refresh expired access token
+- `POST /api/v1/auth/logout` - Revoke refresh token
+- `GET /api/v1/users/{userId}` - Retrieve user profile
+- `PUT /api/v1/users/{userId}` - Update profile (display name, avatar)
+- `GET /api/v1/users/{userId}/preferences` - Get user preferences
+- `PUT /api/v1/users/{userId}/preferences` - Update default room settings, theme
 
-**Rationale:**
-- **Simplicity & Familiarity:** REST over HTTPS provides a well-understood contract for CRUD operations on resources (users, rooms, subscriptions)
-- **Tooling Ecosystem:** OpenAPI specification enables automatic client SDK generation (TypeScript for React frontend), API documentation (Swagger UI), and contract testing
-- **Caching Support:** HTTP semantics (ETags, Cache-Control headers) enable browser and CDN caching for read-heavy endpoints (room configurations, user profiles)
-- **Versioning Strategy:** URL-based versioning (`/api/v1/`) for backward compatibility during iterative releases
+**Room Management:**
+- `POST /api/v1/rooms` - Create new room (authenticated or anonymous)
+- `GET /api/v1/rooms/{roomId}` - Get room configuration and current state
+- `PUT /api/v1/rooms/{roomId}/config` - Update room settings (host only)
+- `DELETE /api/v1/rooms/{roomId}` - Delete room (owner only)
+- `GET /api/v1/users/{userId}/rooms` - List user's owned rooms
 
-**WebSocket Protocol:** **Custom JSON-RPC Style Over WebSocket**
+**Subscription & Billing:**
+- `GET /api/v1/subscriptions/{userId}` - Get current subscription status
+- `POST /api/v1/subscriptions/checkout` - Create Stripe checkout session for upgrade
+- `POST /api/v1/subscriptions/{subscriptionId}/cancel` - Cancel subscription (end of period)
+- `POST /api/v1/subscriptions/webhook` - Stripe webhook endpoint (signature verification)
+- `GET /api/v1/billing/invoices` - List payment history
 
-**Rationale:**
-- **Real-Time Bidirectional Communication:** WebSocket connections maintained for duration of estimation session, enabling sub-100ms latency for vote events and reveals
-- **Message Format:** JSON envelopes with `type`, `requestId`, and `payload` fields for request/response correlation
-- **Versioned Message Types:** Each message type (e.g., `vote.cast.v1`, `room.reveal.v1`) versioned independently for protocol evolution
-- **Fallback Strategy:** Graceful degradation to HTTP long-polling for environments with WebSocket restrictions (corporate proxies)
+**Reporting & Analytics:**
+- `GET /api/v1/reports/sessions` - List session history (tier-gated pagination, filters)
+- `GET /api/v1/reports/sessions/{sessionId}` - Detailed session report (tier-gated round detail)
+- `POST /api/v1/reports/export` - Generate export job (CSV/PDF), returns job ID
+- `GET /api/v1/jobs/{jobId}` - Poll export job status, retrieve download URL
 
-**Alternative Considered:**
-- **GraphQL:** Rejected due to complexity overhead for small team and straightforward data model. GraphQL subscription complexity for WebSocket integration not justified by query flexibility benefits.
-- **gRPC:** Rejected due to browser support limitations (requires gRPC-Web proxy) and team unfamiliarity. Better suited for backend-to-backend microservice communication.
-
----
-```
-
-### Context: Authentication Mechanisms (from .codemachine/artifacts/architecture/05_Operational_Architecture.md)
-
-```markdown
-##### Authentication Mechanisms
-
-**OAuth2 Social Login (Free/Pro Tiers):**
-- **Providers:** Google OAuth2, Microsoft Identity Platform
-- **Flow:** Authorization Code Flow with PKCE (Proof Key for Code Exchange) for browser-based clients
-- **Implementation:** Quarkus OIDC extension handling token exchange and validation
-- **Token Storage:** JWT access tokens (1-hour expiration) in browser `localStorage`, refresh tokens (30-day expiration) in `httpOnly` secure cookies
-- **User Provisioning:** Automatic user creation on first login with `oauth_provider` and `oauth_subject` as unique identifiers
-- **Profile Sync:** Email, display name, and avatar URL synced from OAuth provider on each login
-
-**Enterprise SSO (Enterprise Tier):**
-- **Protocols:** OIDC (OpenID Connect) and SAML2 support via Quarkus Security extensions
-- **Configuration:** Per-organization SSO settings stored in `Organization.sso_config` JSONB field (IdP endpoint, certificate, attribute mapping)
-- **Domain Enforcement:** Email domain verification ensures users with `@company.com` email automatically join organization workspace
-- **Just-In-Time (JIT) Provisioning:** User accounts created on first SSO login with organization membership pre-assigned
-- **Session Management:** SSO sessions synchronized with IdP via backchannel logout or session validation
-
-**Anonymous Play:**
-- **Identifier:** Client-generated UUID stored in browser `sessionStorage` for session continuity
-- **Room Association:** Anonymous participants linked to room via `RoomParticipant.anonymous_id`
-- **Feature Restrictions:** No session history access, no saved preferences, no administrative capabilities
-- **Data Lifecycle:** Anonymous session data purged 24 hours after room inactivity
+**Organization Management (Enterprise):**
+- `POST /api/v1/organizations` - Create organization workspace
+- `GET /api/v1/organizations/{orgId}` - Get org settings
+- `PUT /api/v1/organizations/{orgId}/sso` - Configure OIDC/SAML2 settings
+- `POST /api/v1/organizations/{orgId}/members` - Invite member
+- `DELETE /api/v1/organizations/{orgId}/members/{userId}` - Remove member
+- `GET /api/v1/organizations/{orgId}/audit-logs` - Query audit trail
 ```
 
 ---
@@ -130,22 +157,22 @@ The following are the relevant sections from the architecture and plan documents
 The following analysis is based on my direct review of the current codebase. Use these notes and tips to guide your implementation.
 
 ### Relevant Existing Code
-*   **File:** `frontend/src/services/api.ts`
-    *   **Summary:** Configures the shared Axios instance with the API base URL, JSON headers, and a 10s timeout, injects the bearer token from `useAuthStore`, handles a feature-gate specific 403 hook, and owns the refresh queue that serializes `/auth/refresh` calls, updates the store, and retries failed requests.
-    *   **Recommendation:** Reuse this client for every authenticated HTTP call so interceptors remain centralized. When adding new services, never bypass `apiClient`—it already raises the Upgrade modal via `registerFeatureNotAvailableHandler` and gracefully clears auth on refresh failure.
-*   **File:** `frontend/src/services/authApi.ts`
-    *   **Summary:** Provides the stand-alone Axios instance reserved for auth flows, specifically `refreshAccessToken` (POST `/auth/refresh`) and `logout`, so that those calls are not intercepted and cannot loop endlessly.
-    *   **Recommendation:** Always import `refreshAccessToken` from here when touching the response interceptor or future auth utilities. If you add more auth-only calls, keep them in this module to avoid polluting the standard client.
-*   **File:** `frontend/src/services/apiHooks.ts`
-    *   **Summary:** Supplies the React Query integration points, including the canonical `queryKeys`, `useUser`, `useRooms`, `useRoomById`, and several room mutations that invalidate caches and surface typed errors via `getErrorMessage`.
-    *   **Recommendation:** Follow the existing query key factories when introducing new hooks so invalidation stays consistent. Remember to scope hooks like `useRooms` to the authenticated user ID (pulled from `useAuthStore`) and set meaningful `staleTime` values per endpoint volatility.
-*   **File:** `frontend/src/stores/authStore.ts`
-    *   **Summary:** Zustand store that hydrates from `localStorage`, tracks `{user, accessToken, refreshToken, isAuthenticated}`, and offers `setAuth`, `clearAuth`, and `loadAuthFromStorage` helpers with built-in persistence/cleanup logic.
-    *   **Recommendation:** Whenever you receive a `TokenResponse`, call `setAuth` rather than writing to storage manually. Use `clearAuth` after logout/refresh failure so state, storage, and derived boolean stay in sync.
+*   **File:** `frontend/src/pages/DashboardPage.tsx:1`
+    *   **Summary:** Fully implements the Dashboard container: pulls the authenticated ID from `useAuthStore`, fetches profile/rooms through `useUser` and `useRooms`, and renders three UI states (skeleton, retryable error, data) with Tailwind styling, responsive grid breakpoints, and navigation handlers for room cards plus `/rooms/new` CTA.
+    *   **Recommendation:** Keep all data-fetching logic centralized here and continue delegating presentation to dedicated components so you can reuse them later. When extending functionality (e.g., recent sessions), follow the existing pattern of deriving combined loading/error state before rendering.
+*   **File:** `frontend/src/components/dashboard/UserProfileCard.tsx:1`
+    *   **Summary:** Shows the avatar, display name, email, and subscription badge using helpers like `getTierBadgeClasses`; gracefully falls back to initials if the avatar fails to load.
+    *   **Recommendation:** Pass the exact `UserDTO` from `useUser` and avoid duplicating tier-formatting logic elsewhere—if you need more profile actions, add them to this component rather than bloating the page container.
+*   **File:** `frontend/src/components/dashboard/RoomListCard.tsx:1`
+    *   **Summary:** Presents each room’s title, privacy badge, relative `lastActiveAt`, and an `Open Room` CTA while providing keyboard accessibility; `CreateRoomButton.tsx:1` complements it with a reusable CTA that already wires up router navigation.
+    *   **Recommendation:** Reuse these building blocks when adjusting layout; if you need new metadata (e.g., participant counts), add props here so every dashboard section stays consistent and testable.
+*   **File:** `frontend/src/services/apiHooks.ts:1`
+    *   **Summary:** Defines the canonical React Query hooks (`useUser`, `useRooms`, `useRoomById`) and query-key factories, automatically scoping room queries to the logged-in user (via `useAuthStore`) and setting sensible `staleTime` values.
+    *   **Recommendation:** Any new dashboard data should use these hooks (or extend this module) instead of hitting `apiClient` directly. Stick to the provided query keys so cache invalidation and pagination (page/size params) work uniformly.
 
 ### Implementation Tips & Notes
-*   **Tip:** `apiClient` already exposes `getErrorMessage` and the feature gate handler; wire UI-level upgrade prompts by calling `registerFeatureNotAvailableHandler` once in your app shell rather than sprinkling modal logic inside each hook.
-*   **Tip:** Refresh queuing relies on `_retry` flagging per request—if you manually trigger retries (e.g., via React Query `retry`), be sure they don’t re-add `_retry` or you may skip the refresh flow entirely.
-*   **Tip:** React Query keys defined in `queryKeys` should be reused across components and mutations so cache invalidation functions (`invalidateQueries`, `setQueryData`, `removeQueries`) keep working without duplicated strings.
-*   **Note:** `refreshAccessToken` expects the raw refresh token string and returns the full `TokenResponse` (including the newly rotated refresh token). Always propagate the entire response to `setAuth` so old tokens don’t linger in storage.
-*   **Note:** Error surfaces in hooks currently throw `Error` objects (rather than Axios responses). Wrap network-level issues using `getErrorMessage(error)` before logging or alerting so downstream UI gets consistent strings.
+*   **Tip:** `useRooms` throws if no authenticated user is present; always guard the hook with the ID from `useAuthStore` (as seen in `DashboardPage`) before invoking downstream logic.
+*   **Tip:** For loading skeletons, reuse the Tailwind `animate-pulse` patterns already in `DashboardPage.tsx:36` so visual behavior stays consistent between profile and list sections.
+*   **Note:** `roomsData` exposes pagination info (`page`, `totalPages`, `totalElements`); if you introduce paging controls, feed those values directly rather than recomputing counts.
+*   **Note:** When displaying times, `RoomListCard.tsx:38` already uses `date-fns`’ `formatDistanceToNow`; match that utility for any new “recent activity” badges to keep locale/relative phrasing uniform.
+*   **Warning:** `useRooms`’ query key includes `(userId, page, size)`—if you add filters (e.g., sort order), they must also be part of the key to prevent cache collisions and stale data.

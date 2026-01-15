@@ -19,6 +19,7 @@ import { apiClient, getErrorMessage } from './api';
 import { useAuthStore } from '@/stores/authStore';
 import type { UserDTO } from '@/types/auth';
 import type { RoomDTO, RoomListResponse, CreateRoomRequest } from '@/types/room';
+import type { UserPreferenceDTO } from '@/types/preferences';
 
 // ============================================
 // QUERY KEY FACTORIES
@@ -32,6 +33,7 @@ export const queryKeys = {
   users: {
     all: ['users'] as const,
     detail: (userId: string) => ['users', userId] as const,
+    preferences: (userId: string) => ['users', userId, 'preferences'] as const,
   },
   rooms: {
     all: ['rooms'] as const,
@@ -76,6 +78,29 @@ export function useUser(
     },
     enabled: !!userId,
     staleTime: 5 * 60 * 1000, // 5 minutes
+    ...options,
+  });
+}
+
+/**
+ * Fetch user preference settings by user ID.
+ *
+ * @param userId - The user ID to fetch preferences for
+ * @param options - Additional React Query options
+ * @returns React Query result with preference data, loading state, and error
+ */
+export function useUserPreferences(
+  userId: string,
+  options?: Omit<UseQueryOptions<UserPreferenceDTO, Error>, 'queryKey' | 'queryFn'>
+) {
+  return useQuery<UserPreferenceDTO, Error>({
+    queryKey: queryKeys.users.preferences(userId),
+    queryFn: async () => {
+      const response = await apiClient.get<UserPreferenceDTO>(`/users/${userId}/preferences`);
+      return response.data;
+    },
+    enabled: !!userId,
+    staleTime: 5 * 60 * 1000,
     ...options,
   });
 }

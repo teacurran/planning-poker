@@ -102,7 +102,7 @@
     "acceptance_criteria": "*   Dashboard loads user data from API on mount\n        *   User profile displays correct information (avatar, name, subscription tier)\n        *   Room list shows user's owned rooms from API\n        *   Clicking room card navigates to /room/{roomId}\n        *   Create room button navigates to /rooms/new\n        *   Loading state displayed while fetching data\n        *   Error state shows message if API call fails\n        *   Responsive layout works on mobile, tablet, desktop",
     "dependencies": [],
     "parallelizable": false,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I3.T8",
@@ -117,6 +117,6 @@
     "acceptance_criteria": "*   `npm run test:e2e` executes Playwright tests successfully\n        *   OAuth login test completes without real OAuth provider (mocked)\n        *   Dashboard displays after successful authentication\n        *   Logout test clears tokens and redirects correctly\n        *   Unauthorized access test verifies PrivateRoute behavior\n        *   Tests run in CI pipeline (headless mode)",
     "dependencies": [],
     "parallelizable": false,
-    "done": false
+    "done": true
   }
 ]
