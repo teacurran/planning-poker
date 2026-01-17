@@ -9,10 +9,11 @@ import com.scrumpoker.api.rest.dto.SubscriptionDTO;
 import com.scrumpoker.api.rest.mapper.PaymentHistoryMapper;
 import com.scrumpoker.api.rest.mapper.SubscriptionMapper;
 import com.scrumpoker.domain.billing.BillingService;
-import com.scrumpoker.domain.billing.EntityType;
+import com.scrumpoker.integration.stripe.CheckoutSessionResult;
 import com.scrumpoker.integration.stripe.StripeAdapter;
 import com.scrumpoker.repository.PaymentHistoryRepository;
 import com.scrumpoker.repository.SubscriptionRepository;
+import com.scrumpoker.security.SecurityContextImpl;
 import io.smallrye.mutiny.Uni;
 import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
@@ -25,6 +26,7 @@ import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.QueryParam;
+import jakarta.ws.rs.WebApplicationException;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import org.eclipse.microprofile.openapi.annotations.Operation;
@@ -33,6 +35,7 @@ import org.eclipse.microprofile.openapi.annotations.media.Schema;
 import org.eclipse.microprofile.openapi.annotations.parameters.Parameter;
 import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
 import org.eclipse.microprofile.openapi.annotations.tags.Tag;
+import org.jboss.logging.Logger;
 
 import java.util.List;
 import java.util.UUID;
@@ -40,9 +43,23 @@ import java.util.stream.Collectors;
 
 /**
  * REST controller for subscription and billing management operations.
- * Provides endpoints for retrieving subscriptions, creating checkout sessions,
- * canceling subscriptions, and viewing payment history.
- * Implements OpenAPI specification from I2.T1.
+ * <p>
+ * Provides endpoints for:
+ * - Retrieving current subscription status
+ * - Creating Stripe checkout sessions for subscription upgrades
+ * - Canceling subscriptions (soft cancel at period end)
+ * - Listing payment history/invoices
+ * </p>
+ * <p>
+ * Security: All endpoints require JWT authentication. Users can only access
+ * their own subscription data and payment history (owner-only enforcement).
+ * </p>
+ * <p>
+ * This controller integrates with:
+ * - BillingService for subscription lifecycle management
+ * - StripeAdapter for payment processing and checkout sessions
+ * - PaymentHistoryRepository for invoice queries
+ * </p>
  */
 @Path("/api/v1")
 @Produces(MediaType.APPLICATION_JSON)
@@ -50,6 +67,10 @@ import java.util.stream.Collectors;
 @Tag(name = "Subscriptions",
      description = "Subscription and billing management endpoints")
 public class SubscriptionController {
+
+    /** Logger for subscription controller operations. */
+    private static final Logger LOG =
+        Logger.getLogger(SubscriptionController.class);
 
     /** Maximum page size for invoice list pagination. */
     private static final int MAX_PAGE_SIZE = 100;
@@ -78,15 +99,32 @@ public class SubscriptionController {
     @Inject
     private PaymentHistoryMapper paymentHistoryMapper;
 
+    /** Security context for authentication and authorization. */
+    @Inject
+    private SecurityContextImpl securityContext;
+
     /**
-     * GET /api/v1/subscriptions/{userId} - Get current subscription.
-     * Security: Requires authentication (enforced in Iteration 3).
+     * GET /api/v1/subscriptions/{userId} - Get current subscription status.
+     * <p>
+     * Returns the user's current subscription tier, billing status, and
+     * feature limits. For FREE tier users (no subscription record), returns
+     * a synthetic SubscriptionDTO with FREE tier defaults.
+     * </p>
+     * <p>
+     * Authorization: Users can only access their own subscription.
+     * Attempting to access another user's subscription returns 403 Forbidden.
+     * </p>
      *
-     * @param userId The user UUID
-     * @return Response containing SubscriptionDTO or 404 Not Found
+     * @param userIdString User ID path parameter (UUID format)
+     * @return 200 OK with SubscriptionDTO
+     * @throws WebApplicationException 400 Bad Request if UUID invalid,
+     *     401 Unauthorized if not authenticated,
+     *     403 Forbidden if accessing other user's data,
+     *     500 Internal Server Error on failure
      */
     @GET
     @Path("/subscriptions/{userId}")
+    @RolesAllowed("USER")
     @Operation(summary = "Get current subscription status",
         description = "Returns current subscription tier, billing "
             + "status, and feature limits.")
@@ -94,6 +132,10 @@ public class SubscriptionController {
         description = "Subscription retrieved",
         content = @Content(
             schema = @Schema(implementation = SubscriptionDTO.class)))
+    @APIResponse(responseCode = "400",
+        description = "Invalid UUID format",
+        content = @Content(
+            schema = @Schema(implementation = ErrorResponse.class)))
     @APIResponse(responseCode = "401",
         description = "Unauthorized",
         content = @Content(
@@ -113,33 +155,89 @@ public class SubscriptionController {
             schema = @Schema(implementation = ErrorResponse.class)))
     public Uni<Response> getSubscription(
             @Parameter(description = "User UUID", required = true)
-            @PathParam("userId") final UUID userId) {
+            @PathParam("userId") final String userIdString) {
 
-        // CHECKSTYLE:OFF TodoComment - Auth implementation deferred to I3
-        // TODO: Add authentication check (Iteration 3)
-        // TODO: Verify user can only access own subscription (403)
-        // CHECKSTYLE:ON TodoComment
+        UUID currentUserId = requireCurrentUserId();
 
-        return billingService.getActiveSubscription(userId)
+        // Parse and validate userId
+        UUID requestedUserId;
+        try {
+            requestedUserId = UUID.fromString(userIdString);
+        } catch (IllegalArgumentException e) {
+            LOG.warnf("Invalid UUID format for userId: %s", userIdString);
+            return Uni.createFrom().item(
+                badRequest("Invalid UUID format for userId"));
+        }
+
+        // Authorization check: user can only access own subscription
+        if (!requestedUserId.equals(currentUserId)) {
+            LOG.warnf(
+                "User %s attempted to access subscription for user %s",
+                currentUserId,
+                requestedUserId
+            );
+            return Uni.createFrom().item(
+                forbiddenResponse("User can only access own subscription"));
+        }
+
+        LOG.infof(
+            "GET /subscriptions/%s - requested by user %s",
+            requestedUserId,
+            currentUserId
+        );
+
+        // Fetch active subscription
+        return billingService.getActiveSubscription(requestedUserId)
             .onItem().transform(subscription -> {
                 SubscriptionDTO dto;
                 if (subscription == null) {
-                    // User is on FREE tier (no subscription record)
-                    dto = subscriptionMapper.createFreeTierDTO(userId);
+                    // FREE tier user (no subscription record)
+                    LOG.debugf(
+                        "User %s has no subscription, returning FREE tier DTO",
+                        requestedUserId
+                    );
+                    dto = subscriptionMapper.createFreeTierDTO(requestedUserId);
                 } else {
+                    // Paid tier user (subscription exists)
+                    LOG.debugf(
+                        "User %s has subscription %s (tier: %s)",
+                        requestedUserId,
+                        subscription.subscriptionId,
+                        subscription.tier
+                    );
                     dto = subscriptionMapper.toDTO(subscription);
                 }
                 return Response.ok(dto).build();
-            });
-        // UserNotFoundException is handled by UserNotFoundExceptionMapper
+            })
+            .onFailure().invoke(throwable ->
+                LOG.errorf(throwable,
+                    "Failed to fetch subscription for user %s",
+                    requestedUserId)
+            );
     }
 
     /**
-     * POST /api/v1/subscriptions/checkout - Create checkout session.
-     * Security: Requires authentication (enforced in Iteration 3).
+     * POST /api/v1/subscriptions/checkout - Create Stripe checkout session.
+     * <p>
+     * Creates a Stripe Checkout session for upgrading to PRO or PRO_PLUS tier.
+     * Returns a checkout URL that the client should redirect the user to for
+     * payment. The actual subscription entity is created by the webhook handler
+     * when payment succeeds (not by this endpoint).
+     * </p>
+     * <p>
+     * Workflow:
+     * 1. Create Stripe Checkout session with tier price
+     * 2. Return sessionId and checkoutUrl to client
+     * 3. Client redirects user to Stripe payment page
+     * 4. User completes payment on Stripe
+     * 5. Webhook handler creates subscription entity and activates tier
+     * </p>
      *
-     * @param request The checkout request with tier and redirect URLs
-     * @return Response containing CheckoutSessionResponse with Stripe URL
+     * @param request CreateCheckoutRequest with tier, successUrl, cancelUrl
+     * @return 200 OK with CheckoutSessionResponse (sessionId, checkoutUrl)
+     * @throws WebApplicationException 400 Bad Request if validation fails,
+     *     401 Unauthorized if not authenticated,
+     *     500 Internal Server Error if Stripe API fails
      */
     @POST
     @Path("/subscriptions/checkout")
@@ -168,44 +266,77 @@ public class SubscriptionController {
     public Uni<Response> createCheckoutSession(
             @Valid final CreateCheckoutRequest request) {
 
-        // CHECKSTYLE:OFF TodoComment - Auth deferred to I3
-        // TODO: Get userId from JWT security context (Iteration 3)
-        // CHECKSTYLE:ON TodoComment
-        // TEMPORARY: Placeholder until JWT auth implemented
-        final UUID userId = UUID.fromString(
-            "123e4567-e89b-12d3-a456-426614174000");
+        UUID currentUserId = requireCurrentUserId();
 
-        // Step 1: Create subscription (TRIALING, placeholder Stripe ID)
-        return billingService.createSubscription(userId, request.tier)
-            .onItem().transformToUni(subscription -> {
-                // Step 2: Create Stripe checkout session
-                return Uni.createFrom().item(() ->
+        LOG.infof(
+            "POST /subscriptions/checkout - user %s, tier %s",
+            currentUserId,
+            request.tier
+        );
+
+        // Wrap blocking StripeAdapter call in Uni
+        return Uni.createFrom().item(() -> {
+            try {
+                CheckoutSessionResult result =
                     stripeAdapter.createCheckoutSession(
-                        userId,
+                        currentUserId,
                         request.tier,
                         request.successUrl,
                         request.cancelUrl
-                    )
+                    );
+
+                LOG.infof(
+                    "Created Stripe checkout session %s for user %s (tier: %s)",
+                    result.sessionId(),
+                    currentUserId,
+                    request.tier
                 );
-            })
-            .onItem().transform(checkoutResult -> {
-                // Step 3: Map to response DTO and return
-                CheckoutSessionResponse response = new CheckoutSessionResponse(
-                    checkoutResult.sessionId(),
-                    checkoutResult.checkoutUrl()
+
+                return result;
+            } catch (Exception e) {
+                LOG.errorf(
+                    e,
+                    "Failed to create checkout session for user %s (tier: %s)",
+                    currentUserId,
+                    request.tier
                 );
-                return Response.ok(response).build();
-            });
-        // IllegalArgumentException handled by mapper
-        // StripeException handled by StripeExceptionMapper
+                throw new RuntimeException(
+                    "Failed to create checkout session", e);
+            }
+        })
+        .onItem().transform(result ->
+            new CheckoutSessionResponse(
+                result.sessionId(),
+                result.checkoutUrl()
+            )
+        )
+        .onItem().transform(response -> Response.ok(response).build());
     }
 
     /**
-     * POST /api/v1/subscriptions/{subscriptionId}/cancel - Cancel.
-     * Security: Requires authentication (enforced in Iteration 3).
+     * POST /api/v1/subscriptions/{subscriptionId}/cancel - Cancel subscription.
+     * <p>
+     * Performs a soft cancellation where the subscription remains active until
+     * the end of the current billing period. Sets canceledAt timestamp and
+     * calls Stripe API to cancel with cancel_at_period_end=true.
+     * </p>
+     * <p>
+     * The user's tier is NOT downgraded immediately - it remains active until
+     * currentPeriodEnd. The webhook handler will downgrade to FREE tier when
+     * the billing period ends.
+     * </p>
+     * <p>
+     * Authorization: Users can only cancel their own subscriptions. Attempting
+     * to cancel another user's subscription returns 403 Forbidden.
+     * </p>
      *
-     * @param subscriptionId The subscription ID
-     * @return Response containing updated SubscriptionDTO
+     * @param subscriptionIdString Subscription ID path parameter (UUID format)
+     * @return 200 OK with updated SubscriptionDTO showing canceledAt timestamp
+     * @throws WebApplicationException 400 Bad Request if UUID invalid,
+     *     401 Unauthorized if not authenticated,
+     *     403 Forbidden if canceling other user's subscription,
+     *     404 Not Found if subscription not found,
+     *     500 Internal Server Error on failure
      */
     @POST
     @Path("/subscriptions/{subscriptionId}/cancel")
@@ -217,6 +348,10 @@ public class SubscriptionController {
         description = "Subscription canceled",
         content = @Content(
             schema = @Schema(implementation = SubscriptionDTO.class)))
+    @APIResponse(responseCode = "400",
+        description = "Invalid UUID format",
+        content = @Content(
+            schema = @Schema(implementation = ErrorResponse.class)))
     @APIResponse(responseCode = "401",
         description = "Unauthorized",
         content = @Content(
@@ -236,51 +371,102 @@ public class SubscriptionController {
             schema = @Schema(implementation = ErrorResponse.class)))
     public Uni<Response> cancelSubscription(
             @Parameter(description = "Subscription ID", required = true)
-            @PathParam("subscriptionId") final UUID subscriptionId) {
+            @PathParam("subscriptionId") final String subscriptionIdString) {
 
-        // CHECKSTYLE:OFF TodoComment - Auth deferred to I3
-        // TODO: Get userId from JWT security context (Iteration 3)
-        // TODO: Verify user owns subscription (403 Forbidden)
-        // CHECKSTYLE:ON TodoComment
+        UUID currentUserId = requireCurrentUserId();
 
-        // Step 1: Look up subscription by ID to get userId
+        // Parse and validate subscriptionId
+        UUID subscriptionId;
+        try {
+            subscriptionId = UUID.fromString(subscriptionIdString);
+        } catch (IllegalArgumentException e) {
+            LOG.warnf(
+                "Invalid UUID format for subscriptionId: %s",
+                subscriptionIdString
+            );
+            return Uni.createFrom().item(
+                badRequest("Invalid UUID format for subscriptionId"));
+        }
+
+        LOG.infof(
+            "POST /subscriptions/%s/cancel - requested by user %s",
+            subscriptionId,
+            currentUserId
+        );
+
+        // Fetch subscription and verify ownership
         return subscriptionRepository.findById(subscriptionId)
             .onItem().ifNull().failWith(() ->
-                new IllegalArgumentException(
-                    "Subscription not found: " + subscriptionId))
+                new WebApplicationException(
+                    notFoundResponse("Subscription not found"))
+            )
             .onItem().transformToUni(subscription -> {
-                // Step 2: Verify user subscription (not organization)
-                if (subscription.entityType != EntityType.USER) {
+                // Verify user owns this subscription
+                if (!subscription.entityId.equals(currentUserId)) {
+                    LOG.warnf(
+                        "User %s attempted to cancel subscription %s "
+                            + "owned by %s",
+                        currentUserId,
+                        subscriptionId,
+                        subscription.entityId
+                    );
                     return Uni.createFrom().failure(
-                        new IllegalArgumentException(
-                            "Cannot cancel organization subscription "
-                                + "via this endpoint"));
+                        new WebApplicationException(
+                            forbiddenResponse(
+                                "User can only cancel own subscription"))
+                    );
                 }
 
-                // Step 3: Call BillingService.cancelSubscription with userId
-                UUID userId = subscription.entityId;
-                return billingService.cancelSubscription(userId)
-                    .replaceWith(subscriptionId); // Pass subscriptionId to next stage
-            })
-            .onItem().transformToUni(subId -> {
-                // Step 4: Fetch updated subscription and return DTO
-                return subscriptionRepository.findById(subId);
+                // Cancel subscription via BillingService
+                return billingService.cancelSubscription(currentUserId)
+                    .onItem().transformToUni(voidItem ->
+                        // Fetch updated subscription to return
+                        // with canceledAt timestamp
+                        subscriptionRepository.findById(subscriptionId)
+                    );
             })
             .onItem().transform(subscription -> {
                 SubscriptionDTO dto = subscriptionMapper.toDTO(subscription);
+                LOG.infof(
+                    "Canceled subscription %s for user %s",
+                    subscriptionId,
+                    currentUserId
+                );
                 return Response.ok(dto).build();
-            });
-        // IllegalArgumentException is handled by IllegalArgumentExceptionMapper
-        // StripeException is handled by StripeExceptionMapper
+            })
+            .onFailure().invoke(throwable ->
+                LOG.errorf(
+                    throwable,
+                    "Failed to cancel subscription %s for user %s",
+                    subscriptionId,
+                    currentUserId
+                )
+            );
     }
 
     /**
      * GET /api/v1/billing/invoices - List payment history.
-     * Security: Requires authentication (enforced in Iteration 3).
+     * <p>
+     * Returns a paginated list of payment invoices for the authenticated user.
+     * Invoices are ordered by payment date descending (most recent first).
+     * </p>
+     * <p>
+     * Pagination uses offset-based approach with page/size parameters.
+     * Response includes pagination metadata (page, size, totalElements,
+     * totalPages).
+     * </p>
+     * <p>
+     * Security: Automatically filtered by current user ID - users only see
+     * their own invoices.
+     * </p>
      *
-     * @param page The page number (0-indexed)
-     * @param size The page size
-     * @return Response containing InvoiceListResponse with pagination
+     * @param page Page number (0-indexed, default 0)
+     * @param size Page size (1-100, default 20)
+     * @return 200 OK with InvoiceListResponse containing invoices and
+     *         pagination metadata
+     * @throws WebApplicationException 400 Bad Request if pagination
+     *     params invalid, 401 Unauthorized if not authenticated,
+     *     500 Internal Server Error on failure
      */
     @GET
     @Path("/billing/invoices")
@@ -293,6 +479,10 @@ public class SubscriptionController {
         content = @Content(
             schema = @Schema(
                 implementation = InvoiceListResponse.class)))
+    @APIResponse(responseCode = "400",
+        description = "Invalid pagination parameters",
+        content = @Content(
+            schema = @Schema(implementation = ErrorResponse.class)))
     @APIResponse(responseCode = "401",
         description = "Unauthorized",
         content = @Content(
@@ -307,54 +497,147 @@ public class SubscriptionController {
             @Parameter(description = "Page size")
             @QueryParam("size") @DefaultValue("20") final int size) {
 
-        // CHECKSTYLE:OFF TodoComment - Auth deferred to I3
-        // TODO: Get userId from JWT security context (Iteration 3)
-        // CHECKSTYLE:ON TodoComment
-        // TEMPORARY: Placeholder until JWT auth implemented
-        final UUID userId = UUID.fromString(
-            "123e4567-e89b-12d3-a456-426614174000");
+        UUID currentUserId = requireCurrentUserId();
 
         // Validate pagination parameters
-        int validatedPage = page < 0 ? 0 : page;
-        int validatedSize = size < 1 ? 1 : size;
-        if (validatedSize > MAX_PAGE_SIZE) {
-            validatedSize = MAX_PAGE_SIZE;
+        if (page < 0) {
+            return Uni.createFrom().item(
+                badRequest("Page number must be >= 0"));
         }
 
-        final int finalPage = validatedPage;
-        final int finalSize = validatedSize;
+        if (size < 1) {
+            return Uni.createFrom().item(
+                badRequest("Page size must be >= 1"));
+        }
 
-        // Fetch payment history and total count in parallel
-        Uni<List<PaymentHistoryDTO>> invoicesUni =
-            paymentHistoryRepository
-                .findByUserId(userId, finalPage, finalSize)
-                .onItem().transform(paymentList ->
-                    paymentList.stream()
-                        .map(paymentHistoryMapper::toDTO)
-                        .collect(Collectors.toList())
+        if (size > MAX_PAGE_SIZE) {
+            return Uni.createFrom().item(
+                badRequest("Page size cannot exceed 100"));
+        }
+
+        LOG.infof(
+            "GET /billing/invoices - user %s, page %d, size %d",
+            currentUserId,
+            page,
+            size
+        );
+
+        // Combine payment query and count query in parallel
+        return Uni.combine().all().unis(
+            paymentHistoryRepository.findByUserId(currentUserId, page, size),
+            paymentHistoryRepository.countByUserId(currentUserId)
+        ).asTuple()
+            .onItem().transform(tuple -> {
+                List<PaymentHistoryDTO> paymentDtos = tuple.getItem1().stream()
+                    .map(paymentHistoryMapper::toDTO)
+                    .collect(Collectors.toList());
+
+                Long totalElements = tuple.getItem2();
+
+                // Calculate pagination metadata
+                int totalPages = totalElements == 0
+                    ? 0
+                    : (int) Math.ceil((double) totalElements / size);
+
+                LOG.debugf(
+                    "Retrieved %d invoices for user %s (page %d/%d, total %d)",
+                    paymentDtos.size(),
+                    currentUserId,
+                    page,
+                    totalPages,
+                    totalElements
                 );
 
-        Uni<Long> totalCountUni =
-            paymentHistoryRepository.countByUserId(userId);
-
-        // Combine results and build response
-        return Uni.combine().all().unis(invoicesUni, totalCountUni)
-            .asTuple()
-            .onItem().transform(tuple -> {
-                List<PaymentHistoryDTO> invoices = tuple.getItem1();
-                Long totalElements = tuple.getItem2();
-                int totalPages = (int) Math.ceil(
-                    (double) totalElements / finalSize);
-
+                // Create response with invoices and pagination metadata
                 InvoiceListResponse response = new InvoiceListResponse(
-                    invoices,
-                    finalPage,
-                    finalSize,
+                    paymentDtos,
+                    page,
+                    size,
                     totalElements,
                     totalPages
                 );
 
                 return Response.ok(response).build();
-            });
+            })
+        .onFailure().invoke(throwable ->
+            LOG.errorf(
+                throwable,
+                "Failed to retrieve invoices for user %s",
+                currentUserId
+            )
+        );
+    }
+
+    /**
+     * Gets the current authenticated user ID from security context.
+     * Throws 401 Unauthorized if user is not authenticated.
+     *
+     * @return Current user ID
+     * @throws WebApplicationException 401 Unauthorized if not authenticated
+     */
+    private UUID requireCurrentUserId() {
+        UUID userId;
+        try {
+            userId = securityContext.getCurrentUserId();
+        } catch (RuntimeException ex) {
+            throw unauthorizedException();
+        }
+
+        if (userId == null) {
+            throw unauthorizedException();
+        }
+        return userId;
+    }
+
+    /**
+     * Creates 400 Bad Request response with error message.
+     *
+     * @param message Error message
+     * @return Response with 400 status
+     */
+    private Response badRequest(final String message) {
+        ErrorResponse error = new ErrorResponse("VALIDATION_ERROR", message);
+        return Response.status(Response.Status.BAD_REQUEST)
+            .entity(error).build();
+    }
+
+    /**
+     * Creates 403 Forbidden response with error message.
+     *
+     * @param message Error message
+     * @return Response with 403 status
+     */
+    private Response forbiddenResponse(final String message) {
+        ErrorResponse error = new ErrorResponse("FORBIDDEN", message);
+        return Response.status(Response.Status.FORBIDDEN)
+            .entity(error).build();
+    }
+
+    /**
+     * Creates 404 Not Found response with error message.
+     *
+     * @param message Error message
+     * @return Response with 404 status
+     */
+    private Response notFoundResponse(final String message) {
+        ErrorResponse error = new ErrorResponse("NOT_FOUND", message);
+        return Response.status(Response.Status.NOT_FOUND)
+            .entity(error).build();
+    }
+
+    /**
+     * Creates 401 Unauthorized exception with standard error message.
+     *
+     * @return WebApplicationException with 401 status
+     */
+    private WebApplicationException unauthorizedException() {
+        ErrorResponse error = new ErrorResponse(
+            "UNAUTHORIZED",
+            "User authentication required"
+        );
+        return new WebApplicationException(
+            Response.status(Response.Status.UNAUTHORIZED)
+                .entity(error).build()
+        );
     }
 }
