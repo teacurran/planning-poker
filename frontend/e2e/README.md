@@ -2,6 +2,12 @@
 
 This directory contains Playwright end-to-end tests for the Planning Poker application.
 
+## Quick Start
+
+**For quick test execution instructions, see [QUICK_START.md](./QUICK_START.md)**
+
+**For comprehensive test verification report, see [TEST_VERIFICATION_REPORT.md](./TEST_VERIFICATION_REPORT.md)**
+
 ## Test Suites
 
 ### Authentication Tests (`auth.spec.ts`)
