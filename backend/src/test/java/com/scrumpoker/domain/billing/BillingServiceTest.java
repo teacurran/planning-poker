@@ -211,6 +211,82 @@ class BillingServiceTest {
         verify(subscriptionRepository).persist(any(Subscription.class));
     }
 
+    @Test
+    void testCreateSubscription_ValidProPlusTier_Success() {
+        // Given
+        when(userRepository.findById(any(UUID.class)))
+            .thenReturn(Uni.createFrom().item(testUser));
+        when(subscriptionRepository.findActiveByEntityIdAndType(testUserId, EntityType.USER))
+            .thenReturn(Uni.createFrom().nullItem());
+        when(subscriptionRepository.persist(any(Subscription.class)))
+            .thenAnswer(invocation -> {
+                Subscription sub = invocation.getArgument(0);
+                sub.subscriptionId = UUID.randomUUID();
+                return Uni.createFrom().item(sub);
+            });
+        when(userRepository.persist(any(User.class)))
+            .thenAnswer(invocation -> {
+                User user = invocation.getArgument(0);
+                return Uni.createFrom().item(user);
+            });
+
+        // When
+        Subscription result = billingService.createSubscription(testUserId, SubscriptionTier.PRO_PLUS)
+            .await().indefinitely();
+
+        // Then
+        assertThat(result).isNotNull();
+        assertThat(result.tier).isEqualTo(SubscriptionTier.PRO_PLUS);
+        assertThat(result.status).isEqualTo(SubscriptionStatus.TRIALING);
+        assertThat(result.stripeSubscriptionId).startsWith("pending-checkout-");
+
+        // Verify 30-day trial period
+        long daysBetween = ChronoUnit.DAYS.between(result.currentPeriodStart, result.currentPeriodEnd);
+        assertThat(daysBetween).isEqualTo(30);
+
+        ArgumentCaptor<User> userCaptor = ArgumentCaptor.forClass(User.class);
+        verify(userRepository).persist(userCaptor.capture());
+        assertThat(userCaptor.getValue().subscriptionTier).isEqualTo(SubscriptionTier.PRO_PLUS);
+    }
+
+    @Test
+    void testCreateSubscription_ValidEnterpriseTier_Success() {
+        // Given
+        when(userRepository.findById(any(UUID.class)))
+            .thenReturn(Uni.createFrom().item(testUser));
+        when(subscriptionRepository.findActiveByEntityIdAndType(testUserId, EntityType.USER))
+            .thenReturn(Uni.createFrom().nullItem());
+        when(subscriptionRepository.persist(any(Subscription.class)))
+            .thenAnswer(invocation -> {
+                Subscription sub = invocation.getArgument(0);
+                sub.subscriptionId = UUID.randomUUID();
+                return Uni.createFrom().item(sub);
+            });
+        when(userRepository.persist(any(User.class)))
+            .thenAnswer(invocation -> {
+                User user = invocation.getArgument(0);
+                return Uni.createFrom().item(user);
+            });
+
+        // When
+        Subscription result = billingService.createSubscription(testUserId, SubscriptionTier.ENTERPRISE)
+            .await().indefinitely();
+
+        // Then
+        assertThat(result).isNotNull();
+        assertThat(result.tier).isEqualTo(SubscriptionTier.ENTERPRISE);
+        assertThat(result.status).isEqualTo(SubscriptionStatus.TRIALING);
+        assertThat(result.stripeSubscriptionId).startsWith("pending-checkout-");
+
+        // Verify 30-day trial period
+        long daysBetween = ChronoUnit.DAYS.between(result.currentPeriodStart, result.currentPeriodEnd);
+        assertThat(daysBetween).isEqualTo(30);
+
+        ArgumentCaptor<User> userCaptor = ArgumentCaptor.forClass(User.class);
+        verify(userRepository).persist(userCaptor.capture());
+        assertThat(userCaptor.getValue().subscriptionTier).isEqualTo(SubscriptionTier.ENTERPRISE);
+    }
+
     // ===== Upgrade Subscription Tests =====
 
     @Test
@@ -296,6 +372,155 @@ class BillingServiceTest {
     }
 
     @Test
+    void testUpgradeSubscription_FreeToProTier_Success() throws StripeException {
+        // Given - user has FREE tier, existing subscription in TRIALING
+        testSubscription.tier = SubscriptionTier.FREE;
+        testSubscription.status = SubscriptionStatus.TRIALING;
+        testUser.subscriptionTier = SubscriptionTier.FREE;
+
+        when(userRepository.findById(any(UUID.class)))
+            .thenReturn(Uni.createFrom().item(testUser));
+        when(subscriptionRepository.findActiveByEntityIdAndType(testUserId, EntityType.USER))
+            .thenReturn(Uni.createFrom().item(testSubscription));
+        when(subscriptionRepository.persist(any(Subscription.class)))
+            .thenAnswer(invocation -> {
+                Subscription sub = invocation.getArgument(0);
+                return Uni.createFrom().item(sub);
+            });
+        when(userRepository.persist(any(User.class)))
+            .thenAnswer(invocation -> {
+                User user = invocation.getArgument(0);
+                return Uni.createFrom().item(user);
+            });
+        doNothing().when(stripeAdapter).updateSubscription(anyString(), any(SubscriptionTier.class));
+
+        // When
+        Subscription result = billingService.upgradeSubscription(testUserId, SubscriptionTier.PRO)
+            .await().indefinitely();
+
+        // Then
+        assertThat(result).isNotNull();
+        assertThat(result.tier).isEqualTo(SubscriptionTier.PRO);
+
+        verify(stripeAdapter).updateSubscription(testStripeSubscriptionId, SubscriptionTier.PRO);
+
+        ArgumentCaptor<User> userCaptor = ArgumentCaptor.forClass(User.class);
+        verify(userRepository).persist(userCaptor.capture());
+        assertThat(userCaptor.getValue().subscriptionTier).isEqualTo(SubscriptionTier.PRO);
+    }
+
+    @Test
+    void testUpgradeSubscription_FreeToProPlusTier_Success() throws StripeException {
+        // Given - user upgrades directly from FREE to PRO_PLUS (skip PRO tier)
+        testSubscription.tier = SubscriptionTier.FREE;
+        testUser.subscriptionTier = SubscriptionTier.FREE;
+
+        when(userRepository.findById(any(UUID.class)))
+            .thenReturn(Uni.createFrom().item(testUser));
+        when(subscriptionRepository.findActiveByEntityIdAndType(testUserId, EntityType.USER))
+            .thenReturn(Uni.createFrom().item(testSubscription));
+        when(subscriptionRepository.persist(any(Subscription.class)))
+            .thenAnswer(invocation -> {
+                Subscription sub = invocation.getArgument(0);
+                return Uni.createFrom().item(sub);
+            });
+        when(userRepository.persist(any(User.class)))
+            .thenAnswer(invocation -> {
+                User user = invocation.getArgument(0);
+                return Uni.createFrom().item(user);
+            });
+        doNothing().when(stripeAdapter).updateSubscription(anyString(), any(SubscriptionTier.class));
+
+        // When
+        Subscription result = billingService.upgradeSubscription(testUserId, SubscriptionTier.PRO_PLUS)
+            .await().indefinitely();
+
+        // Then
+        assertThat(result).isNotNull();
+        assertThat(result.tier).isEqualTo(SubscriptionTier.PRO_PLUS);
+
+        verify(stripeAdapter).updateSubscription(testStripeSubscriptionId, SubscriptionTier.PRO_PLUS);
+
+        ArgumentCaptor<User> userCaptor = ArgumentCaptor.forClass(User.class);
+        verify(userRepository).persist(userCaptor.capture());
+        assertThat(userCaptor.getValue().subscriptionTier).isEqualTo(SubscriptionTier.PRO_PLUS);
+    }
+
+    @Test
+    void testUpgradeSubscription_FreeToEnterpriseTier_Success() throws StripeException {
+        // Given - user upgrades directly from FREE to ENTERPRISE (skip intermediate tiers)
+        testSubscription.tier = SubscriptionTier.FREE;
+        testUser.subscriptionTier = SubscriptionTier.FREE;
+
+        when(userRepository.findById(any(UUID.class)))
+            .thenReturn(Uni.createFrom().item(testUser));
+        when(subscriptionRepository.findActiveByEntityIdAndType(testUserId, EntityType.USER))
+            .thenReturn(Uni.createFrom().item(testSubscription));
+        when(subscriptionRepository.persist(any(Subscription.class)))
+            .thenAnswer(invocation -> {
+                Subscription sub = invocation.getArgument(0);
+                return Uni.createFrom().item(sub);
+            });
+        when(userRepository.persist(any(User.class)))
+            .thenAnswer(invocation -> {
+                User user = invocation.getArgument(0);
+                return Uni.createFrom().item(user);
+            });
+        doNothing().when(stripeAdapter).updateSubscription(anyString(), any(SubscriptionTier.class));
+
+        // When
+        Subscription result = billingService.upgradeSubscription(testUserId, SubscriptionTier.ENTERPRISE)
+            .await().indefinitely();
+
+        // Then
+        assertThat(result).isNotNull();
+        assertThat(result.tier).isEqualTo(SubscriptionTier.ENTERPRISE);
+
+        verify(stripeAdapter).updateSubscription(testStripeSubscriptionId, SubscriptionTier.ENTERPRISE);
+
+        ArgumentCaptor<User> userCaptor = ArgumentCaptor.forClass(User.class);
+        verify(userRepository).persist(userCaptor.capture());
+        assertThat(userCaptor.getValue().subscriptionTier).isEqualTo(SubscriptionTier.ENTERPRISE);
+    }
+
+    @Test
+    void testUpgradeSubscription_ProToEnterpriseTier_Success() throws StripeException {
+        // Given - user upgrades from PRO directly to ENTERPRISE (skip PRO_PLUS)
+        testSubscription.tier = SubscriptionTier.PRO;
+        testUser.subscriptionTier = SubscriptionTier.PRO;
+
+        when(userRepository.findById(any(UUID.class)))
+            .thenReturn(Uni.createFrom().item(testUser));
+        when(subscriptionRepository.findActiveByEntityIdAndType(testUserId, EntityType.USER))
+            .thenReturn(Uni.createFrom().item(testSubscription));
+        when(subscriptionRepository.persist(any(Subscription.class)))
+            .thenAnswer(invocation -> {
+                Subscription sub = invocation.getArgument(0);
+                return Uni.createFrom().item(sub);
+            });
+        when(userRepository.persist(any(User.class)))
+            .thenAnswer(invocation -> {
+                User user = invocation.getArgument(0);
+                return Uni.createFrom().item(user);
+            });
+        doNothing().when(stripeAdapter).updateSubscription(anyString(), any(SubscriptionTier.class));
+
+        // When
+        Subscription result = billingService.upgradeSubscription(testUserId, SubscriptionTier.ENTERPRISE)
+            .await().indefinitely();
+
+        // Then
+        assertThat(result).isNotNull();
+        assertThat(result.tier).isEqualTo(SubscriptionTier.ENTERPRISE);
+
+        verify(stripeAdapter).updateSubscription(testStripeSubscriptionId, SubscriptionTier.ENTERPRISE);
+
+        ArgumentCaptor<User> userCaptor = ArgumentCaptor.forClass(User.class);
+        verify(userRepository).persist(userCaptor.capture());
+        assertThat(userCaptor.getValue().subscriptionTier).isEqualTo(SubscriptionTier.ENTERPRISE);
+    }
+
+    @Test
     void testUpgradeSubscription_UserNotFound_ThrowsException() {
         // Given
         when(userRepository.findById(testUserId))
@@ -368,6 +593,51 @@ class BillingServiceTest {
         // When/Then
         assertThatThrownBy(() ->
             billingService.upgradeSubscription(testUserId, SubscriptionTier.PRO)
+                .await().indefinitely()
+        )
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("Invalid tier transition");
+
+        verify(subscriptionRepository, never()).persist(any(Subscription.class));
+    }
+
+    @Test
+    void testUpgradeSubscription_EnterpriseToProDowngrade_ThrowsException() {
+        // Given - user has ENTERPRISE (highest tier), trying to downgrade to PRO
+        testSubscription.tier = SubscriptionTier.ENTERPRISE;
+        testUser.subscriptionTier = SubscriptionTier.ENTERPRISE;
+
+        when(userRepository.findById(testUserId))
+            .thenReturn(Uni.createFrom().item(testUser));
+        when(subscriptionRepository.findActiveByEntityIdAndType(testUserId, EntityType.USER))
+            .thenReturn(Uni.createFrom().item(testSubscription));
+
+        // When/Then
+        assertThatThrownBy(() ->
+            billingService.upgradeSubscription(testUserId, SubscriptionTier.PRO)
+                .await().indefinitely()
+        )
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("Invalid tier transition")
+            .hasMessageContaining("Downgrades not allowed");
+
+        verify(subscriptionRepository, never()).persist(any(Subscription.class));
+    }
+
+    @Test
+    void testUpgradeSubscription_EnterpriseCannotUpgrade_ThrowsException() {
+        // Given - user has ENTERPRISE (highest tier), trying to "upgrade" to any tier (should fail)
+        testSubscription.tier = SubscriptionTier.ENTERPRISE;
+        testUser.subscriptionTier = SubscriptionTier.ENTERPRISE;
+
+        when(userRepository.findById(testUserId))
+            .thenReturn(Uni.createFrom().item(testUser));
+        when(subscriptionRepository.findActiveByEntityIdAndType(testUserId, EntityType.USER))
+            .thenReturn(Uni.createFrom().item(testSubscription));
+
+        // When/Then - even trying to upgrade to ENTERPRISE again should fail
+        assertThatThrownBy(() ->
+            billingService.upgradeSubscription(testUserId, SubscriptionTier.ENTERPRISE)
                 .await().indefinitely()
         )
             .isInstanceOf(IllegalArgumentException.class)
