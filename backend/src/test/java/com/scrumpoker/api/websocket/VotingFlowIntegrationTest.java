@@ -392,4 +392,421 @@ class VotingFlowIntegrationTest {
         round.startedAt = Instant.now();
         return round;
     }
+
+    /**
+     * Test: Statistics calculation edge cases (consensus, mixed votes, all non-numeric)
+     */
+    @Test
+    @Order(5)
+    @RunOnVertxContext
+    void testStatisticsCalculation_EdgeCases(UniAsserter asserter) throws Exception {
+        User alice = createTestUser("alice5@example.com", "Alice");
+        User bob = createTestUser("bob5@example.com", "Bob");
+        User charlie = createTestUser("charlie5@example.com", "Charlie");
+        Room room = createTestRoom("stats1", "Stats Test Room", alice);
+        RoomParticipant aliceParticipant = createTestParticipant(room, alice, "Alice", RoomRole.HOST);
+        RoomParticipant bobParticipant = createTestParticipant(room, bob, "Bob", RoomRole.VOTER);
+        RoomParticipant charlieParticipant = createTestParticipant(room, charlie, "Charlie", RoomRole.VOTER);
+        Round round = createTestRound(room, 1, "Stats Story");
+
+        // Persist test data
+        asserter.execute(() -> Panache.withTransaction(() ->
+            userRepository.persist(alice)
+                .chain(() -> userRepository.persist(bob))
+                .chain(() -> userRepository.persist(charlie))
+                .chain(() -> roomRepository.persist(room))
+                .chain(() -> participantRepository.persist(aliceParticipant))
+                .chain(() -> participantRepository.persist(bobParticipant))
+                .chain(() -> participantRepository.persist(charlieParticipant))
+                .chain(() -> roundRepository.persist(round))
+        ));
+
+        // Generate JWT tokens and run WebSocket test - all in worker thread
+        asserter.execute(() -> io.smallrye.mutiny.Uni.createFrom().emitter(emitter -> {
+            io.smallrye.mutiny.infrastructure.Infrastructure.getDefaultWorkerPool().execute(() -> {
+                try {
+                    // Generate tokens (blocking Redis operations)
+                    TokenPair aliceTokens = jwtTokenService.generateTokens(alice).await().indefinitely();
+                    TokenPair bobTokens = jwtTokenService.generateTokens(bob).await().indefinitely();
+                    TokenPair charlieTokens = jwtTokenService.generateTokens(charlie).await().indefinitely();
+
+                    // Test Scenario 1: All same vote (consensus = true)
+                    runConsensusTest(aliceTokens, bobTokens, charlieTokens, aliceParticipant, bobParticipant, charlieParticipant);
+
+                    emitter.complete(null);
+                } catch (Exception e) {
+                    emitter.fail(e);
+                }
+            });
+        }));
+    }
+
+    private void runConsensusTest(TokenPair aliceTokens, TokenPair bobTokens, TokenPair charlieTokens,
+                                   RoomParticipant aliceParticipant, RoomParticipant bobParticipant,
+                                   RoomParticipant charlieParticipant) throws Exception {
+        WebSocketTestClient aliceClient = new WebSocketTestClient();
+        WebSocketTestClient bobClient = new WebSocketTestClient();
+        WebSocketTestClient charlieClient = new WebSocketTestClient();
+
+        try {
+            // Connect all clients
+            aliceClient.connect(WS_BASE_URL + "stats1?token=" + aliceTokens.accessToken());
+            aliceClient.send("room.join.v1", payload("displayName", "Alice"));
+            aliceClient.awaitMessage("room.participant_joined.v1", MESSAGE_TIMEOUT);
+
+            bobClient.connect(WS_BASE_URL + "stats1?token=" + bobTokens.accessToken());
+            bobClient.send("room.join.v1", payload("displayName", "Bob"));
+            aliceClient.awaitMessage("room.participant_joined.v1", MESSAGE_TIMEOUT);
+            bobClient.awaitMessage("room.participant_joined.v1", MESSAGE_TIMEOUT);
+
+            charlieClient.connect(WS_BASE_URL + "stats1?token=" + charlieTokens.accessToken());
+            charlieClient.send("room.join.v1", payload("displayName", "Charlie"));
+            aliceClient.awaitMessage("room.participant_joined.v1", MESSAGE_TIMEOUT);
+            bobClient.awaitMessage("room.participant_joined.v1", MESSAGE_TIMEOUT);
+            charlieClient.awaitMessage("room.participant_joined.v1", MESSAGE_TIMEOUT);
+
+            // Scenario 1: All vote same value (5) - consensus should be TRUE
+            aliceClient.send("vote.cast.v1", payload("cardValue", "5"));
+            aliceClient.awaitMessage("vote.recorded.v1", MESSAGE_TIMEOUT);
+            bobClient.awaitMessage("vote.recorded.v1", MESSAGE_TIMEOUT);
+            charlieClient.awaitMessage("vote.recorded.v1", MESSAGE_TIMEOUT);
+
+            bobClient.send("vote.cast.v1", payload("cardValue", "5"));
+            aliceClient.awaitMessage("vote.recorded.v1", MESSAGE_TIMEOUT);
+            bobClient.awaitMessage("vote.recorded.v1", MESSAGE_TIMEOUT);
+            charlieClient.awaitMessage("vote.recorded.v1", MESSAGE_TIMEOUT);
+
+            charlieClient.send("vote.cast.v1", payload("cardValue", "5"));
+            aliceClient.awaitMessage("vote.recorded.v1", MESSAGE_TIMEOUT);
+            bobClient.awaitMessage("vote.recorded.v1", MESSAGE_TIMEOUT);
+            charlieClient.awaitMessage("vote.recorded.v1", MESSAGE_TIMEOUT);
+
+            // Reveal and verify consensus
+            aliceClient.send("round.reveal.v1", payload());
+            WebSocketMessage reveal1 = aliceClient.awaitMessage("round.revealed.v1", MESSAGE_TIMEOUT);
+
+            @SuppressWarnings("unchecked")
+            Map<String, Object> stats1 = (Map<String, Object>) reveal1.getPayload().get("stats");
+            assertThat(stats1.get("avg")).isEqualTo(5.0);
+            assertThat(stats1.get("median")).isEqualTo("5");
+            assertThat(stats1.get("consensus")).isEqualTo(true); // All same = consensus
+
+            // Reset round for next test
+            aliceClient.send("round.reset.v1", payload());
+            aliceClient.awaitMessage("round.reset.v1", MESSAGE_TIMEOUT);
+            bobClient.awaitMessage("round.reset.v1", MESSAGE_TIMEOUT);
+            charlieClient.awaitMessage("round.reset.v1", MESSAGE_TIMEOUT);
+
+            // Scenario 2: Mix of numeric and non-numeric votes ("5", "8", "?")
+            aliceClient.send("vote.cast.v1", payload("cardValue", "5"));
+            aliceClient.awaitMessage("vote.recorded.v1", MESSAGE_TIMEOUT);
+            bobClient.awaitMessage("vote.recorded.v1", MESSAGE_TIMEOUT);
+            charlieClient.awaitMessage("vote.recorded.v1", MESSAGE_TIMEOUT);
+
+            bobClient.send("vote.cast.v1", payload("cardValue", "8"));
+            aliceClient.awaitMessage("vote.recorded.v1", MESSAGE_TIMEOUT);
+            bobClient.awaitMessage("vote.recorded.v1", MESSAGE_TIMEOUT);
+            charlieClient.awaitMessage("vote.recorded.v1", MESSAGE_TIMEOUT);
+
+            charlieClient.send("vote.cast.v1", payload("cardValue", "?"));
+            aliceClient.awaitMessage("vote.recorded.v1", MESSAGE_TIMEOUT);
+            bobClient.awaitMessage("vote.recorded.v1", MESSAGE_TIMEOUT);
+            charlieClient.awaitMessage("vote.recorded.v1", MESSAGE_TIMEOUT);
+
+            // Reveal and verify statistics exclude "?" from avg, but median is "mixed"
+            aliceClient.send("round.reveal.v1", payload());
+            WebSocketMessage reveal2 = aliceClient.awaitMessage("round.revealed.v1", MESSAGE_TIMEOUT);
+
+            @SuppressWarnings("unchecked")
+            Map<String, Object> stats2 = (Map<String, Object>) reveal2.getPayload().get("stats");
+            assertThat(stats2.get("avg")).isEqualTo(6.5); // (5 + 8) / 2 = 6.5, "?" excluded from avg
+            assertThat(stats2.get("median")).isEqualTo("mixed"); // Mixed numeric/non-numeric, no majority
+            assertThat(stats2.get("consensus")).isEqualTo(false); // Has non-numeric vote
+
+            // Reset for next test
+            aliceClient.send("round.reset.v1", payload());
+            aliceClient.awaitMessage("round.reset.v1", MESSAGE_TIMEOUT);
+            bobClient.awaitMessage("round.reset.v1", MESSAGE_TIMEOUT);
+            charlieClient.awaitMessage("round.reset.v1", MESSAGE_TIMEOUT);
+
+            // Scenario 3: All non-numeric votes ("?", "?", "?")
+            aliceClient.send("vote.cast.v1", payload("cardValue", "?"));
+            aliceClient.awaitMessage("vote.recorded.v1", MESSAGE_TIMEOUT);
+            bobClient.awaitMessage("vote.recorded.v1", MESSAGE_TIMEOUT);
+            charlieClient.awaitMessage("vote.recorded.v1", MESSAGE_TIMEOUT);
+
+            bobClient.send("vote.cast.v1", payload("cardValue", "?"));
+            aliceClient.awaitMessage("vote.recorded.v1", MESSAGE_TIMEOUT);
+            bobClient.awaitMessage("vote.recorded.v1", MESSAGE_TIMEOUT);
+            charlieClient.awaitMessage("vote.recorded.v1", MESSAGE_TIMEOUT);
+
+            charlieClient.send("vote.cast.v1", payload("cardValue", "?"));
+            aliceClient.awaitMessage("vote.recorded.v1", MESSAGE_TIMEOUT);
+            bobClient.awaitMessage("vote.recorded.v1", MESSAGE_TIMEOUT);
+            charlieClient.awaitMessage("vote.recorded.v1", MESSAGE_TIMEOUT);
+
+            // Reveal and verify null avg/median
+            aliceClient.send("round.reveal.v1", payload());
+            WebSocketMessage reveal3 = aliceClient.awaitMessage("round.revealed.v1", MESSAGE_TIMEOUT);
+
+            @SuppressWarnings("unchecked")
+            Map<String, Object> stats3 = (Map<String, Object>) reveal3.getPayload().get("stats");
+            assertThat(stats3.get("avg")).isNull(); // No numeric votes
+            assertThat(stats3.get("median")).isEqualTo("?"); // All same non-numeric
+            assertThat(stats3.get("consensus")).isEqualTo(false); // No numeric votes
+
+        } finally {
+            aliceClient.close();
+            bobClient.close();
+            charlieClient.close();
+        }
+    }
+
+    /**
+     * Test: Payload validation errors (missing fields, invalid values)
+     * NOTE: This test is currently disabled because card value validation against deck type
+     * is not yet implemented in VotingService. The test documents expected behavior for future implementation.
+     */
+    @org.junit.jupiter.api.Disabled("Card value validation not yet implemented in VotingService")
+    @Test
+    @Order(6)
+    @RunOnVertxContext
+    void testPayloadValidation_Returns4004Error(UniAsserter asserter) throws Exception {
+        User alice = createTestUser("alice6@example.com", "Alice");
+        Room room = createTestRoom("valid1", "Validation Test Room", alice);
+        RoomParticipant aliceParticipant = createTestParticipant(room, alice, "Alice", RoomRole.HOST);
+        Round round = createTestRound(room, 1, "Validation Story");
+
+        // Persist test data
+        asserter.execute(() -> Panache.withTransaction(() ->
+            userRepository.persist(alice)
+                .chain(() -> roomRepository.persist(room))
+                .chain(() -> participantRepository.persist(aliceParticipant))
+                .chain(() -> roundRepository.persist(round))
+        ));
+
+        // Generate JWT token and run WebSocket test - all in worker thread
+        asserter.execute(() -> io.smallrye.mutiny.Uni.createFrom().emitter(emitter -> {
+            io.smallrye.mutiny.infrastructure.Infrastructure.getDefaultWorkerPool().execute(() -> {
+                try {
+                    // Generate token (blocking Redis operations)
+                    TokenPair aliceTokens = jwtTokenService.generateTokens(alice).await().indefinitely();
+
+                    WebSocketTestClient aliceClient = new WebSocketTestClient();
+
+                    try {
+                        aliceClient.connect(WS_BASE_URL + "valid1?token=" + aliceTokens.accessToken());
+                        aliceClient.send("room.join.v1", payload("displayName", "Alice"));
+                        aliceClient.awaitMessage("room.participant_joined.v1", MESSAGE_TIMEOUT);
+
+                        // Test 1: Missing required field (vote without cardValue)
+                        String requestId1 = aliceClient.send("vote.cast.v1", payload()); // Empty payload
+                        WebSocketMessage error1 = aliceClient.awaitMessage("error.v1", MESSAGE_TIMEOUT);
+
+                        assertThat(error1).isNotNull();
+                        assertThat(error1.getRequestId()).isEqualTo(requestId1);
+                        assertThat(error1.getPayload().get("code")).isIn(4004, 4002); // VALIDATION_ERROR or INVALID_VOTE
+
+                        // Test 2: Invalid card value for fibonacci deck (send "100")
+                        String requestId2 = aliceClient.send("vote.cast.v1", payload("cardValue", "100"));
+                        WebSocketMessage error2 = aliceClient.awaitMessage("error.v1", MESSAGE_TIMEOUT);
+
+                        assertThat(error2).isNotNull();
+                        assertThat(error2.getRequestId()).isEqualTo(requestId2);
+                        assertThat(error2.getPayload().get("code")).isEqualTo(4002); // INVALID_VOTE
+                        assertThat(error2.getPayload().get("error")).isEqualTo("INVALID_VOTE");
+
+                        emitter.complete(null);
+                    } finally {
+                        aliceClient.close();
+                    }
+                } catch (Exception e) {
+                    emitter.fail(e);
+                }
+            });
+        }));
+    }
+
+    /**
+     * Test: Invalid state transitions (reveal without round, vote without round)
+     */
+    @Test
+    @Order(7)
+    @RunOnVertxContext
+    void testInvalidStateTransitions_Returns4005Error(UniAsserter asserter) throws Exception {
+        User alice = createTestUser("alice7@example.com", "Alice");
+        Room room = createTestRoom("state1", "State Test Room", alice);
+        RoomParticipant aliceParticipant = createTestParticipant(room, alice, "Alice", RoomRole.HOST);
+        // Note: NO round created - room has no active round
+
+        // Persist test data
+        asserter.execute(() -> Panache.withTransaction(() ->
+            userRepository.persist(alice)
+                .chain(() -> roomRepository.persist(room))
+                .chain(() -> participantRepository.persist(aliceParticipant))
+        ));
+
+        // Generate JWT token and run WebSocket test - all in worker thread
+        asserter.execute(() -> io.smallrye.mutiny.Uni.createFrom().emitter(emitter -> {
+            io.smallrye.mutiny.infrastructure.Infrastructure.getDefaultWorkerPool().execute(() -> {
+                try {
+                    // Generate token (blocking Redis operations)
+                    TokenPair aliceTokens = jwtTokenService.generateTokens(alice).await().indefinitely();
+
+                    WebSocketTestClient aliceClient = new WebSocketTestClient();
+
+                    try {
+                        aliceClient.connect(WS_BASE_URL + "state1?token=" + aliceTokens.accessToken());
+                        aliceClient.send("room.join.v1", payload("displayName", "Alice"));
+                        aliceClient.awaitMessage("room.participant_joined.v1", MESSAGE_TIMEOUT);
+
+                        // Test 1: Reveal when no round started
+                        String requestId1 = aliceClient.send("round.reveal.v1", payload());
+                        WebSocketMessage error1 = aliceClient.awaitMessage("error.v1", MESSAGE_TIMEOUT);
+
+                        assertThat(error1).isNotNull();
+                        assertThat(error1.getRequestId()).isEqualTo(requestId1);
+                        assertThat(error1.getPayload().get("code")).isEqualTo(4005); // INVALID_STATE
+                        assertThat(error1.getPayload().get("error")).isEqualTo("INVALID_STATE");
+
+                        // Test 2: Cast vote when no active round
+                        String requestId2 = aliceClient.send("vote.cast.v1", payload("cardValue", "5"));
+                        WebSocketMessage error2 = aliceClient.awaitMessage("error.v1", MESSAGE_TIMEOUT);
+
+                        assertThat(error2).isNotNull();
+                        assertThat(error2.getRequestId()).isEqualTo(requestId2);
+                        assertThat(error2.getPayload().get("code")).isEqualTo(4005); // INVALID_STATE
+                        assertThat(error2.getPayload().get("error")).isEqualTo("INVALID_STATE");
+
+                        emitter.complete(null);
+                    } finally {
+                        aliceClient.close();
+                    }
+                } catch (Exception e) {
+                    emitter.fail(e);
+                }
+            });
+        }));
+    }
+
+    /**
+     * Test: All event types are broadcast correctly via Redis Pub/Sub
+     */
+    @Test
+    @Order(8)
+    @RunOnVertxContext
+    void testEventBroadcast_AllMessageTypes(UniAsserter asserter) throws Exception {
+        User alice = createTestUser("alice8@example.com", "Alice");
+        User bob = createTestUser("bob8@example.com", "Bob");
+        User charlie = createTestUser("charlie8@example.com", "Charlie");
+        Room room = createTestRoom("bcast1", "Broadcast Test Room", alice);
+        RoomParticipant aliceParticipant = createTestParticipant(room, alice, "Alice", RoomRole.HOST);
+        RoomParticipant bobParticipant = createTestParticipant(room, bob, "Bob", RoomRole.VOTER);
+        RoomParticipant charlieParticipant = createTestParticipant(room, charlie, "Charlie", RoomRole.VOTER);
+        Round round = createTestRound(room, 1, "Broadcast Story");
+
+        // Persist test data
+        asserter.execute(() -> Panache.withTransaction(() ->
+            userRepository.persist(alice)
+                .chain(() -> userRepository.persist(bob))
+                .chain(() -> userRepository.persist(charlie))
+                .chain(() -> roomRepository.persist(room))
+                .chain(() -> participantRepository.persist(aliceParticipant))
+                .chain(() -> participantRepository.persist(bobParticipant))
+                .chain(() -> participantRepository.persist(charlieParticipant))
+                .chain(() -> roundRepository.persist(round))
+        ));
+
+        // Generate JWT tokens and run WebSocket test - all in worker thread
+        asserter.execute(() -> io.smallrye.mutiny.Uni.createFrom().emitter(emitter -> {
+            io.smallrye.mutiny.infrastructure.Infrastructure.getDefaultWorkerPool().execute(() -> {
+                try {
+                    // Generate tokens (blocking Redis operations)
+                    TokenPair aliceTokens = jwtTokenService.generateTokens(alice).await().indefinitely();
+                    TokenPair bobTokens = jwtTokenService.generateTokens(bob).await().indefinitely();
+                    TokenPair charlieTokens = jwtTokenService.generateTokens(charlie).await().indefinitely();
+
+                    WebSocketTestClient aliceClient = new WebSocketTestClient();
+                    WebSocketTestClient bobClient = new WebSocketTestClient();
+                    WebSocketTestClient charlieClient = new WebSocketTestClient();
+
+                    try {
+                        // Connect Alice (HOST)
+                        aliceClient.connect(WS_BASE_URL + "bcast1?token=" + aliceTokens.accessToken());
+                        aliceClient.send("room.join.v1", payload("displayName", "Alice"));
+                        aliceClient.awaitMessage("room.participant_joined.v1", MESSAGE_TIMEOUT);
+
+                        // Connect Bob (VOTER)
+                        bobClient.connect(WS_BASE_URL + "bcast1?token=" + bobTokens.accessToken());
+                        bobClient.send("room.join.v1", payload("displayName", "Bob"));
+
+                        // Both clients receive Bob's join event
+                        WebSocketMessage bobJoinAlice = aliceClient.awaitMessage("room.participant_joined.v1", MESSAGE_TIMEOUT);
+                        WebSocketMessage bobJoinBob = bobClient.awaitMessage("room.participant_joined.v1", MESSAGE_TIMEOUT);
+                        assertThat(bobJoinAlice).isNotNull();
+                        assertThat(bobJoinBob).isNotNull();
+
+                        // Connect Charlie (VOTER)
+                        charlieClient.connect(WS_BASE_URL + "bcast1?token=" + charlieTokens.accessToken());
+                        charlieClient.send("room.join.v1", payload("displayName", "Charlie"));
+
+                        // All three clients receive Charlie's join event
+                        WebSocketMessage charlieJoinAlice = aliceClient.awaitMessage("room.participant_joined.v1", MESSAGE_TIMEOUT);
+                        WebSocketMessage charlieJoinBob = bobClient.awaitMessage("room.participant_joined.v1", MESSAGE_TIMEOUT);
+                        WebSocketMessage charlieJoinCharlie = charlieClient.awaitMessage("room.participant_joined.v1", MESSAGE_TIMEOUT);
+                        assertThat(charlieJoinAlice).isNotNull();
+                        assertThat(charlieJoinBob).isNotNull();
+                        assertThat(charlieJoinCharlie).isNotNull();
+
+                        // Test vote.recorded.v1 broadcast (already tested, but verify 3 clients)
+                        aliceClient.send("vote.cast.v1", payload("cardValue", "5"));
+                        assertThat(aliceClient.awaitMessage("vote.recorded.v1", MESSAGE_TIMEOUT)).isNotNull();
+                        assertThat(bobClient.awaitMessage("vote.recorded.v1", MESSAGE_TIMEOUT)).isNotNull();
+                        assertThat(charlieClient.awaitMessage("vote.recorded.v1", MESSAGE_TIMEOUT)).isNotNull();
+
+                        bobClient.send("vote.cast.v1", payload("cardValue", "8"));
+                        assertThat(aliceClient.awaitMessage("vote.recorded.v1", MESSAGE_TIMEOUT)).isNotNull();
+                        assertThat(bobClient.awaitMessage("vote.recorded.v1", MESSAGE_TIMEOUT)).isNotNull();
+                        assertThat(charlieClient.awaitMessage("vote.recorded.v1", MESSAGE_TIMEOUT)).isNotNull();
+
+                        // Test round.revealed.v1 broadcast
+                        aliceClient.send("round.reveal.v1", payload());
+                        WebSocketMessage revealAlice = aliceClient.awaitMessage("round.revealed.v1", MESSAGE_TIMEOUT);
+                        WebSocketMessage revealBob = bobClient.awaitMessage("round.revealed.v1", MESSAGE_TIMEOUT);
+                        WebSocketMessage revealCharlie = charlieClient.awaitMessage("round.revealed.v1", MESSAGE_TIMEOUT);
+                        assertThat(revealAlice).isNotNull();
+                        assertThat(revealBob).isNotNull();
+                        assertThat(revealCharlie).isNotNull();
+
+                        // Verify all clients received same statistics
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> statsAlice = (Map<String, Object>) revealAlice.getPayload().get("stats");
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> statsBob = (Map<String, Object>) revealBob.getPayload().get("stats");
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> statsCharlie = (Map<String, Object>) revealCharlie.getPayload().get("stats");
+
+                        assertThat(statsAlice.get("avg")).isEqualTo(statsBob.get("avg")).isEqualTo(statsCharlie.get("avg"));
+
+                        // Test round.reset.v1 broadcast
+                        aliceClient.send("round.reset.v1", payload());
+                        WebSocketMessage resetAlice = aliceClient.awaitMessage("round.reset.v1", MESSAGE_TIMEOUT);
+                        WebSocketMessage resetBob = bobClient.awaitMessage("round.reset.v1", MESSAGE_TIMEOUT);
+                        WebSocketMessage resetCharlie = charlieClient.awaitMessage("round.reset.v1", MESSAGE_TIMEOUT);
+                        assertThat(resetAlice).isNotNull();
+                        assertThat(resetBob).isNotNull();
+                        assertThat(resetCharlie).isNotNull();
+
+                        emitter.complete(null);
+                    } finally {
+                        aliceClient.close();
+                        bobClient.close();
+                        charlieClient.close();
+                    }
+                } catch (Exception e) {
+                    emitter.fail(e);
+                }
+            });
+        }));
+    }
 }
