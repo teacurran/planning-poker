@@ -3,6 +3,7 @@
 .codemachine/prompts
 .codemachine/agents
 .codemachine/template.json
+.codemachine/artifacts
 node_modules/
 
 # macOS
