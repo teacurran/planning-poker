@@ -3,7 +3,7 @@
  * Displays current subscription tier, billing status, cancel button, and payment history.
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Dialog, Transition } from '@headlessui/react';
 import { Fragment } from 'react';
@@ -249,6 +249,15 @@ export const SubscriptionSettingsPage: React.FC = () => {
   });
 
   const cancelSubscription = useCancelSubscription();
+
+  // Handle pagination edge case: if user is on a page that no longer exists
+  // (e.g., after deleting items), reset to the last valid page
+  useEffect(() => {
+    const totalPages = invoicesData?.totalPages || 0;
+    if (totalPages > 0 && page >= totalPages) {
+      setPage(totalPages - 1);
+    }
+  }, [invoicesData?.totalPages, page]);
 
   const handleCancelSubscription = () => {
     if (!subscription?.subscriptionId) return;

@@ -6,8 +6,9 @@
 import React, { useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { CheckCircleIcon } from '@heroicons/react/24/outline';
+import { useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '@/stores/authStore';
-import { useSubscription } from '@/services/subscriptionApi';
+import { useSubscription, subscriptionQueryKeys } from '@/services/subscriptionApi';
 import { formatTierName } from '@/utils/subscriptionUtils';
 import type { SubscriptionTier } from '@/types/auth';
 
@@ -22,21 +23,30 @@ function isValidTier(tier: string | null): tier is SubscriptionTier {
 export const BillingSuccessPage: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const queryClient = useQueryClient();
   const { user } = useAuthStore();
   const tierParam = searchParams.get('tier');
   const tier: SubscriptionTier | null = isValidTier(tierParam) ? tierParam : null;
 
   // Fetch updated subscription to verify
-  const { data: subscription, refetch } = useSubscription(user?.userId || '', {
+  const { data: subscription } = useSubscription(user?.userId || '', {
     enabled: !!user?.userId,
   });
 
   useEffect(() => {
-    // Refetch subscription data when component mounts
+    // Invalidate subscription cache to ensure fresh data after successful checkout
+    // This handles the delay between Stripe redirect and webhook processing
     if (user?.userId) {
-      refetch();
+      queryClient.invalidateQueries({
+        queryKey: subscriptionQueryKeys.subscriptions.byUser(user.userId)
+      });
+
+      // Also invalidate all subscription queries to refresh any cached data
+      queryClient.invalidateQueries({
+        queryKey: subscriptionQueryKeys.subscriptions.all
+      });
     }
-  }, [user?.userId, refetch]);
+  }, [user?.userId, queryClient]);
 
   const handleContinue = () => {
     navigate('/dashboard');
