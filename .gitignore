@@ -4,6 +4,7 @@
 .codemachine/agents
 .codemachine/template.json
 .codemachine/artifacts
+.codemachine/verification
 node_modules/
 
 # macOS
