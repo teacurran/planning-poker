@@ -3,7 +3,8 @@
 .codemachine/prompts
 .codemachine/agents
 .codemachine/template.json
-.codemachine/artifacts
+.codemachine/artifacts/architecture
+.codemachine/artifacts/plan
 .codemachine/verification
 
 # Verification reports (task documentation artifacts)

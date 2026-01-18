@@ -72,7 +72,7 @@
     "acceptance_criteria": "*   POST /organizations creates org (Enterprise tier only)\n        *   PUT /sso updates SSO configuration (admin only, 403 for members)\n        *   POST /members invites user to org\n        *   DELETE /members removes user from org\n        *   GET /audit-logs returns paginated audit events\n        *   Non-admin requests to admin endpoints return 403",
     "dependencies": [],
     "parallelizable": false,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I7.T6",
