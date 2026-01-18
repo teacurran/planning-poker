@@ -38,9 +38,24 @@ Mock signature (not cryptographically valid - for reference only)
 
 ## SAML2 Resources
 
-SAML2 support is planned but not yet implemented. The following file will be added in a future iteration:
+### `mock_saml_response.xml`
+Mock SAML2 response for testing SSO authentication flow. This is a Base64-encodable XML document containing:
 
-- `mock_saml_response.xml` - Mock SAML2 assertion for testing
+**Structure:**
+- `<samlp:Response>`: Root element with status and assertion
+- `<saml:Assertion>`: Contains signature, subject (NameID), conditions, attributes
+- `<Signature>`: XML digital signature (mock - not cryptographically valid)
+- `<saml:Subject>`: User identifier (NameID format: URI)
+- `<saml:Conditions>`: Validity period (NotBefore: 2026-01-18T09:55:00Z, NotOnOrAfter: 2026-01-18T10:05:00Z)
+- `<saml:AttributeStatement>`: User attributes (email, displayName, groups)
+
+**User Data:**
+- NameID: `https://acmecorp.okta.com/users/john.doe`
+- Email: `john.doe@acmecorp.com`
+- Display Name: `John Doe`
+- Groups: `["Users", "Developers"]`
+
+**Note:** This file is for documentation and reference only. The integration tests use mocked `SsoAdapter` responses rather than parsing this XML file directly. This approach allows testing the AuthController logic without requiring actual SAML XML parsing or cryptographic validation.
 
 ## Usage
 
