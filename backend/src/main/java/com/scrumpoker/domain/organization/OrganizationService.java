@@ -60,6 +60,12 @@ public class OrganizationService {
     private ObjectMapper objectMapper;
 
     /**
+     * Service for enterprise audit logging.
+     */
+    @Inject
+    private AuditLogService auditLogService;
+
+    /**
      * Creates a new enterprise organization with domain ownership validation.
      * <p>
      * The user creating the organization must:
@@ -185,12 +191,15 @@ public class OrganizationService {
      * Adds a user as a member to an organization with the specified role.
      * <p>
      * Validates that both organization and user exist, and prevents
-     * duplicate memberships.
+     * duplicate memberships. Fires audit log event after successful addition.
      * </p>
      *
      * @param orgId The organization ID
      * @param userId The user ID to add as member
      * @param role The organization role (ADMIN or MEMBER)
+     * @param actorUserId The user ID performing this action (for audit trail)
+     * @param ipAddress The IP address of the request (null for system actions)
+     * @param userAgent The User-Agent header (null for system actions)
      * @return Uni containing the created OrgMember
      * @throws OrganizationNotFoundException if organization not found
      * @throws IllegalArgumentException if user not found
@@ -199,7 +208,10 @@ public class OrganizationService {
     @WithTransaction
     public Uni<OrgMember> addMember(final UUID orgId,
                                      final UUID userId,
-                                     final OrgRole role) {
+                                     final OrgRole role,
+                                     final UUID actorUserId,
+                                     final String ipAddress,
+                                     final String userAgent) {
         // Validate organization exists
         final Uni<Organization> orgUni =
             organizationRepository.findById(orgId)
@@ -240,8 +252,15 @@ public class OrganizationService {
                 orgMember.role = role;
                 orgMember.joinedAt = Instant.now();
 
-                // Persist and return
-                return orgMemberRepository.persist(orgMember);
+                // Persist and fire audit event (fire-and-forget)
+                return orgMemberRepository.persist(orgMember)
+                    .invoke(member -> {
+                        // Fire async audit event - never blocks business logic
+                        auditLogService.logMemberAdded(
+                            orgId, actorUserId, userId, role,
+                            ipAddress, userAgent
+                        );
+                    });
             });
     }
 
@@ -251,15 +270,23 @@ public class OrganizationService {
      * Prevents removal of the last admin to ensure organizations
      * always have at least one admin. Uses hard delete since
      * OrgMember entity does not support soft deletion.
+     * Fires audit log event after successful deletion.
      * </p>
      *
      * @param orgId The organization ID
      * @param userId The user ID to remove
+     * @param actorUserId The user ID performing this action (for audit trail)
+     * @param ipAddress The IP address of the request (null for system actions)
+     * @param userAgent The User-Agent header (null for system actions)
      * @return Uni<Void> on successful removal
      * @throws IllegalStateException if member not found or attempting to remove last admin
      */
     @WithTransaction
-    public Uni<Void> removeMember(final UUID orgId, final UUID userId) {
+    public Uni<Void> removeMember(final UUID orgId,
+                                   final UUID userId,
+                                   final UUID actorUserId,
+                                   final String ipAddress,
+                                   final String userAgent) {
         final OrgMemberId compositeId = new OrgMemberId(orgId, userId);
 
         return orgMemberRepository.findById(compositeId)
@@ -282,11 +309,25 @@ public class OrganizationService {
                             );
                         }
                             // Safe to delete - more admins remain
-                            return orgMemberRepository.delete(member);
+                            return orgMemberRepository.delete(member)
+                                .invoke(() -> {
+                                    // Fire async audit event - never blocks business logic
+                                    auditLogService.logMemberRemoved(
+                                        orgId, actorUserId, userId,
+                                        ipAddress, userAgent
+                                    );
+                                });
                         });
                 } else {
                     // Not an admin - safe to delete directly
-                    return orgMemberRepository.delete(member);
+                    return orgMemberRepository.delete(member)
+                        .invoke(() -> {
+                            // Fire async audit event - never blocks business logic
+                            auditLogService.logMemberRemoved(
+                                orgId, actorUserId, userId,
+                                ipAddress, userAgent
+                            );
+                        });
                 }
             })
             .replaceWithVoid();

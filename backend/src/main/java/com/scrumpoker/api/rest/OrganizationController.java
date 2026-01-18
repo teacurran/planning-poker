@@ -238,6 +238,14 @@ public class OrganizationController {
 
         final UUID actorUserId = UUID.fromString(securityIdentity.getPrincipal().getName());
 
+        // Extract HTTP context for audit logging
+        final String ipAddress = AuditLogService.extractIpAddress(
+            requestContext.getHeaderString("X-Forwarded-For"),
+            requestContext.getHeaderString("X-Real-IP"),
+            requestContext.getHeaderString("Remote-Address")
+        );
+        final String userAgent = requestContext.getHeaderString("User-Agent");
+
         // Verify user is an admin of this organization
         return requireOrgAdmin(orgId, actorUserId)
             .flatMap(member ->
@@ -246,28 +254,17 @@ public class OrganizationController {
                     .onItem().ifNull().failWith(() ->
                         new NotFoundException("User not found with email: " + request.email))
                     .flatMap(targetUser ->
-                        // Add member to organization
-                        organizationService.addMember(orgId, targetUser.userId, request.role)
-                            .invoke(orgMember -> {
-                                // Audit log the member addition
-                                final String ipAddress = AuditLogService.extractIpAddress(
-                                    requestContext.getHeaderString("X-Forwarded-For"),
-                                    requestContext.getHeaderString("X-Real-IP"),
-                                    requestContext.getHeaderString("Remote-Address")
-                                );
-                                final String userAgent = requestContext.getHeaderString("User-Agent");
-
-                                auditLogService.logMemberAdded(
-                                    orgId, actorUserId, targetUser.userId, request.role,
-                                    ipAddress, userAgent
-                                );
-                            })
-                            .map(orgMember -> {
-                                final OrgMemberDTO dto = organizationMapper.toDTO(orgMember);
-                                return Response.status(Response.Status.CREATED)
-                                    .entity(dto)
-                                    .build();
-                            })
+                        // Add member to organization (audit logging handled by service)
+                        organizationService.addMember(
+                            orgId, targetUser.userId, request.role,
+                            actorUserId, ipAddress, userAgent
+                        )
+                        .map(orgMember -> {
+                            final OrgMemberDTO dto = organizationMapper.toDTO(orgMember);
+                            return Response.status(Response.Status.CREATED)
+                                .entity(dto)
+                                .build();
+                        })
                     )
             );
     }
@@ -297,26 +294,23 @@ public class OrganizationController {
 
         final UUID actorUserId = UUID.fromString(securityIdentity.getPrincipal().getName());
 
+        // Extract HTTP context for audit logging
+        final String ipAddress = AuditLogService.extractIpAddress(
+            requestContext.getHeaderString("X-Forwarded-For"),
+            requestContext.getHeaderString("X-Real-IP"),
+            requestContext.getHeaderString("Remote-Address")
+        );
+        final String userAgent = requestContext.getHeaderString("User-Agent");
+
         // Verify user is an admin of this organization
         return requireOrgAdmin(orgId, actorUserId)
             .flatMap(member ->
-                // Remove member from organization
-                organizationService.removeMember(orgId, userIdToRemove)
-                    .invoke(() -> {
-                        // Audit log the member removal
-                        final String ipAddress = AuditLogService.extractIpAddress(
-                            requestContext.getHeaderString("X-Forwarded-For"),
-                            requestContext.getHeaderString("X-Real-IP"),
-                            requestContext.getHeaderString("Remote-Address")
-                        );
-                        final String userAgent = requestContext.getHeaderString("User-Agent");
-
-                        auditLogService.logMemberRemoved(
-                            orgId, actorUserId, userIdToRemove,
-                            ipAddress, userAgent
-                        );
-                    })
-                    .map(v -> Response.noContent().build())
+                // Remove member from organization (audit logging handled by service)
+                organizationService.removeMember(
+                    orgId, userIdToRemove,
+                    actorUserId, ipAddress, userAgent
+                )
+                .map(v -> Response.noContent().build())
             );
     }
 

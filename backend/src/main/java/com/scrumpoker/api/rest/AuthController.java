@@ -498,11 +498,14 @@ public class AuthController {
                                         user.userId, user.email);
 
                                 // Step 7: Check if user is already a member of the organization
-                                // If not, add them with MEMBER role
+                                // If not, add them with MEMBER role (audit logging handled by service)
                                 return organizationService.addMember(
                                         organization.orgId,
                                         user.userId,
-                                        OrgRole.MEMBER
+                                        OrgRole.MEMBER,
+                                        user.userId,  // Self-registration via SSO (actor = target)
+                                        ipAddress,
+                                        userAgent
                                 )
                                 .onFailure(IllegalStateException.class)
                                 .recoverWithItem(throwable -> {

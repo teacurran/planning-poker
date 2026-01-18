@@ -59,6 +59,9 @@ class OrganizationServiceTest {
     @Mock
     private ObjectMapper objectMapper;
 
+    @Mock
+    private AuditLogService auditLogService;
+
     @InjectMocks
     private OrganizationService organizationService;
 
@@ -249,8 +252,10 @@ class OrganizationServiceTest {
             .thenReturn(Uni.createFrom().item(expectedMember));
 
         // When
-        OrgMember result = organizationService.addMember(testOrgId, newMemberId, OrgRole.MEMBER)
-            .await().indefinitely();
+        OrgMember result = organizationService.addMember(
+            testOrgId, newMemberId, OrgRole.MEMBER,
+            testOwnerId, "127.0.0.1", "Test-Agent"
+        ).await().indefinitely();
 
         // Then
         assertThat(result).isNotNull();
@@ -281,8 +286,10 @@ class OrganizationServiceTest {
 
         // When/Then
         assertThatThrownBy(() ->
-            organizationService.addMember(testOrgId, existingMemberId, OrgRole.MEMBER)
-                .await().indefinitely()
+            organizationService.addMember(
+                testOrgId, existingMemberId, OrgRole.MEMBER,
+                testOwnerId, "127.0.0.1", "Test-Agent"
+            ).await().indefinitely()
         )
             .isInstanceOf(IllegalStateException.class)
             .hasMessageContaining("User is already a member of this organization");
@@ -306,8 +313,10 @@ class OrganizationServiceTest {
 
         // When/Then
         assertThatThrownBy(() ->
-            organizationService.addMember(unknownOrgId, memberId, OrgRole.MEMBER)
-                .await().indefinitely()
+            organizationService.addMember(
+                unknownOrgId, memberId, OrgRole.MEMBER,
+                testOwnerId, "127.0.0.1", "Test-Agent"
+            ).await().indefinitely()
         )
             .isInstanceOf(OrganizationNotFoundException.class)
             .hasMessageContaining("Organization not found")
@@ -328,8 +337,10 @@ class OrganizationServiceTest {
 
         // When/Then
         assertThatThrownBy(() ->
-            organizationService.addMember(testOrgId, unknownUserId, OrgRole.MEMBER)
-                .await().indefinitely()
+            organizationService.addMember(
+                testOrgId, unknownUserId, OrgRole.MEMBER,
+                testOwnerId, "127.0.0.1", "Test-Agent"
+            ).await().indefinitely()
         )
             .isInstanceOf(IllegalArgumentException.class)
             .hasMessageContaining("User not found")
@@ -352,8 +363,10 @@ class OrganizationServiceTest {
             .thenReturn(Uni.createFrom().voidItem());
 
         // When
-        organizationService.removeMember(testOrgId, memberToRemoveId)
-            .await().indefinitely();
+        organizationService.removeMember(
+            testOrgId, memberToRemoveId,
+            testOwnerId, "127.0.0.1", "Test-Agent"
+        ).await().indefinitely();
 
         // Then
         verify(orgMemberRepository).findById(regularMember.id);
@@ -375,8 +388,10 @@ class OrganizationServiceTest {
 
         // When/Then
         assertThatThrownBy(() ->
-            organizationService.removeMember(testOrgId, lastAdminId)
-                .await().indefinitely()
+            organizationService.removeMember(
+                testOrgId, lastAdminId,
+                testOwnerId, "127.0.0.1", "Test-Agent"
+            ).await().indefinitely()
         )
             .isInstanceOf(IllegalStateException.class)
             .hasMessageContaining("Cannot remove the last admin from organization");
@@ -400,8 +415,10 @@ class OrganizationServiceTest {
             .thenReturn(Uni.createFrom().voidItem());
 
         // When
-        organizationService.removeMember(testOrgId, adminToRemoveId)
-            .await().indefinitely();
+        organizationService.removeMember(
+            testOrgId, adminToRemoveId,
+            testOwnerId, "127.0.0.1", "Test-Agent"
+        ).await().indefinitely();
 
         // Then
         verify(orgMemberRepository).count(eq("id.orgId = ?1 and role = ?2"), eq(testOrgId), eq(OrgRole.ADMIN));
@@ -419,8 +436,10 @@ class OrganizationServiceTest {
 
         // When/Then
         assertThatThrownBy(() ->
-            organizationService.removeMember(testOrgId, unknownMemberId)
-                .await().indefinitely()
+            organizationService.removeMember(
+                testOrgId, unknownMemberId,
+                testOwnerId, "127.0.0.1", "Test-Agent"
+            ).await().indefinitely()
         )
             .isInstanceOf(IllegalStateException.class)
             .hasMessageContaining("Member not found in organization")
