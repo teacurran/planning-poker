@@ -449,17 +449,37 @@ java -jar target/quarkus-app/quarkus-run.jar
 7. Review statistics and discuss
 8. Click "New Round" to start another estimation
 
+## Operations Documentation
+
+For production deployment and operations, see the comprehensive operations guides:
+
+- **[Deployment Guide](docs/operations/DEPLOYMENT_GUIDE.md)** - Step-by-step production deployment procedures
+- **[Operations Runbook](docs/operations/OPERATIONS_RUNBOOK.md)** - Common administrative tasks (scaling, logs, restarts, backups)
+- **[Monitoring Guide](docs/operations/MONITORING_GUIDE.md)** - Dashboard usage, alert triage, and metrics interpretation
+- **[Troubleshooting Guide](docs/operations/TROUBLESHOOTING_GUIDE.md)** - Diagnostic procedures and solutions for common issues
+- **[Disaster Recovery](docs/operations/DISASTER_RECOVERY.md)** - Backup, restore, and disaster recovery procedures
+
+Additional technical documentation:
+
+- **[Security Assessment](docs/security-assessment.md)** - Security hardening and production configurations
+- **[Performance Benchmarks](docs/performance-benchmarks.md)** - Load testing results and performance tuning
+
 ## Project Structure
 
 ```
 planning-poker/
-├── src/
-│   ├── main/
-│   │   ├── java/               # Quarkus backend
-│   │   ├── resources/          # Configuration and migrations
-│   │   └── webui/              # Vue.js frontend
-│   └── test/
-├── docker-compose.yml          # PostgreSQL setup
-├── pom.xml                     # Maven configuration
+├── backend/                    # Quarkus backend
+│   ├── src/main/java/          # Application code
+│   ├── src/main/resources/     # Configuration and migrations
+│   └── src/test/               # Backend tests
+├── frontend/                   # Vue.js frontend
+│   ├── src/                    # Frontend source code
+│   └── public/                 # Static assets
+├── infra/                      # Infrastructure as code
+│   ├── kubernetes/             # Kubernetes manifests
+│   └── monitoring/             # Prometheus and Grafana configs
+├── docs/                       # Documentation
+│   └── operations/             # Operations guides
+├── docker-compose.yml          # Local development infrastructure
 └── README.md
 ```

@@ -87,7 +87,7 @@
     "acceptance_criteria": "*   Deployment Guide enables new team member to deploy application\n        *   Operations Runbook includes commands for scaling, logs, restarts\n        *   Monitoring Guide explains each Grafana dashboard panel\n        *   Troubleshooting Guide covers top 5 incident scenarios\n        *   Disaster Recovery doc includes RTO/RPO definitions and procedures\n        *   All documents reviewed by DevOps lead",
     "dependencies": [],
     "parallelizable": false,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I8.T7",
