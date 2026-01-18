@@ -5,6 +5,10 @@
 .codemachine/template.json
 .codemachine/artifacts
 .codemachine/verification
+
+# Verification reports (task documentation artifacts)
+TASK_*.md
+*_VERIFICATION.md
 node_modules/
 
 # macOS
