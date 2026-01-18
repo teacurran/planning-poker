@@ -117,6 +117,6 @@
     "acceptance_criteria": "*   `mvn test` runs organization service tests\n        *   Org creation validates email domain matches org domain\n        *   Add member creates OrgMember with correct role\n        *   Remove last admin throws exception (prevent lockout)\n        *   SSO config persists to JSONB correctly\n        *   Branding config round-trips through JSONB",
     "dependencies": [],
     "parallelizable": true,
-    "done": false
+    "done": true
   }
 ]

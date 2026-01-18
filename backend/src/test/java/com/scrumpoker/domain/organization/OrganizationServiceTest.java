@@ -114,6 +114,8 @@ class OrganizationServiceTest {
         when(userRepository.findById(testOwnerId))
             .thenReturn(Uni.createFrom().item(testOwner));
         doNothing().when(featureGate).requireCanManageOrganization(testOwner);
+        when(organizationRepository.findByDomain(domain))
+            .thenReturn(Uni.createFrom().nullItem()); // No existing org with this domain
         when(organizationRepository.persist(any(Organization.class)))
             .thenAnswer(invocation -> {
                 Organization org = invocation.getArgument(0);
@@ -135,6 +137,9 @@ class OrganizationServiceTest {
 
         // Verify feature gate enforcement
         verify(featureGate).requireCanManageOrganization(testOwner);
+
+        // Verify domain uniqueness checked
+        verify(organizationRepository).findByDomain(domain);
 
         // Verify organization persisted
         ArgumentCaptor<Organization> orgCaptor = ArgumentCaptor.forClass(Organization.class);
@@ -228,6 +233,68 @@ class OrganizationServiceTest {
         verify(organizationRepository, never()).persist(any(Organization.class));
     }
 
+    @Test
+    void testCreateOrganization_Failure_DuplicateDomain() {
+        // Given - another organization already exists with same domain
+        Organization existingOrg = new Organization();
+        existingOrg.orgId = UUID.randomUUID();
+        existingOrg.name = "Existing Corp";
+        existingOrg.domain = "acme.com";
+
+        String name = "New Corp";
+        String domain = "acme.com"; // Same domain as existing org
+
+        when(userRepository.findById(testOwnerId))
+            .thenReturn(Uni.createFrom().item(testOwner));
+        doNothing().when(featureGate).requireCanManageOrganization(testOwner);
+        when(organizationRepository.findByDomain(domain))
+            .thenReturn(Uni.createFrom().item(existingOrg)); // Found existing org
+
+        // When/Then
+        assertThatThrownBy(() ->
+            organizationService.createOrganization(name, domain, testOwnerId)
+                .await().indefinitely()
+        )
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("Organization with domain")
+            .hasMessageContaining("already exists");
+
+        // Verify no persistence attempted
+        verify(organizationRepository, never()).persist(any(Organization.class));
+        verify(orgMemberRepository, never()).persist(any(OrgMember.class));
+    }
+
+    @Test
+    void testCreateOrganization_Success_DomainMatchingIsCaseInsensitive() {
+        // Given - user email has uppercase domain, org domain is lowercase
+        testOwner.email = "owner@ACME.COM"; // Uppercase domain in email
+        String name = "Acme Corp";
+        String domain = "acme.com"; // Lowercase domain for org
+
+        when(userRepository.findById(testOwnerId))
+            .thenReturn(Uni.createFrom().item(testOwner));
+        doNothing().when(featureGate).requireCanManageOrganization(testOwner);
+        when(organizationRepository.findByDomain(domain))
+            .thenReturn(Uni.createFrom().nullItem());
+        when(organizationRepository.persist(any(Organization.class)))
+            .thenAnswer(invocation -> {
+                Organization org = invocation.getArgument(0);
+                org.orgId = testOrgId;
+                return Uni.createFrom().item(org);
+            });
+        when(orgMemberRepository.persist(any(OrgMember.class)))
+            .thenReturn(Uni.createFrom().item(testMember));
+
+        // When
+        Organization result = organizationService.createOrganization(name, domain, testOwnerId)
+            .await().indefinitely();
+
+        // Then - should succeed despite case difference
+        assertThat(result).isNotNull();
+        assertThat(result.domain).isEqualTo(domain);
+        verify(organizationRepository).persist(any(Organization.class));
+    }
+
     // ===== Member Management Tests =====
 
     @Test
@@ -250,6 +317,10 @@ class OrganizationServiceTest {
             .thenReturn(Uni.createFrom().nullItem());
         when(orgMemberRepository.persist(any(OrgMember.class)))
             .thenReturn(Uni.createFrom().item(expectedMember));
+        doNothing().when(auditLogService).logMemberAdded(
+            any(UUID.class), any(UUID.class), any(UUID.class),
+            any(OrgRole.class), anyString(), anyString()
+        );
 
         // When
         OrgMember result = organizationService.addMember(
@@ -267,6 +338,16 @@ class OrganizationServiceTest {
         assertThat(capturedMember.id.orgId).isEqualTo(testOrgId);
         assertThat(capturedMember.id.userId).isEqualTo(newMemberId);
         assertThat(capturedMember.role).isEqualTo(OrgRole.MEMBER);
+
+        // Verify audit log event fired
+        verify(auditLogService).logMemberAdded(
+            eq(testOrgId),
+            eq(testOwnerId),
+            eq(newMemberId),
+            eq(OrgRole.MEMBER),
+            eq("127.0.0.1"),
+            eq("Test-Agent")
+        );
     }
 
     @Test
@@ -361,6 +442,10 @@ class OrganizationServiceTest {
             .thenReturn(Uni.createFrom().item(regularMember));
         when(orgMemberRepository.delete(regularMember))
             .thenReturn(Uni.createFrom().voidItem());
+        doNothing().when(auditLogService).logMemberRemoved(
+            any(UUID.class), any(UUID.class), any(UUID.class),
+            anyString(), anyString()
+        );
 
         // When
         organizationService.removeMember(
@@ -371,6 +456,15 @@ class OrganizationServiceTest {
         // Then
         verify(orgMemberRepository).findById(regularMember.id);
         verify(orgMemberRepository).delete(regularMember);
+
+        // Verify audit log event fired
+        verify(auditLogService).logMemberRemoved(
+            eq(testOrgId),
+            eq(testOwnerId),
+            eq(memberToRemoveId),
+            eq("127.0.0.1"),
+            eq("Test-Agent")
+        );
     }
 
     @Test
@@ -413,6 +507,10 @@ class OrganizationServiceTest {
             .thenReturn(Uni.createFrom().item(2L));
         when(orgMemberRepository.delete(adminMember))
             .thenReturn(Uni.createFrom().voidItem());
+        doNothing().when(auditLogService).logMemberRemoved(
+            any(UUID.class), any(UUID.class), any(UUID.class),
+            anyString(), anyString()
+        );
 
         // When
         organizationService.removeMember(
@@ -423,6 +521,15 @@ class OrganizationServiceTest {
         // Then
         verify(orgMemberRepository).count(eq("id.orgId = ?1 and role = ?2"), eq(testOrgId), eq(OrgRole.ADMIN));
         verify(orgMemberRepository).delete(adminMember);
+
+        // Verify audit log event fired
+        verify(auditLogService).logMemberRemoved(
+            eq(testOrgId),
+            eq(testOwnerId),
+            eq(adminToRemoveId),
+            eq("127.0.0.1"),
+            eq("Test-Agent")
+        );
     }
 
     @Test
