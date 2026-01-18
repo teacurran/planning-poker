@@ -1,0 +1,16 @@
+# robots.txt for Planning Poker Marketing Site
+# Allow all search engines to crawl the site
+
+User-agent: *
+Allow: /
+
+# Disallow crawling of specific paths (if any)
+# Uncomment and modify as needed:
+# Disallow: /admin/
+# Disallow: /api/
+
+# Sitemap location
+Sitemap: https://planningpoker.example.com/sitemap-index.xml
+
+# Crawl-delay (optional, uncomment if needed)
+# Crawl-delay: 1

@@ -117,6 +117,6 @@
     "acceptance_criteria": "*   Marketing website deploys to production domain\n        *   Landing page loads in <2 seconds, mobile-responsive\n        *   Pricing page displays all tiers correctly\n        *   Demo page provides access to trial or video\n        *   SEO meta tags present (check with View Source)\n        *   Privacy policy and ToS published and linked in footer\n        *   Launch checklist complete (all items checked or documented)",
     "dependencies": [],
     "parallelizable": true,
-    "done": false
+    "done": true
   }
 ]

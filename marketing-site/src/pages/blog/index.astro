@@ -1,0 +1,90 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+
+const posts = [
+  {
+    title: 'Introducing Planning Poker: Real-time Estimation for Agile Teams',
+    description: 'We\'re excited to announce the launch of Planning Poker, a lightweight collaborative estimation tool designed for distributed Agile teams.',
+    slug: 'launch-announcement',
+    pubDate: '2026-01-18',
+    author: 'Planning Poker Team',
+  },
+];
+---
+
+<BaseLayout
+  title="Blog - Planning Poker"
+  description="Read the latest updates, tips, and best practices for Agile estimation and planning poker from the Planning Poker team."
+>
+  <!-- Header -->
+  <section class="py-16 bg-gradient-to-br from-primary-600 to-secondary-600 text-white">
+    <div class="container mx-auto px-4 text-center">
+      <h1 class="text-4xl md:text-5xl font-bold mb-4">
+        Blog
+      </h1>
+      <p class="text-xl md:text-2xl text-blue-100 max-w-3xl mx-auto">
+        Updates, tips, and best practices for Agile estimation
+      </p>
+    </div>
+  </section>
+
+  <!-- Blog posts -->
+  <section class="py-20 bg-white">
+    <div class="container mx-auto px-4 max-w-5xl">
+      <div class="space-y-8">
+        {posts.map((post) => (
+          <article class="bg-white rounded-xl border border-gray-200 shadow-md hover:shadow-xl transition-shadow overflow-hidden">
+            <div class="p-8">
+              <time datetime={post.pubDate} class="text-sm text-gray-600">
+                {new Date(post.pubDate).toLocaleDateString('en-US', {
+                  year: 'numeric',
+                  month: 'long',
+                  day: 'numeric',
+                })}
+              </time>
+
+              <h2 class="text-2xl font-bold text-gray-900 mt-2 mb-3">
+                <a
+                  href={`/blog/${post.slug}`}
+                  class="hover:text-primary-600 transition-colors"
+                >
+                  {post.title}
+                </a>
+              </h2>
+
+              <p class="text-gray-600 mb-4 leading-relaxed">
+                {post.description}
+              </p>
+
+              <div class="flex items-center justify-between">
+                <div class="flex items-center gap-2 text-sm text-gray-600">
+                  <div class="w-8 h-8 bg-primary-600 text-white rounded-full flex items-center justify-center font-semibold text-xs">
+                    {post.author.split(' ').map(n => n[0]).join('')}
+                  </div>
+                  <span>{post.author}</span>
+                </div>
+
+                <a
+                  href={`/blog/${post.slug}`}
+                  class="inline-flex items-center gap-2 text-primary-600 hover:text-primary-700 font-medium"
+                >
+                  Read more
+                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+                  </svg>
+                </a>
+              </div>
+            </div>
+          </article>
+        ))}
+      </div>
+
+      <!-- Empty state (if no posts) -->
+      {posts.length === 0 && (
+        <div class="text-center py-12">
+          <p class="text-gray-600">No blog posts yet. Check back soon!</p>
+        </div>
+      )}
+    </div>
+  </section>
+</BaseLayout>

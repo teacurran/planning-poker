@@ -1,0 +1,233 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+<BaseLayout
+  title="Demo - Planning Poker"
+  description="See Planning Poker in action. Watch our demo video or try a live demo room to experience real-time estimation."
+>
+  <!-- Header -->
+  <section class="py-16 bg-gradient-to-br from-primary-600 to-secondary-600 text-white">
+    <div class="container mx-auto px-4 text-center">
+      <h1 class="text-4xl md:text-5xl font-bold mb-4">
+        See Planning Poker in Action
+      </h1>
+      <p class="text-xl md:text-2xl text-blue-100 max-w-3xl mx-auto">
+        Watch a quick demo or try it yourself in our interactive demo room
+      </p>
+    </div>
+  </section>
+
+  <!-- Demo options -->
+  <section class="py-20 bg-white">
+    <div class="container mx-auto px-4">
+      <div class="grid md:grid-cols-2 gap-12 max-w-6xl mx-auto">
+        <!-- Video Demo -->
+        <div class="bg-gray-50 rounded-xl p-8 border border-gray-200">
+          <div class="flex items-center gap-3 mb-6">
+            <svg class="w-8 h-8 text-primary-600" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M8 5v14l11-7z"/>
+            </svg>
+            <h2 class="text-2xl font-bold text-gray-900">Watch Demo Video</h2>
+          </div>
+
+          <!-- Video embed placeholder -->
+          <div class="aspect-video bg-gray-900 rounded-lg mb-6 flex items-center justify-center">
+            <div class="text-center text-white">
+              <svg class="w-20 h-20 mx-auto mb-4 opacity-50" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M8 5v14l11-7z"/>
+              </svg>
+              <p class="text-gray-400">
+                Demo video coming soon
+              </p>
+              <p class="text-sm text-gray-500 mt-2">
+                (YouTube embed will be placed here)
+              </p>
+            </div>
+          </div>
+
+          <!-- Uncomment when video is ready:
+          <div class="aspect-video">
+            <iframe
+              width="100%"
+              height="100%"
+              src="https://www.youtube.com/embed/YOUR_VIDEO_ID"
+              title="Planning Poker Demo"
+              frameborder="0"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+              allowfullscreen
+              class="rounded-lg"
+            ></iframe>
+          </div>
+          -->
+
+          <p class="text-gray-600 mb-4">
+            Watch our 3-minute walkthrough showing how to create a room, invite team members, cast votes, and reveal results.
+          </p>
+
+          <div class="space-y-2 text-sm text-gray-600">
+            <div class="flex items-center gap-2">
+              <svg class="w-5 h-5 text-green-600" fill="currentColor" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+              </svg>
+              <span>Creating and configuring rooms</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <svg class="w-5 h-5 text-green-600" fill="currentColor" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+              </svg>
+              <span>Real-time voting and synchronization</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <svg class="w-5 h-5 text-green-600" fill="currentColor" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+              </svg>
+              <span>Revealing results and reaching consensus</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Interactive Demo -->
+        <div class="bg-primary-50 rounded-xl p-8 border border-primary-200">
+          <div class="flex items-center gap-3 mb-6">
+            <svg class="w-8 h-8 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/>
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+            </svg>
+            <h2 class="text-2xl font-bold text-gray-900">Try Interactive Demo</h2>
+          </div>
+
+          <p class="text-gray-700 mb-6">
+            Jump into a live demo room pre-populated with sample data. Experience Planning Poker firsthand with no signup required.
+          </p>
+
+          <div class="bg-white rounded-lg p-6 mb-6 border border-primary-200">
+            <h3 class="font-semibold text-gray-900 mb-3">What you'll see:</h3>
+            <ul class="space-y-2 text-sm text-gray-600">
+              <li class="flex items-start gap-2">
+                <svg class="w-5 h-5 text-primary-600 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                  <path fill-rule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clip-rule="evenodd"/>
+                </svg>
+                <span>A sample estimation session with user stories</span>
+              </li>
+              <li class="flex items-start gap-2">
+                <svg class="w-5 h-5 text-primary-600 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                  <path fill-rule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clip-rule="evenodd"/>
+                </svg>
+                <span>Interactive voting with Fibonacci sequence cards</span>
+              </li>
+              <li class="flex items-start gap-2">
+                <svg class="w-5 h-5 text-primary-600 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                  <path fill-rule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clip-rule="evenodd"/>
+                </svg>
+                <span>Real-time updates as votes are cast</span>
+              </li>
+              <li class="flex items-start gap-2">
+                <svg class="w-5 h-5 text-primary-600 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                  <path fill-rule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clip-rule="evenodd"/>
+                </svg>
+                <span>Session summary and export options</span>
+              </li>
+            </ul>
+          </div>
+
+          <a
+            href="https://app.planningpoker.example.com/room/DEMO01"
+            class="block w-full px-6 py-4 bg-primary-600 text-white rounded-lg font-semibold hover:bg-primary-700 transition-colors text-center text-lg shadow-lg"
+          >
+            Launch Demo Room →
+          </a>
+
+          <p class="text-sm text-gray-600 mt-4 text-center">
+            Opens in a new window • No account required
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Screenshots walkthrough -->
+  <section class="py-20 bg-gray-50">
+    <div class="container mx-auto px-4">
+      <h2 class="text-3xl md:text-4xl font-bold text-gray-900 mb-12 text-center">
+        How It Works
+      </h2>
+
+      <div class="max-w-4xl mx-auto space-y-12">
+        <!-- Step 1 -->
+        <div class="bg-white rounded-xl p-8 shadow-md">
+          <div class="flex items-center gap-3 mb-4">
+            <div class="w-10 h-10 bg-primary-600 text-white rounded-full flex items-center justify-center font-bold">
+              1
+            </div>
+            <h3 class="text-2xl font-semibold text-gray-900">Create a Room</h3>
+          </div>
+          <p class="text-gray-600 mb-4">
+            Click "Create Room" and configure your estimation session. Choose your card deck (Fibonacci, T-shirt sizes, or custom), set voting rules, and invite team members.
+          </p>
+          <div class="bg-gray-100 rounded-lg p-8 text-center text-gray-500">
+            [Screenshot: Room creation interface]
+          </div>
+        </div>
+
+        <!-- Step 2 -->
+        <div class="bg-white rounded-xl p-8 shadow-md">
+          <div class="flex items-center gap-3 mb-4">
+            <div class="w-10 h-10 bg-primary-600 text-white rounded-full flex items-center justify-center font-bold">
+              2
+            </div>
+            <h3 class="text-2xl font-semibold text-gray-900">Cast Votes</h3>
+          </div>
+          <p class="text-gray-600 mb-4">
+            Team members join the room and vote simultaneously. Votes remain hidden until everyone has selected their card, ensuring unbiased estimation.
+          </p>
+          <div class="bg-gray-100 rounded-lg p-8 text-center text-gray-500">
+            [Screenshot: Voting interface with cards]
+          </div>
+        </div>
+
+        <!-- Step 3 -->
+        <div class="bg-white rounded-xl p-8 shadow-md">
+          <div class="flex items-center gap-3 mb-4">
+            <div class="w-10 h-10 bg-primary-600 text-white rounded-full flex items-center justify-center font-bold">
+              3
+            </div>
+            <h3 class="text-2xl font-semibold text-gray-900">Reveal & Discuss</h3>
+          </div>
+          <p class="text-gray-600 mb-4">
+            Once all votes are in, reveal the results to see your team's estimates. Discuss outliers, reach consensus, and record the final estimate.
+          </p>
+          <div class="bg-gray-100 rounded-lg p-8 text-center text-gray-500">
+            [Screenshot: Revealed votes and consensus]
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CTA Section -->
+  <section class="py-20 bg-gradient-to-br from-primary-600 to-secondary-600 text-white">
+    <div class="container mx-auto px-4 text-center">
+      <h2 class="text-3xl md:text-4xl font-bold mb-6">
+        Ready to Try It With Your Team?
+      </h2>
+      <p class="text-xl text-blue-100 mb-8 max-w-2xl mx-auto">
+        Create your first room in seconds. No credit card required.
+      </p>
+      <div class="flex flex-col sm:flex-row gap-4 justify-center">
+        <a
+          href="https://app.planningpoker.example.com/signup"
+          class="px-8 py-4 bg-white text-primary-700 rounded-lg font-semibold hover:bg-gray-100 transition-colors text-lg shadow-lg"
+        >
+          Get Started Free
+        </a>
+        <a
+          href="/pricing"
+          class="px-8 py-4 bg-primary-700 bg-opacity-50 text-white rounded-lg font-semibold hover:bg-opacity-70 transition-colors text-lg border-2 border-white"
+        >
+          View Pricing
+        </a>
+      </div>
+    </div>
+  </section>
+</BaseLayout>

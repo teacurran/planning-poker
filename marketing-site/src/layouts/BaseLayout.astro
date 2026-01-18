@@ -1,0 +1,152 @@
+---
+interface Props {
+  title: string;
+  description?: string;
+  image?: string;
+  noIndex?: boolean;
+}
+
+const {
+  title,
+  description = "Real-time planning poker for Agile teams. Instant anonymous play, powerful analytics, enterprise SSO. Free forever plan.",
+  image = "/assets/og-image.png",
+  noIndex = false,
+} = Astro.props;
+
+const canonicalURL = new URL(Astro.url.pathname, Astro.site);
+const ogImageURL = new URL(image, Astro.site);
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/x-icon" href="/favicon.ico" />
+    <meta name="generator" content={Astro.generator} />
+
+    <!-- Primary Meta Tags -->
+    <title>{title}</title>
+    <meta name="title" content={title} />
+    <meta name="description" content={description} />
+    {noIndex && <meta name="robots" content="noindex, nofollow" />}
+
+    <!-- Canonical URL -->
+    <link rel="canonical" href={canonicalURL} />
+
+    <!-- Open Graph / Facebook -->
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content={canonicalURL} />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:image" content={ogImageURL} />
+
+    <!-- Twitter -->
+    <meta property="twitter:card" content="summary_large_image" />
+    <meta property="twitter:url" content={canonicalURL} />
+    <meta property="twitter:title" content={title} />
+    <meta property="twitter:description" content={description} />
+    <meta property="twitter:image" content={ogImageURL} />
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body class="font-sans antialiased bg-white text-gray-900">
+    <!-- Header -->
+    <header class="sticky top-0 z-50 bg-white border-b border-gray-200">
+      <nav class="container mx-auto px-4 py-4 flex items-center justify-between">
+        <a href="/" class="flex items-center space-x-2">
+          <svg class="w-8 h-8 text-primary-600" fill="currentColor" viewBox="0 0 24 24">
+            <path d="M12 2L2 7v10c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V7l-10-5zm0 18c-3.31 0-6-2.69-6-6s2.69-6 6-6 6 2.69 6 6-2.69 6-6 6zm-1-10h2v5h-2v-5zm0 6h2v2h-2v-2z"/>
+          </svg>
+          <span class="text-xl font-bold text-gray-900">Planning Poker</span>
+        </a>
+
+        <div class="hidden md:flex items-center space-x-8">
+          <a href="/" class="text-gray-700 hover:text-primary-600 transition-colors">Home</a>
+          <a href="/pricing" class="text-gray-700 hover:text-primary-600 transition-colors">Pricing</a>
+          <a href="/demo" class="text-gray-700 hover:text-primary-600 transition-colors">Demo</a>
+          <a href="/blog" class="text-gray-700 hover:text-primary-600 transition-colors">Blog</a>
+          <a
+            href="https://app.planningpoker.example.com/signin"
+            class="text-gray-700 hover:text-primary-600 transition-colors"
+          >
+            Sign In
+          </a>
+          <a
+            href="https://app.planningpoker.example.com/signup"
+            class="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors font-medium"
+          >
+            Get Started Free
+          </a>
+        </div>
+
+        <!-- Mobile menu button -->
+        <button class="md:hidden p-2" aria-label="Menu">
+          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+          </svg>
+        </button>
+      </nav>
+    </header>
+
+    <!-- Main Content -->
+    <main>
+      <slot />
+    </main>
+
+    <!-- Footer -->
+    <footer class="bg-gray-50 border-t border-gray-200 mt-24">
+      <div class="container mx-auto px-4 py-12">
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-8">
+          <!-- Company -->
+          <div>
+            <h3 class="font-bold text-gray-900 mb-4">Planning Poker</h3>
+            <p class="text-gray-600 text-sm">
+              Real-time estimation for Agile teams. Simple, fast, and collaborative.
+            </p>
+          </div>
+
+          <!-- Product -->
+          <div>
+            <h4 class="font-semibold text-gray-900 mb-4">Product</h4>
+            <ul class="space-y-2 text-sm">
+              <li><a href="/pricing" class="text-gray-600 hover:text-primary-600">Pricing</a></li>
+              <li><a href="/demo" class="text-gray-600 hover:text-primary-600">Demo</a></li>
+              <li><a href="https://app.planningpoker.example.com/signup" class="text-gray-600 hover:text-primary-600">Sign Up</a></li>
+            </ul>
+          </div>
+
+          <!-- Resources -->
+          <div>
+            <h4 class="font-semibold text-gray-900 mb-4">Resources</h4>
+            <ul class="space-y-2 text-sm">
+              <li><a href="/blog" class="text-gray-600 hover:text-primary-600">Blog</a></li>
+              <li><a href="https://github.com/planningpoker/docs" class="text-gray-600 hover:text-primary-600">Documentation</a></li>
+              <li><a href="mailto:support@planningpoker.example.com" class="text-gray-600 hover:text-primary-600">Support</a></li>
+            </ul>
+          </div>
+
+          <!-- Legal -->
+          <div>
+            <h4 class="font-semibold text-gray-900 mb-4">Legal</h4>
+            <ul class="space-y-2 text-sm">
+              <li><a href="/privacy" class="text-gray-600 hover:text-primary-600">Privacy Policy</a></li>
+              <li><a href="/terms" class="text-gray-600 hover:text-primary-600">Terms of Service</a></li>
+              <li><a href="mailto:support@planningpoker.example.com" class="text-gray-600 hover:text-primary-600">Contact</a></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="border-t border-gray-200 mt-8 pt-8 text-center text-sm text-gray-600">
+          <p>&copy; 2026 Planning Poker. All rights reserved.</p>
+        </div>
+      </div>
+    </footer>
+  </body>
+</html>

@@ -1,0 +1,90 @@
+---
+// Hero section component
+---
+
+<section class="relative bg-gradient-to-br from-primary-600 to-secondary-600 text-white py-20 md:py-32">
+  <div class="container mx-auto px-4">
+    <div class="grid md:grid-cols-2 gap-12 items-center">
+      <!-- Left column: Text content -->
+      <div>
+        <h1 class="text-4xl md:text-5xl lg:text-6xl font-bold mb-6 leading-tight">
+          Agile Estimation Made Simple
+        </h1>
+        <p class="text-xl md:text-2xl mb-8 text-blue-100 leading-relaxed">
+          Real-time planning poker for distributed teams. No downloads, no setup—just click and start estimating.
+        </p>
+
+        <!-- CTA Buttons -->
+        <div class="flex flex-col sm:flex-row gap-4">
+          <a
+            href="https://app.planningpoker.example.com/signup"
+            class="px-8 py-4 bg-white text-primary-700 rounded-lg font-semibold hover:bg-gray-100 transition-colors text-center text-lg shadow-lg"
+          >
+            Try for Free
+          </a>
+          <a
+            href="/demo"
+            class="px-8 py-4 bg-primary-700 bg-opacity-50 text-white rounded-lg font-semibold hover:bg-opacity-70 transition-colors text-center text-lg border-2 border-white"
+          >
+            View Demo
+          </a>
+        </div>
+
+        <!-- Trust indicators -->
+        <div class="mt-8 flex items-center gap-6 text-sm text-blue-100">
+          <div class="flex items-center gap-2">
+            <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+              <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+            </svg>
+            <span>Free forever plan</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+              <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+            </svg>
+            <span>No credit card required</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right column: Visual -->
+      <div class="relative">
+        <div class="bg-white bg-opacity-10 backdrop-blur-sm rounded-2xl p-8 shadow-2xl">
+          <!-- Placeholder for screenshot/illustration -->
+          <div class="bg-white rounded-lg p-6 shadow-xl">
+            <div class="flex items-center gap-3 mb-6 pb-4 border-b border-gray-200">
+              <div class="w-10 h-10 bg-primary-100 rounded-full flex items-center justify-center">
+                <span class="text-primary-700 font-bold">5</span>
+              </div>
+              <div>
+                <div class="font-semibold text-gray-900">Sprint Planning</div>
+                <div class="text-sm text-gray-600">5 players voting</div>
+              </div>
+            </div>
+
+            <!-- Voting cards visualization -->
+            <div class="grid grid-cols-4 gap-3">
+              <div class="aspect-[3/4] bg-gradient-to-br from-primary-500 to-primary-600 rounded-lg shadow-md flex items-center justify-center text-white text-2xl font-bold">
+                5
+              </div>
+              <div class="aspect-[3/4] bg-gradient-to-br from-secondary-500 to-secondary-600 rounded-lg shadow-md flex items-center justify-center text-white text-2xl font-bold">
+                8
+              </div>
+              <div class="aspect-[3/4] bg-gradient-to-br from-primary-500 to-primary-600 rounded-lg shadow-md flex items-center justify-center text-white text-2xl font-bold">
+                5
+              </div>
+              <div class="aspect-[3/4] bg-gradient-to-br from-green-500 to-green-600 rounded-lg shadow-md flex items-center justify-center text-white text-2xl font-bold">
+                3
+              </div>
+            </div>
+
+            <div class="mt-6 p-3 bg-green-50 rounded-lg text-center">
+              <div class="text-sm text-gray-600">Consensus Estimate</div>
+              <div class="text-2xl font-bold text-green-700">5 points</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>

@@ -1,0 +1,164 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+<BaseLayout
+  title="Privacy Policy - Planning Poker"
+  description="Planning Poker Privacy Policy. Learn how we collect, use, and protect your personal information."
+  noIndex={true}
+>
+  <div class="container mx-auto px-4 py-16 max-w-4xl">
+    <h1 class="text-4xl font-bold text-gray-900 mb-8">Privacy Policy</h1>
+
+    <p class="text-gray-600 mb-8">
+      <strong>Last Updated:</strong> January 18, 2026
+    </p>
+
+    <div class="prose prose-lg max-w-none">
+      <section class="mb-8">
+        <h2 class="text-2xl font-bold text-gray-900 mb-4">1. Introduction</h2>
+        <p class="text-gray-700 mb-4">
+          Welcome to Planning Poker ("we," "our," or "us"). We are committed to protecting your privacy and ensuring you have a positive experience on our platform. This Privacy Policy explains how we collect, use, disclose, and safeguard your information when you use our planning poker estimation service.
+        </p>
+        <p class="text-gray-700 mb-4">
+          By using Planning Poker, you agree to the collection and use of information in accordance with this policy. If you do not agree with the terms of this Privacy Policy, please do not access the service.
+        </p>
+      </section>
+
+      <section class="mb-8">
+        <h2 class="text-2xl font-bold text-gray-900 mb-4">2. Information We Collect</h2>
+
+        <h3 class="text-xl font-semibold text-gray-900 mb-3">2.1 Information You Provide</h3>
+        <p class="text-gray-700 mb-4">
+          We collect information you voluntarily provide when using our service:
+        </p>
+        <ul class="list-disc pl-6 mb-4 text-gray-700 space-y-2">
+          <li><strong>Account Information:</strong> When you create an account via OAuth (Google, Microsoft), we receive your name, email address, and profile picture from your OAuth provider.</li>
+          <li><strong>Profile Information:</strong> Your display name and avatar preferences.</li>
+          <li><strong>Room and Session Data:</strong> Stories, votes, estimates, and session notes you create during planning poker sessions.</li>
+          <li><strong>Payment Information:</strong> Billing details processed securely through Stripe (we do not store credit card numbers).</li>
+        </ul>
+
+        <h3 class="text-xl font-semibold text-gray-900 mb-3">2.2 Automatically Collected Information</h3>
+        <ul class="list-disc pl-6 mb-4 text-gray-700 space-y-2">
+          <li><strong>Usage Data:</strong> Information about how you interact with our service (pages visited, features used, session duration).</li>
+          <li><strong>Device Information:</strong> Browser type, operating system, IP address, and device identifiers.</li>
+          <li><strong>Cookies and Tracking:</strong> We use session cookies for authentication and analytics cookies to improve our service.</li>
+        </ul>
+      </section>
+
+      <section class="mb-8">
+        <h2 class="text-2xl font-bold text-gray-900 mb-4">3. How We Use Your Information</h2>
+        <p class="text-gray-700 mb-4">We use the collected information for the following purposes:</p>
+        <ul class="list-disc pl-6 mb-4 text-gray-700 space-y-2">
+          <li><strong>Service Delivery:</strong> To provide, operate, and maintain our planning poker platform.</li>
+          <li><strong>Authentication:</strong> To verify your identity and manage your account access.</li>
+          <li><strong>Payment Processing:</strong> To process subscription payments via Stripe.</li>
+          <li><strong>Analytics and Improvement:</strong> To understand usage patterns and improve features.</li>
+          <li><strong>Communication:</strong> To send service updates, security alerts, and support messages.</li>
+          <li><strong>Compliance:</strong> To comply with legal obligations and enforce our Terms of Service.</li>
+        </ul>
+      </section>
+
+      <section class="mb-8">
+        <h2 class="text-2xl font-bold text-gray-900 mb-4">4. Data Storage and Security</h2>
+        <p class="text-gray-700 mb-4">
+          <strong>Storage:</strong> Your data is stored in secure PostgreSQL databases and Redis caches hosted on AWS infrastructure with encryption at rest and in transit.
+        </p>
+        <p class="text-gray-700 mb-4">
+          <strong>Security Measures:</strong> We implement industry-standard security measures including:
+        </p>
+        <ul class="list-disc pl-6 mb-4 text-gray-700 space-y-2">
+          <li>HTTPS/TLS encryption for all data transmission</li>
+          <li>Regular security audits and vulnerability scanning</li>
+          <li>Role-based access controls and authentication</li>
+          <li>Automated backups and disaster recovery procedures</li>
+        </ul>
+        <p class="text-gray-700 mb-4">
+          <strong>Data Retention:</strong> Session data is retained according to your subscription tier (30 days for Free, 90 days for Pro, unlimited for Enterprise). Account data is retained until you request deletion.
+        </p>
+      </section>
+
+      <section class="mb-8">
+        <h2 class="text-2xl font-bold text-gray-900 mb-4">5. Third-Party Services</h2>
+        <p class="text-gray-700 mb-4">We share data with trusted third-party service providers:</p>
+        <ul class="list-disc pl-6 mb-4 text-gray-700 space-y-2">
+          <li><strong>OAuth Providers:</strong> Google, Microsoft (for authentication)</li>
+          <li><strong>Payment Processing:</strong> Stripe (for subscription billing)</li>
+          <li><strong>Cloud Infrastructure:</strong> AWS (for hosting and storage)</li>
+          <li><strong>Analytics:</strong> For usage analytics and service improvement</li>
+        </ul>
+        <p class="text-gray-700 mb-4">
+          These third parties are contractually obligated to protect your data and use it only for the purposes we specify.
+        </p>
+      </section>
+
+      <section class="mb-8">
+        <h2 class="text-2xl font-bold text-gray-900 mb-4">6. Your Rights (GDPR & CCPA)</h2>
+        <p class="text-gray-700 mb-4">You have the following rights regarding your personal data:</p>
+        <ul class="list-disc pl-6 mb-4 text-gray-700 space-y-2">
+          <li><strong>Access:</strong> Request a copy of the personal data we hold about you.</li>
+          <li><strong>Correction:</strong> Update or correct inaccurate information.</li>
+          <li><strong>Deletion:</strong> Request deletion of your account and associated data.</li>
+          <li><strong>Portability:</strong> Export your session data in CSV, JSON, or PDF format (Pro+ plans).</li>
+          <li><strong>Opt-Out:</strong> Unsubscribe from marketing communications.</li>
+          <li><strong>Restriction:</strong> Request restriction of processing in certain circumstances.</li>
+        </ul>
+        <p class="text-gray-700 mb-4">
+          To exercise these rights, contact us at <a href="mailto:privacy@planningpoker.example.com" class="text-primary-600 hover:text-primary-700">privacy@planningpoker.example.com</a>.
+        </p>
+      </section>
+
+      <section class="mb-8">
+        <h2 class="text-2xl font-bold text-gray-900 mb-4">7. Cookies Policy</h2>
+        <p class="text-gray-700 mb-4">We use the following types of cookies:</p>
+        <ul class="list-disc pl-6 mb-4 text-gray-700 space-y-2">
+          <li><strong>Essential Cookies:</strong> Required for authentication and session management.</li>
+          <li><strong>Analytics Cookies:</strong> Help us understand how you use our service (can be opted out).</li>
+          <li><strong>Preference Cookies:</strong> Remember your settings and preferences.</li>
+        </ul>
+        <p class="text-gray-700 mb-4">
+          You can control cookies through your browser settings, but disabling essential cookies may affect functionality.
+        </p>
+      </section>
+
+      <section class="mb-8">
+        <h2 class="text-2xl font-bold text-gray-900 mb-4">8. Children's Privacy</h2>
+        <p class="text-gray-700 mb-4">
+          Our service is not intended for users under the age of 16. We do not knowingly collect personal information from children. If you believe we have inadvertently collected information from a child, please contact us immediately.
+        </p>
+      </section>
+
+      <section class="mb-8">
+        <h2 class="text-2xl font-bold text-gray-900 mb-4">9. International Data Transfers</h2>
+        <p class="text-gray-700 mb-4">
+          Your data may be transferred to and processed in countries other than your own. We ensure appropriate safeguards are in place, including Standard Contractual Clauses (SCCs) approved by the European Commission for GDPR compliance.
+        </p>
+      </section>
+
+      <section class="mb-8">
+        <h2 class="text-2xl font-bold text-gray-900 mb-4">10. Changes to This Policy</h2>
+        <p class="text-gray-700 mb-4">
+          We may update this Privacy Policy from time to time. We will notify you of material changes by email or through a prominent notice on our service. Your continued use after changes constitutes acceptance of the updated policy.
+        </p>
+      </section>
+
+      <section class="mb-8">
+        <h2 class="text-2xl font-bold text-gray-900 mb-4">11. Contact Us</h2>
+        <p class="text-gray-700 mb-4">
+          If you have questions or concerns about this Privacy Policy, please contact us:
+        </p>
+        <ul class="list-none mb-4 text-gray-700 space-y-2">
+          <li><strong>Email:</strong> <a href="mailto:privacy@planningpoker.example.com" class="text-primary-600 hover:text-primary-700">privacy@planningpoker.example.com</a></li>
+          <li><strong>Support:</strong> <a href="mailto:support@planningpoker.example.com" class="text-primary-600 hover:text-primary-700">support@planningpoker.example.com</a></li>
+        </ul>
+      </section>
+    </div>
+
+    <div class="mt-12 p-6 bg-gray-50 rounded-lg border border-gray-200">
+      <p class="text-sm text-gray-600">
+        This privacy policy was last updated on January 18, 2026. Please review this policy periodically for changes.
+      </p>
+    </div>
+  </div>
+</BaseLayout>

@@ -1,0 +1,85 @@
+---
+// How it works section
+const steps = [
+  {
+    number: 1,
+    title: "Create a Room",
+    description: "Start a new estimation session in seconds. No signup required for basic rooms.",
+    icon: `<svg class="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+    </svg>`,
+  },
+  {
+    number: 2,
+    title: "Invite Your Team",
+    description: "Share the room link with your team via Slack, email, or any communication tool.",
+    icon: `<svg class="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+    </svg>`,
+  },
+  {
+    number: 3,
+    title: "Estimate Together",
+    description: "Vote anonymously, reveal simultaneously, and reach consensus quickly with your distributed team.",
+    icon: `<svg class="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+    </svg>`,
+  },
+];
+---
+
+<section class="py-20 bg-gray-50">
+  <div class="container mx-auto px-4">
+    <!-- Section header -->
+    <div class="text-center max-w-3xl mx-auto mb-16">
+      <h2 class="text-3xl md:text-4xl font-bold text-gray-900 mb-4">
+        How It Works
+      </h2>
+      <p class="text-xl text-gray-600">
+        Get started with planning poker in three simple steps
+      </p>
+    </div>
+
+    <!-- Steps -->
+    <div class="grid md:grid-cols-3 gap-8 max-w-5xl mx-auto">
+      {steps.map((step, index) => (
+        <div class="relative">
+          {/* Connector line (not shown on last item) */}
+          {index < steps.length - 1 && (
+            <div class="hidden md:block absolute top-16 left-1/2 w-full h-0.5 bg-primary-200" />
+          )}
+
+          <div class="relative bg-white p-8 rounded-xl shadow-md text-center">
+            {/* Step number badge */}
+            <div class="inline-flex items-center justify-center w-16 h-16 bg-primary-600 text-white rounded-full text-2xl font-bold mb-4 shadow-lg">
+              {step.number}
+            </div>
+
+            {/* Icon */}
+            <div class="flex justify-center text-primary-600 mb-4">
+              <Fragment set:html={step.icon} />
+            </div>
+
+            {/* Content */}
+            <h3 class="text-xl font-semibold text-gray-900 mb-3">
+              {step.title}
+            </h3>
+            <p class="text-gray-600">
+              {step.description}
+            </p>
+          </div>
+        </div>
+      ))}
+    </div>
+
+    {/* CTA */}
+    <div class="text-center mt-12">
+      <a
+        href="https://app.planningpoker.example.com/signup"
+        class="inline-block px-8 py-4 bg-primary-600 text-white rounded-lg font-semibold hover:bg-primary-700 transition-colors text-lg shadow-lg"
+      >
+        Start Your First Session
+      </a>
+    </div>
+  </div>
+</section>

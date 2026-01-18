@@ -1,0 +1,109 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import Hero from '../components/Hero.astro';
+import Features from '../components/Features.astro';
+import HowItWorks from '../components/HowItWorks.astro';
+import Testimonials from '../components/Testimonials.astro';
+import CTASection from '../components/CTASection.astro';
+---
+
+<BaseLayout
+  title="Planning Poker - Agile Estimation for Distributed Teams"
+  description="Real-time planning poker for Agile teams. Instant anonymous play, powerful analytics, enterprise SSO. Free forever plan with no credit card required."
+>
+  <Hero />
+  <Features />
+  <HowItWorks />
+  <Testimonials />
+
+  <!-- Pricing teaser -->
+  <section class="py-20 bg-gray-50">
+    <div class="container mx-auto px-4 text-center">
+      <h2 class="text-3xl md:text-4xl font-bold text-gray-900 mb-6">
+        Plans for Every Team Size
+      </h2>
+      <p class="text-xl text-gray-600 mb-12 max-w-3xl mx-auto">
+        Start free and upgrade as you grow. All plans include real-time collaboration and unlimited sessions.
+      </p>
+
+      <div class="grid md:grid-cols-2 gap-8 max-w-4xl mx-auto">
+        <!-- Free tier teaser -->
+        <div class="bg-white p-8 rounded-xl border-2 border-gray-200 shadow-md">
+          <h3 class="text-2xl font-bold text-gray-900 mb-2">Free</h3>
+          <div class="text-4xl font-bold text-gray-900 mb-4">$0<span class="text-lg text-gray-600">/month</span></div>
+          <p class="text-gray-600 mb-6">Perfect for trying out Planning Poker</p>
+          <ul class="text-left space-y-3 mb-8">
+            <li class="flex items-start gap-2">
+              <svg class="w-5 h-5 text-green-600 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+              </svg>
+              <span class="text-gray-700">Basic planning poker functionality</span>
+            </li>
+            <li class="flex items-start gap-2">
+              <svg class="w-5 h-5 text-green-600 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+              </svg>
+              <span class="text-gray-700">Public rooms only</span>
+            </li>
+            <li class="flex items-start gap-2">
+              <svg class="w-5 h-5 text-green-600 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+              </svg>
+              <span class="text-gray-700">30 days session history</span>
+            </li>
+          </ul>
+          <a
+            href="https://app.planningpoker.example.com/signup"
+            class="block w-full px-6 py-3 bg-gray-100 text-gray-800 rounded-lg font-semibold hover:bg-gray-200 transition-colors text-center"
+          >
+            Get Started Free
+          </a>
+        </div>
+
+        <!-- Pro tier teaser -->
+        <div class="bg-primary-600 p-8 rounded-xl border-2 border-primary-700 shadow-xl relative">
+          <div class="absolute -top-4 left-1/2 -translate-x-1/2 px-4 py-1 bg-secondary-500 text-white text-sm font-semibold rounded-full">
+            Most Popular
+          </div>
+          <h3 class="text-2xl font-bold text-white mb-2">Pro</h3>
+          <div class="text-4xl font-bold text-white mb-4">$10<span class="text-lg text-blue-100">/month</span></div>
+          <p class="text-blue-100 mb-6">For professional teams and power users</p>
+          <ul class="text-left space-y-3 mb-8">
+            <li class="flex items-start gap-2">
+              <svg class="w-5 h-5 text-green-300 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+              </svg>
+              <span class="text-white">Ad-free experience</span>
+            </li>
+            <li class="flex items-start gap-2">
+              <svg class="w-5 h-5 text-green-300 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+              </svg>
+              <span class="text-white">Advanced reports & analytics</span>
+            </li>
+            <li class="flex items-start gap-2">
+              <svg class="w-5 h-5 text-green-300 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+              </svg>
+              <span class="text-white">CSV/JSON/PDF export</span>
+            </li>
+          </ul>
+          <a
+            href="/pricing"
+            class="block w-full px-6 py-3 bg-white text-primary-700 rounded-lg font-semibold hover:bg-gray-100 transition-colors text-center"
+          >
+            Upgrade to Pro
+          </a>
+        </div>
+      </div>
+
+      <div class="mt-8">
+        <a href="/pricing" class="text-primary-600 hover:text-primary-700 font-semibold">
+          View all plans and features →
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <CTASection />
+</BaseLayout>
