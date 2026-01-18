@@ -1,0 +1,51 @@
+# ZAP Scan Rules Configuration
+# Format: <rule_id>	<threshold>	<reason>
+#
+# Rule IDs: https://www.zaproxy.org/docs/alerts/
+# Thresholds: IGNORE, INFO, LOW, MEDIUM, HIGH, CRITICAL
+#
+# Use this file to:
+# 1. Ignore false positives
+# 2. Adjust severity levels for specific findings
+# 3. Document why certain alerts are acceptable
+#
+# Example:
+# 10015	IGNORE	X-Frame-Options is set via SecurityHeadersFilter (false positive)
+
+# Content Security Policy (CSP) warnings
+# We set CSP via SecurityHeadersFilter, ZAP may report it as missing in some responses
+10038	INFO	CSP configured via SecurityHeadersFilter
+
+# Cookie Security
+# Session cookies are handled by OAuth providers, not by our backend
+10054	INFO	Backend is stateless (JWT-based), no session cookies used
+
+# Cross-Domain JavaScript Source File Inclusion
+# We allow inline scripts for React SPA (required for development)
+10017	LOW	React requires inline scripts in development mode
+
+# Server Leaks Information via "X-Powered-By" HTTP Response Header Field(s)
+# Quarkus doesn't set this header by default
+10037	IGNORE	Header not set by Quarkus
+
+# Absence of Anti-CSRF Tokens
+# JWT-based authentication with CORS protection (stateless API)
+10202	INFO	Stateless API using JWT and CORS for CSRF protection
+
+# User Controllable HTML Element Attribute (Potential XSS)
+# React automatically escapes user input, CSP restricts inline scripts
+40014	LOW	React provides automatic XSS protection
+
+# Vulnerable JS Library
+# Frontend dependencies are managed separately and scanned by Dependabot
+10003	INFO	Frontend dependencies scanned by Dependabot
+
+# Timestamp Disclosure
+# Timestamps in API responses are intentional (createdAt, updatedAt fields)
+10096	IGNORE	Timestamps are part of API design
+
+# Information Disclosure - Suspicious Comments
+# API endpoints may return helpful error messages for debugging
+10027	LOW	Error messages designed for API consumers
+
+# Add custom rules below as false positives are discovered

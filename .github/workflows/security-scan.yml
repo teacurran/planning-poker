@@ -1,0 +1,193 @@
+name: Security Scan
+
+on:
+  # Run weekly on Monday at 2 AM UTC
+  schedule:
+    - cron: '0 2 * * 1'
+  # Allow manual trigger
+  workflow_dispatch:
+    inputs:
+      target_url:
+        description: 'Target URL to scan'
+        required: false
+        default: 'https://staging.scrumpoker.com'
+      scan_type:
+        description: 'Scan type (baseline or full)'
+        required: false
+        default: 'baseline'
+
+jobs:
+  zap-scan:
+    name: OWASP ZAP Security Scan
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+      security-events: write
+      issues: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Determine target URL
+        id: target
+        run: |
+          if [ -n "${{ github.event.inputs.target_url }}" ]; then
+            echo "url=${{ github.event.inputs.target_url }}" >> $GITHUB_OUTPUT
+          else
+            echo "url=https://staging.scrumpoker.com" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Wait for staging deployment to be ready
+        run: |
+          TARGET_URL="${{ steps.target.outputs.url }}"
+          echo "Waiting for $TARGET_URL to be ready..."
+
+          MAX_ATTEMPTS=30
+          ATTEMPT=0
+
+          while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+            if curl -sf "$TARGET_URL/q/health/ready" > /dev/null; then
+              echo "✅ Application is ready"
+              exit 0
+            fi
+
+            ATTEMPT=$((ATTEMPT + 1))
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: Application not ready yet..."
+            sleep 10
+          done
+
+          echo "❌ Application failed to become ready after $MAX_ATTEMPTS attempts"
+          exit 1
+
+      - name: Run OWASP ZAP Baseline Scan
+        id: zap-scan
+        uses: zaproxy/action-baseline@v0.13.0
+        continue-on-error: true
+        with:
+          target: ${{ steps.target.outputs.url }}
+          rules_file_name: '.zap/rules.tsv'
+          cmd_options: '-a -j -T 60'
+          fail_action: true
+          allow_issue_writing: true
+
+      - name: Upload ZAP results to GitHub Security
+        if: always() && steps.zap-scan.outcome != 'skipped'
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: results.sarif
+          category: zap-scan
+
+      - name: Upload ZAP HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-scan-report
+          path: |
+            results.sarif
+            report_html.html
+          retention-days: 30
+
+      - name: Create issue for HIGH/MEDIUM findings
+        if: steps.zap-scan.outcome == 'failure'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+
+            // Read SARIF results
+            let findings = 'No details available';
+            try {
+              const sarif = JSON.parse(fs.readFileSync('results.sarif', 'utf8'));
+              const results = sarif.runs[0].results || [];
+
+              findings = results
+                .filter(r => r.level === 'error' || r.level === 'warning')
+                .map(r => `- **${r.ruleId}**: ${r.message.text}`)
+                .join('\n');
+            } catch (error) {
+              findings = 'Error parsing SARIF results';
+            }
+
+            // Create GitHub issue
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: '🔒 Security vulnerabilities detected by OWASP ZAP',
+              body: `
+            ## Security Scan Results
+
+            OWASP ZAP detected security vulnerabilities in the application.
+
+            **Target:** ${{ steps.target.outputs.url }}
+            **Scan Date:** ${new Date().toISOString()}
+            **Workflow Run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+            ### Findings
+
+            ${findings}
+
+            ### Action Required
+
+            1. Review the findings in the [Security tab](https://github.com/${{ github.repository }}/security/code-scanning)
+            2. Download the detailed report from the workflow artifacts
+            3. Fix HIGH priority issues immediately
+            4. Document any false positives in \`.zap/rules.tsv\`
+
+            ### Resources
+
+            - [OWASP ZAP Documentation](https://www.zaproxy.org/docs/)
+            - [Security Assessment Guide](../docs/security-assessment.md)
+              `,
+              labels: ['security', 'zap-scan']
+            });
+
+      - name: Comment on workflow outcome
+        if: always()
+        run: |
+          if [ "${{ steps.zap-scan.outcome }}" == "success" ]; then
+            echo "✅ ZAP scan completed successfully - no HIGH/MEDIUM vulnerabilities found"
+          elif [ "${{ steps.zap-scan.outcome }}" == "failure" ]; then
+            echo "❌ ZAP scan found HIGH/MEDIUM vulnerabilities - check Security tab and GitHub issues"
+            exit 1
+          else
+            echo "⚠️ ZAP scan outcome: ${{ steps.zap-scan.outcome }}"
+          fi
+
+  # Optional: Full scan job (runs less frequently, more comprehensive)
+  zap-full-scan:
+    name: OWASP ZAP Full Scan
+    runs-on: ubuntu-22.04
+    if: github.event.inputs.scan_type == 'full'
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run OWASP ZAP Full Scan
+        uses: zaproxy/action-full-scan@v0.11.0
+        with:
+          target: ${{ github.event.inputs.target_url || 'https://staging.scrumpoker.com' }}
+          rules_file_name: '.zap/rules.tsv'
+          cmd_options: '-a -j'
+          fail_action: false  # Full scan is informational
+
+      - name: Upload ZAP full scan results
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: results.sarif
+          category: zap-full-scan
+
+      - name: Upload full scan HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-full-scan-report
+          path: |
+            results.sarif
+            report_html.html
+          retention-days: 90

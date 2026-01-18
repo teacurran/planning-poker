@@ -83,11 +83,21 @@ data:
   # ==========================================
   HTTP_PORT: "8080"
   HTTP_HOST: "0.0.0.0"
+
+  # ==========================================
+  # CORS Configuration
+  # ==========================================
+  # IMPORTANT: Override CORS_ORIGINS in production environments
+  # Development: http://localhost:3000,http://localhost:5173
+  # Staging: https://staging.scrumpoker.com
+  # Production: https://app.scrumpoker.com
+  # NEVER use wildcard (*) or regex patterns in production
   CORS_ORIGINS: "http://localhost:3000,http://localhost:5173"
   CORS_METHODS: "GET,POST,PUT,DELETE,OPTIONS"
   CORS_HEADERS: "accept,authorization,content-type,x-requested-with"
   CORS_EXPOSED_HEADERS: "Content-Disposition"
   CORS_MAX_AGE: "24H"
+  CORS_ALLOW_CREDENTIALS: "true"
 
   # ==========================================
   # Logging Configuration

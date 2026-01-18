@@ -24,7 +24,8 @@ data:
   S3_BUCKET_NAME: "scrum-poker-exports-prod"
 
   # CORS origins for production frontend
-  CORS_ORIGINS: "https://scrumpoker.com,https://www.scrumpoker.com"
+  # CRITICAL: Only allow production frontend domains (no wildcards!)
+  CORS_ORIGINS: "https://app.scrumpoker.com,https://scrumpoker.com,https://www.scrumpoker.com"
 
   # Production logging configuration
   LOG_LEVEL: "WARN"  # Reduced log verbosity for production

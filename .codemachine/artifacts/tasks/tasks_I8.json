@@ -72,7 +72,7 @@
     "acceptance_criteria": "*   HTTP responses include HSTS, CSP, X-Frame-Options headers\n        *   Rate limiting blocks requests exceeding threshold (test with curl loop)\n        *   CORS blocks requests from unauthorized origins\n        *   Dependency scan runs in CI, fails on HIGH/CRITICAL vulnerabilities\n        *   Container scan runs in CI, reports vulnerabilities\n        *   ZAP scan completes without HIGH risk findings (or findings documented)\n        *   Security assessment document reviewed",
     "dependencies": [],
     "parallelizable": true,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I8.T6",

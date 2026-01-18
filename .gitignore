@@ -7,7 +7,9 @@
 .codemachine/artifacts/plan
 .codemachine/verification
 
-# Verification reports (task documentation artifacts)
+# Task documentation artifacts
+.codemachine/artifacts/tasks/*_VERIFICATION_REPORT.md
+.codemachine/artifacts/tasks/*_completion_manifest.md
 TASK_*.md
 *_VERIFICATION.md
 node_modules/
