@@ -87,7 +87,7 @@
     "acceptance_criteria": "*   OrganizationSettingsPage displays org name and member count\n        *   SsoConfigPage form submits to /organizations/{id}/sso endpoint\n        *   SSO test button validates configuration\n        *   MemberManagementPage lists current members\n        *   Invite member opens modal, calls POST /members\n        *   Remove member confirms action, calls DELETE /members/{userId}\n        *   AuditLogPage displays events with timestamp, action, user\n        *   Non-admin users cannot access org admin pages (403 or redirect)",
     "dependencies": [],
     "parallelizable": false,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I7.T7",
