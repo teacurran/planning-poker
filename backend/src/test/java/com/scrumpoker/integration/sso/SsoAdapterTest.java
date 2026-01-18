@@ -33,6 +33,9 @@ class SsoAdapterTest {
     private OidcProvider oidcProvider;
 
     @Mock
+    private Saml2Provider saml2Provider;
+
+    @Mock
     private ObjectMapper objectMapper;
 
     @InjectMocks
@@ -267,14 +270,128 @@ class SsoAdapterTest {
     }
 
     @Test
-    void getSupportedProtocols_returnsOidc() {
+    void getSupportedProtocols_returnsOidcAndSaml2() {
         // When
         String[] protocols = ssoAdapter.getSupportedProtocols();
 
         // Then
         assertThat(protocols)
-                .hasSize(1)
-                .containsExactly("oidc");
+                .hasSize(2)
+                .containsExactly("oidc", "saml2");
+    }
+
+    // SAML2 Tests
+
+    @Test
+    void authenticate_saml2Protocol_routesToSaml2Provider() throws JsonProcessingException {
+        // Given
+        String ssoConfigJson = createSaml2ConfigJson();
+        SsoConfig ssoConfig = createSaml2SsoConfig();
+        String samlResponse = "base64-encoded-saml-response";
+
+        SsoUserInfo expectedUserInfo = new SsoUserInfo(
+                "saml-subject-123",
+                "saml-user@example.com",
+                "SAML User",
+                "saml2",
+                organizationId,
+                Arrays.asList("SamlAdmins", "SamlUsers")
+        );
+
+        when(objectMapper.readValue(ssoConfigJson, SsoConfig.class))
+                .thenReturn(ssoConfig);
+        when(saml2Provider.processSamlResponse(
+                eq(samlResponse),
+                any(Saml2Config.class),
+                eq(organizationId)
+        )).thenReturn(Uni.createFrom().item(expectedUserInfo));
+
+        // When
+        SsoUserInfo result = ssoAdapter.authenticate(
+                ssoConfigJson,
+                samlResponse,
+                authParams,  // Not used for SAML2
+                organizationId
+        ).await().indefinitely();
+
+        // Then
+        assertThat(result).isNotNull();
+        assertThat(result.getProtocol()).isEqualTo("saml2");
+        assertThat(result.getEmail()).isEqualTo("saml-user@example.com");
+        assertThat(result.getSubject()).isEqualTo("saml-subject-123");
+        verify(saml2Provider).processSamlResponse(
+                eq(samlResponse),
+                any(Saml2Config.class),
+                eq(organizationId)
+        );
+    }
+
+    @Test
+    void authenticate_saml2Protocol_missingConfig_throwsException() throws JsonProcessingException {
+        // Given
+        String ssoConfigJson = """
+                {
+                    "protocol": "saml2",
+                    "saml2": null
+                }
+                """;
+
+        SsoConfig ssoConfig = new SsoConfig();
+        ssoConfig.setProtocol("saml2");
+
+        when(objectMapper.readValue(ssoConfigJson, SsoConfig.class))
+                .thenReturn(ssoConfig);
+
+        // When/Then
+        assertThatThrownBy(() ->
+                ssoAdapter.authenticate(
+                        ssoConfigJson,
+                        "saml-response",
+                        authParams,
+                        organizationId
+                ).await().indefinitely())
+                .isInstanceOf(SsoAuthenticationException.class)
+                .hasMessageContaining("SAML2 configuration not found");
+    }
+
+    @Test
+    void logout_saml2Protocol_callsSaml2Provider() throws JsonProcessingException {
+        // Given
+        String ssoConfigJson = createSaml2ConfigJson();
+        SsoConfig ssoConfig = createSaml2SsoConfig();
+        SsoAdapter.SsoLogoutParams logoutParams = new SsoAdapter.SsoLogoutParams();
+        logoutParams.setNameId("saml-name-id");
+        logoutParams.setSessionIndex("session-index-123");
+
+        when(objectMapper.readValue(ssoConfigJson, SsoConfig.class))
+                .thenReturn(ssoConfig);
+        when(saml2Provider.logout(
+                any(Saml2Config.class),
+                eq(logoutParams.getNameId()),
+                eq(logoutParams.getSessionIndex())
+        )).thenReturn(Uni.createFrom().item(true));
+
+        // When
+        Boolean result = ssoAdapter.logout(
+                ssoConfigJson,
+                "saml2",
+                logoutParams
+        ).await().indefinitely();
+
+        // Then
+        assertThat(result).isTrue();
+        verify(saml2Provider).logout(
+                any(Saml2Config.class),
+                eq(logoutParams.getNameId()),
+                eq(logoutParams.getSessionIndex())
+        );
+    }
+
+    @Test
+    void isProtocolSupported_saml2_returnsTrue() {
+        // When/Then
+        assertThat(ssoAdapter.isProtocolSupported("saml2")).isTrue();
+        assertThat(ssoAdapter.isProtocolSupported("SAML2")).isTrue();
     }
 
     // Helper methods
@@ -302,6 +419,36 @@ class SsoAdapterTest {
         return new SsoConfig(
                 "oidc",
                 oidcConfig,
+                true,
+                true
+        );
+    }
+
+    private String createSaml2ConfigJson() {
+        return """
+                {
+                    "protocol": "saml2",
+                    "saml2": {
+                        "idpMetadataUrl": "https://test-idp.example.com/metadata",
+                        "spEntityId": "https://app.scrumpoker.com/saml",
+                        "acsUrl": "https://app.scrumpoker.com/api/v1/auth/sso/callback",
+                        "idpCertificate": "-----BEGIN CERTIFICATE-----\\nMIIDdzCCAl+gAwIBAgIE...\\n-----END CERTIFICATE-----"
+                    }
+                }
+                """;
+    }
+
+    private SsoConfig createSaml2SsoConfig() {
+        Saml2Config saml2Config = new Saml2Config(
+                "https://test-idp.example.com/metadata",
+                "https://app.scrumpoker.com/saml",
+                "https://app.scrumpoker.com/api/v1/auth/sso/callback",
+                "-----BEGIN CERTIFICATE-----\nMIIDdzCCAl+gAwIBAgIE...\n-----END CERTIFICATE-----"
+        );
+
+        return new SsoConfig(
+                "saml2",
+                saml2Config,
                 true,
                 true
         );

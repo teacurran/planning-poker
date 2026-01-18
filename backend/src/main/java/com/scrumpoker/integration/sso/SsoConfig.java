@@ -6,12 +6,12 @@ import jakarta.validation.constraints.NotNull;
 
 /**
  * SSO configuration POJO for deserializing Organization.ssoConfig JSONB field.
- * Supports OIDC protocol with per-organization configuration.
+ * Supports OIDC and SAML2 protocols with per-organization configuration.
  * This configuration is stored in the database as JSON in the
  * Organization.ssoConfig field and loaded at runtime when processing
  * SSO authentication requests.
  * <p>
- * Example JSON structure:
+ * Example JSON structure for OIDC:
  * </p>
  * <pre>
  * {
@@ -26,12 +26,29 @@ import jakarta.validation.constraints.NotNull;
  *   "jitProvisioningEnabled": true
  * }
  * </pre>
+ * <p>
+ * Example JSON structure for SAML2:
+ * </p>
+ * <pre>
+ * {
+ *   "protocol": "saml2",
+ *   "saml2": {
+ *     "idpMetadataUrl": "https://idp.example.com/metadata",
+ *     "spEntityId": "https://app.scrumpoker.com/saml",
+ *     "acsUrl": "https://app.scrumpoker.com/api/v1/auth/sso/callback",
+ *     "idpCertificate": "-----BEGIN CERTIFICATE-----...",
+ *     ...
+ *   },
+ *   "domainVerificationRequired": true,
+ *   "jitProvisioningEnabled": true
+ * }
+ * </pre>
  */
 public final class SsoConfig {
 
     /**
      * SSO protocol to use for this organization.
-     * Currently only "oidc" is supported.
+     * Supported values: "oidc", "saml2"
      */
     @NotNull
     @JsonProperty("protocol")
@@ -39,10 +56,19 @@ public final class SsoConfig {
 
     /**
      * OIDC-specific configuration.
+     * Required when protocol is "oidc".
      */
     @Valid
     @JsonProperty("oidc")
     private OidcConfig oidc;
+
+    /**
+     * SAML2-specific configuration.
+     * Required when protocol is "saml2".
+     */
+    @Valid
+    @JsonProperty("saml2")
+    private Saml2Config saml2;
 
     /**
      * Whether email domain verification is required.
@@ -67,7 +93,7 @@ public final class SsoConfig {
     }
 
     /**
-     * Constructor for creating SsoConfig instances.
+     * Constructor for creating SsoConfig instances with OIDC.
      *
      * @param ssoProtocol SSO protocol ("oidc")
      * @param oidcConfig OIDC configuration
@@ -81,6 +107,25 @@ public final class SsoConfig {
                      final boolean enableJitProvisioning) {
         this.protocol = ssoProtocol;
         this.oidc = oidcConfig;
+        this.domainVerificationRequired = requireDomainVerification;
+        this.jitProvisioningEnabled = enableJitProvisioning;
+    }
+
+    /**
+     * Constructor for creating SsoConfig instances with SAML2.
+     *
+     * @param ssoProtocol SSO protocol ("saml2")
+     * @param saml2Conf SAML2 configuration
+     * @param requireDomainVerification Whether domain verification
+     *                                  is required
+     * @param enableJitProvisioning Whether JIT provisioning is enabled
+     */
+    public SsoConfig(final String ssoProtocol,
+                     final Saml2Config saml2Conf,
+                     final boolean requireDomainVerification,
+                     final boolean enableJitProvisioning) {
+        this.protocol = ssoProtocol;
+        this.saml2 = saml2Conf;
         this.domainVerificationRequired = requireDomainVerification;
         this.jitProvisioningEnabled = enableJitProvisioning;
     }
@@ -124,6 +169,24 @@ public final class SsoConfig {
     }
 
     /**
+     * Gets the SAML2 configuration.
+     *
+     * @return SAML2 configuration
+     */
+    public Saml2Config getSaml2() {
+        return saml2;
+    }
+
+    /**
+     * Sets the SAML2 configuration.
+     *
+     * @param saml2Conf SAML2 configuration
+     */
+    public void setSaml2(final Saml2Config saml2Conf) {
+        this.saml2 = saml2Conf;
+    }
+
+    /**
      * Checks if domain verification is required.
      *
      * @return true if domain verification is required
@@ -164,6 +227,7 @@ public final class SsoConfig {
         return "SsoConfig{"
                 + "protocol='" + protocol + '\''
                 + ", oidc=" + oidc
+                + ", saml2=" + saml2
                 + ", domainVerificationRequired=" + domainVerificationRequired
                 + ", jitProvisioningEnabled=" + jitProvisioningEnabled
                 + '}';
