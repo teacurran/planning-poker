@@ -11,7 +11,10 @@
     "test": "echo \"No tests implemented yet\" && exit 0",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
-    "test:e2e:headed": "playwright test --headed"
+    "test:e2e:headed": "playwright test --headed",
+    "test:smoke": "playwright test --project=smoke",
+    "test:smoke:staging": "BASE_URL=https://staging.planningpoker.example.com SMOKE_TEST_MOCK_OAUTH=true playwright test --project=smoke",
+    "test:smoke:prod": "BASE_URL=https://app.planningpoker.example.com SMOKE_TEST_MOCK_OAUTH=false playwright test --project=smoke"
   },
   "dependencies": {
     "@headlessui/react": "^2.0.0",

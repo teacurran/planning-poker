@@ -45,6 +45,21 @@ export default defineConfig({
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
     },
+    // Smoke tests project - for critical journey verification
+    {
+      name: 'smoke',
+      testMatch: /smoke-tests\.spec\.ts/,
+      use: {
+        ...devices['Desktop Chrome'],
+        baseURL: process.env.BASE_URL || 'http://localhost:5173',
+        // Shorter timeout for smoke tests (fail fast)
+        actionTimeout: 30_000,
+        navigationTimeout: 30_000,
+      },
+      // Run smoke tests in parallel with limited workers
+      fullyParallel: true,
+      retries: process.env.CI ? 1 : 0, // Reduced retries for smoke tests
+    },
     // Uncomment for cross-browser testing
     // {
     //   name: 'firefox',

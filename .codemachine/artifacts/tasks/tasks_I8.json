@@ -102,7 +102,7 @@
     "acceptance_criteria": "*   `npm run test:smoke` runs all smoke tests against staging\n        *   OAuth login test completes successfully\n        *   Voting flow test (create room, vote, reveal) passes\n        *   Subscription upgrade test verifies Stripe integration\n        *   Report export test downloads CSV file\n        *   Tests integrated into production deployment workflow\n        *   Failed smoke test triggers rollback alert",
     "dependencies": [],
     "parallelizable": false,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I8.T8",

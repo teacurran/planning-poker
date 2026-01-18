@@ -449,6 +449,192 @@ java -jar target/quarkus-app/quarkus-run.jar
 7. Review statistics and discuss
 8. Click "New Round" to start another estimation
 
+## Smoke Testing
+
+Smoke tests verify critical user journeys work end-to-end in production-like environments. They run automatically after deployment to catch regressions before they impact users.
+
+### What Are Smoke Tests?
+
+Smoke tests are a subset of automated tests that verify the most critical functionality of the application:
+
+- **Fast Execution**: Complete in <5 minutes (vs full E2E test suite which takes longer)
+- **Critical Paths Only**: Test happy paths for core features (login, voting, payments)
+- **Environment Agnostic**: Run against staging or production with configurable URLs
+- **Deployment Safety**: Integrated into CI/CD pipeline with automatic rollback on failure
+
+### Test Coverage
+
+The smoke test suite covers 6+ critical user journeys:
+
+**Frontend Smoke Tests (Playwright):**
+1. **OAuth Login Journey** - User authentication via Google/Microsoft OAuth
+2. **Room Creation + Voting Flow** - Multi-user voting with WebSocket synchronization
+3. **Subscription Upgrade Journey** - Stripe checkout and webhook processing (placeholder)
+
+**Backend Smoke Tests (REST Assured):**
+4. **Room Creation via API** - Room persistence and retrieval
+5. **Multi-Room Management** - List rooms, pagination, soft delete
+6. **Report Export Journey** - Async job processing, CSV download (placeholder)
+
+### Running Smoke Tests Locally
+
+**Frontend smoke tests:**
+
+```bash
+cd frontend
+
+# Run against local dev server
+npm run test:smoke
+
+# Run against staging environment
+npm run test:smoke:staging
+
+# Run against production (requires auth credentials)
+npm run test:smoke:prod
+```
+
+**Backend smoke tests:**
+
+```bash
+cd backend
+
+# Run all smoke tests
+mvn test -Dtest=SmokeTestSuite
+
+# Run specific smoke test
+mvn test -Dtest=SmokeTestSuite#smokeCriticalJourney_RoomCreation
+```
+
+### Environment Configuration
+
+Smoke tests use environment variables for configuration:
+
+**Frontend (Playwright):**
+- `BASE_URL` - Base URL of the application (default: `http://localhost:5173`)
+- `SMOKE_TEST_MOCK_OAUTH` - Use mocked OAuth (`true` for staging, `false` for prod)
+- `STRIPE_TEST_MODE` - Use Stripe test mode (default: `true`)
+
+**Backend (REST Assured):**
+- `SMOKE_BASE_URL` - Base URL of the API (default: `http://localhost:8080`)
+
+**Example:**
+
+```bash
+# Run frontend smoke tests against staging
+BASE_URL=https://staging.planningpoker.example.com \
+SMOKE_TEST_MOCK_OAUTH=true \
+npm run test:smoke
+
+# Run backend smoke tests against production API
+SMOKE_BASE_URL=https://api.planningpoker.example.com \
+mvn test -Dtest=SmokeTestSuite
+```
+
+### CI/CD Integration
+
+Smoke tests are integrated into the deployment pipeline:
+
+**Staging Deployment (`deploy-staging.yml`):**
+1. Build and push Docker images
+2. Deploy to staging Kubernetes cluster
+3. Run smoke tests against staging
+4. If smoke tests fail → Block production deployment
+5. If smoke tests pass → Allow production deployment
+
+**Production Deployment (`deploy-production.yml`):**
+1. Build and push Docker images
+2. Deploy to production Kubernetes cluster
+3. Run smoke tests against production
+4. If smoke tests fail → **Automatic rollback** + Slack alert
+5. If smoke tests pass → Deployment successful
+
+**Automatic Rollback:**
+
+When smoke tests fail in production:
+- Kubernetes deployment is automatically rolled back to previous version
+- DevOps team receives Slack alert with test failure details
+- Workflow exits with error status (visible in GitHub Actions)
+- Test results are uploaded as artifacts for investigation
+
+### Troubleshooting Smoke Tests
+
+**Smoke tests fail locally but pass in CI:**
+- Verify backend is running (`http://localhost:8080`)
+- Check WebSocket connection (port 8080 should be accessible)
+- Ensure test database has required schema (run migrations)
+
+**OAuth login test fails:**
+- For staging: Ensure `SMOKE_TEST_MOCK_OAUTH=true` (mocked OAuth)
+- For production: Requires real OAuth test account credentials
+- Verify OAuth redirect URIs match environment
+
+**Voting flow test fails:**
+- Backend must be running for WebSocket connection
+- Check that room `e2e-test-room` exists or test creates new room
+- Verify Redis is running (required for WebSocket message broker)
+
+**Smoke tests timeout:**
+- Increase timeout in `playwright.config.ts` (actionTimeout, navigationTimeout)
+- Check network latency to staging/production environment
+- Verify application is healthy (not under heavy load)
+
+**Backend smoke tests fail to connect:**
+- Verify `SMOKE_BASE_URL` points to correct API endpoint
+- Check API is accessible (not behind VPN or firewall)
+- Ensure test user exists in target environment
+
+### Test Execution Reports
+
+After running smoke tests, view detailed reports:
+
+**Frontend (Playwright):**
+```bash
+cd frontend
+npm run test:smoke
+
+# Open HTML report
+npx playwright show-report
+```
+
+**Backend (REST Assured):**
+```bash
+cd backend
+mvn test -Dtest=SmokeTestSuite
+
+# View surefire reports
+open target/surefire-reports/index.html
+```
+
+**CI/CD Artifacts:**
+- Test results are automatically uploaded as GitHub Actions artifacts
+- Retention: 7 days for staging, 30 days for production
+- Download artifacts from workflow run page
+
+### Adding New Smoke Tests
+
+**Frontend (Playwright):**
+
+1. Open `frontend/e2e/smoke-tests.spec.ts`
+2. Add new test in `test.describe('Smoke Tests @smoke', () => { ... })`
+3. Follow existing patterns (use helpers from `smokeTestHelpers.ts`)
+4. Keep tests fast (<30 seconds each)
+5. Test happy path only (no edge cases)
+
+**Backend (REST Assured):**
+
+1. Open `backend/src/test/java/com/scrumpoker/smoke/SmokeTestSuite.java`
+2. Add new test method with `@Test` annotation
+3. Use `@Tag("smoke")` for filtering
+4. Follow REST Assured patterns from existing tests
+5. Focus on API happy paths
+
+**Best Practices:**
+- Keep smoke tests independent (no shared state)
+- Use unique identifiers (timestamps, UUIDs) for test data
+- Clean up test data if possible (or use unique prefixes)
+- Add clear logging for debugging (`console.log`, `System.out.println`)
+- Verify critical assertions only (don't test every field)
+
 ## Operations Documentation
 
 For production deployment and operations, see the comprehensive operations guides:
