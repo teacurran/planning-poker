@@ -12,7 +12,7 @@
     "acceptance_criteria": "*   `kubectl apply -k infra/kubernetes/overlays/dev` deploys to dev cluster\n        *   Deployment creates 2 pods initially\n        *   Liveness/readiness probes configured correctly (verify pod status)\n        *   Ingress routes traffic to service\n        *   HPA created with correct scaling thresholds\n        *   ConfigMap mounted as environment variables in pods\n        *   Secrets referenced in deployment (values from external secret manager in prod)",
     "dependencies": [],
     "parallelizable": true,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I8.T2",
