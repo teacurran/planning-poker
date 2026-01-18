@@ -104,16 +104,28 @@ public class OrganizationService {
                 }
             })
             .flatMap(user -> {
-                // Create organization entity
-                final Organization organization = new Organization();
-                organization.name = name;
-                organization.domain = domain;
-                organization.ssoConfig = null;
-                organization.branding = null;
-                organization.createdAt = Instant.now();
+                // Check if domain is already claimed
+                return organizationRepository.findByDomain(domain)
+                    .flatMap(existingOrg -> {
+                        if (existingOrg != null) {
+                            return Uni.createFrom().failure(
+                                new IllegalArgumentException(
+                                    "Organization with domain " + domain
+                                    + " already exists"
+                                )
+                            );
+                        }
 
-                // Persist organization
-                return organizationRepository.persist(organization)
+                        // Create organization entity
+                        final Organization organization = new Organization();
+                        organization.name = name;
+                        organization.domain = domain;
+                        organization.ssoConfig = null;
+                        organization.branding = null;
+                        organization.createdAt = Instant.now();
+
+                        // Persist organization
+                        return organizationRepository.persist(organization)
                     .flatMap(org -> {
                         // Create organization member for owner with ADMIN role
                         final OrgMember orgMember = new OrgMember();
@@ -126,6 +138,7 @@ public class OrganizationService {
                         // Persist membership and return organization
                         return orgMemberRepository.persist(orgMember)
                             .replaceWith(org);
+                    });
                     });
             });
     }
@@ -140,7 +153,7 @@ public class OrganizationService {
      * @param orgId The organization ID
      * @param ssoConfig The SSO configuration (OIDC or SAML2)
      * @return Uni containing the updated Organization
-     * @throws IllegalArgumentException if organization not found
+     * @throws OrganizationNotFoundException if organization not found
      * @throws RuntimeException if JSON serialization fails
      */
     @WithTransaction
@@ -149,8 +162,7 @@ public class OrganizationService {
             final SsoConfig ssoConfig) {
         return organizationRepository.findById(orgId)
             .onItem().ifNull().failWith(() ->
-                new IllegalArgumentException(
-                    "Organization not found: " + orgId))
+                new OrganizationNotFoundException(orgId))
             .flatMap(organization -> {
                 try {
                     // Serialize SsoConfig to JSON string
@@ -180,7 +192,8 @@ public class OrganizationService {
      * @param userId The user ID to add as member
      * @param role The organization role (ADMIN or MEMBER)
      * @return Uni containing the created OrgMember
-     * @throws IllegalArgumentException if organization or user not found
+     * @throws OrganizationNotFoundException if organization not found
+     * @throws IllegalArgumentException if user not found
      * @throws IllegalStateException if user is already a member
      */
     @WithTransaction
@@ -191,8 +204,7 @@ public class OrganizationService {
         final Uni<Organization> orgUni =
             organizationRepository.findById(orgId)
                 .onItem().ifNull().failWith(() ->
-                    new IllegalArgumentException(
-                        "Organization not found: " + orgId));
+                    new OrganizationNotFoundException(orgId));
 
         // Validate user exists
         final Uni<User> userUni = userRepository.findById(userId)
@@ -244,8 +256,7 @@ public class OrganizationService {
      * @param orgId The organization ID
      * @param userId The user ID to remove
      * @return Uni<Void> on successful removal
-     * @throws IllegalArgumentException if member not found
-     * @throws IllegalStateException if attempting to remove last admin
+     * @throws IllegalStateException if member not found or attempting to remove last admin
      */
     @WithTransaction
     public Uni<Void> removeMember(final UUID orgId, final UUID userId) {
@@ -253,7 +264,7 @@ public class OrganizationService {
 
         return orgMemberRepository.findById(compositeId)
             .onItem().ifNull().failWith(() ->
-                new IllegalArgumentException(
+                new IllegalStateException(
                     "Member not found in organization: " + userId
                 ))
             .flatMap(member -> {
@@ -293,7 +304,7 @@ public class OrganizationService {
      * @param primaryColor Primary brand color (hex format)
      * @param secondaryColor Secondary brand color (hex format)
      * @return Uni containing the updated Organization
-     * @throws IllegalArgumentException if organization not found
+     * @throws OrganizationNotFoundException if organization not found
      * @throws RuntimeException if JSON serialization fails
      */
     @WithTransaction
@@ -304,8 +315,7 @@ public class OrganizationService {
             final String secondaryColor) {
         return organizationRepository.findById(orgId)
             .onItem().ifNull().failWith(() ->
-                new IllegalArgumentException(
-                    "Organization not found: " + orgId))
+                new OrganizationNotFoundException(orgId))
             .flatMap(organization -> {
                 try {
                     // Create branding config
@@ -334,10 +344,13 @@ public class OrganizationService {
      * Retrieves an organization by ID.
      *
      * @param orgId The organization ID
-     * @return Uni containing the Organization if found, or null
+     * @return Uni containing the Organization
+     * @throws OrganizationNotFoundException if organization not found
      */
     public Uni<Organization> getOrganization(final UUID orgId) {
-        return organizationRepository.findById(orgId);
+        return organizationRepository.findById(orgId)
+            .onItem().ifNull().failWith(() ->
+                new OrganizationNotFoundException(orgId));
     }
 
     /**

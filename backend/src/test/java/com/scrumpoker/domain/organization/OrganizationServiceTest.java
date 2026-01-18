@@ -309,7 +309,7 @@ class OrganizationServiceTest {
             organizationService.addMember(unknownOrgId, memberId, OrgRole.MEMBER)
                 .await().indefinitely()
         )
-            .isInstanceOf(IllegalArgumentException.class)
+            .isInstanceOf(OrganizationNotFoundException.class)
             .hasMessageContaining("Organization not found")
             .hasMessageContaining(unknownOrgId.toString());
 
@@ -422,7 +422,7 @@ class OrganizationServiceTest {
             organizationService.removeMember(testOrgId, unknownMemberId)
                 .await().indefinitely()
         )
-            .isInstanceOf(IllegalArgumentException.class)
+            .isInstanceOf(IllegalStateException.class)
             .hasMessageContaining("Member not found in organization")
             .hasMessageContaining(unknownMemberId.toString());
 
@@ -483,7 +483,7 @@ class OrganizationServiceTest {
             organizationService.updateSsoConfig(unknownOrgId, ssoConfig)
                 .await().indefinitely()
         )
-            .isInstanceOf(IllegalArgumentException.class)
+            .isInstanceOf(OrganizationNotFoundException.class)
             .hasMessageContaining("Organization not found")
             .hasMessageContaining(unknownOrgId.toString());
 
@@ -569,7 +569,7 @@ class OrganizationServiceTest {
                 "#33FF57"
             ).await().indefinitely()
         )
-            .isInstanceOf(IllegalArgumentException.class)
+            .isInstanceOf(OrganizationNotFoundException.class)
             .hasMessageContaining("Organization not found")
             .hasMessageContaining(unknownOrgId.toString());
 
@@ -621,19 +621,21 @@ class OrganizationServiceTest {
     }
 
     @Test
-    void testGetOrganization_NotFound_ReturnsNull() {
+    void testGetOrganization_NotFound_ThrowsException() {
         // Given
         UUID unknownOrgId = UUID.randomUUID();
 
         when(organizationRepository.findById(unknownOrgId))
             .thenReturn(Uni.createFrom().nullItem());
 
-        // When
-        Organization result = organizationService.getOrganization(unknownOrgId)
-            .await().indefinitely();
-
-        // Then
-        assertThat(result).isNull();
+        // When/Then
+        assertThatThrownBy(() ->
+            organizationService.getOrganization(unknownOrgId)
+                .await().indefinitely()
+        )
+            .isInstanceOf(OrganizationNotFoundException.class)
+            .hasMessageContaining("Organization not found")
+            .hasMessageContaining(unknownOrgId.toString());
 
         verify(organizationRepository).findById(unknownOrgId);
     }
