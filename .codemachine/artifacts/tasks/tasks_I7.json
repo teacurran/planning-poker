@@ -12,7 +12,7 @@
     "acceptance_criteria": "*   OIDC authentication flow completes with test IdP (Okta sandbox)\n        *   SAML2 authentication flow completes (Azure AD or SAML test IdP)\n        *   User attributes correctly mapped from ID token/assertion\n        *   Organization-specific SSO config loaded from database\n        *   Logout endpoint invalidates SSO session\n        *   Certificate validation works for SAML2",
     "dependencies": [],
     "parallelizable": true,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I7.T2",
@@ -27,7 +27,7 @@
     "acceptance_criteria": "*   Creating organization validates domain (user email matches domain)\n        *   SSO config persists to Organization.sso_config correctly\n        *   Adding member creates OrgMember record with role\n        *   Removing member soft-deletes membership (or hard delete based on design)\n        *   Branding config JSON serializes correctly\n        *   Non-Enterprise tier cannot create organization (403)",
     "dependencies": [],
     "parallelizable": true,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I7.T3",
@@ -42,7 +42,7 @@
     "acceptance_criteria": "*   SSO login creates audit log entry\n        *   Organization config change logged with before/after values\n        *   Member add event includes user ID and assigned role\n        *   Audit log query by orgId returns events sorted by timestamp\n        *   Async processing doesn't block main request thread\n        *   IP address and user agent correctly captured",
     "dependencies": [],
     "parallelizable": true,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I7.T4",
@@ -57,7 +57,7 @@
     "acceptance_criteria": "*   OIDC callback creates user on first login\n        *   User auto-assigned to organization matching email domain\n        *   SAML2 callback works similarly\n        *   JWT tokens returned with org membership in claims\n        *   Existing user login skips provisioning, returns tokens\n        *   Audit log records SSO login with user ID and org ID",
     "dependencies": [],
     "parallelizable": false,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I7.T5",
