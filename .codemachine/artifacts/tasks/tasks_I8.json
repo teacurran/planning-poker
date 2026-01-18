@@ -27,7 +27,7 @@
     "acceptance_criteria": "*   Prometheus scrapes application metrics endpoint\n        *   Custom business metrics appear in Prometheus targets\n        *   Grafana application dashboard displays request rate and latency\n        *   WebSocket dashboard shows connection count (test with active connections)\n        *   Business metrics dashboard shows subscription counts by tier\n        *   Dashboards load without errors in Grafana",
     "dependencies": [],
     "parallelizable": true,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I8.T3",
