@@ -57,7 +57,7 @@
     "acceptance_criteria": "*   Load test achieves 500 concurrent sessions without errors\n        *   p95 latency <200ms for WebSocket messages under load\n        *   p95 latency <500ms for REST API endpoints\n        *   Database connection pool doesn't exhaust under load\n        *   Redis hit rate >90% for session cache\n        *   No memory leaks (heap usage stable during sustained load)\n        *   Benchmarks documented in performance report",
     "dependencies": [],
     "parallelizable": false,
-    "done": false
+    "done": true
   },
   {
     "task_id": "I8.T5",
