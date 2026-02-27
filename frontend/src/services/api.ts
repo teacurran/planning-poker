@@ -1,26 +1,14 @@
 /**
  * Axios API client with authentication and token refresh logic.
- *
- * This module configures an Axios instance with:
- * - Base URL configuration (environment-aware)
- * - Request interceptor to attach Authorization header
- * - Response interceptor to handle 401 errors and trigger token refresh
- * - Automatic retry of failed requests after token refresh
  */
 
 import axios, { AxiosError, AxiosRequestConfig, InternalAxiosRequestConfig } from 'axios';
 import { useAuthStore } from '@/stores/authStore';
 import { refreshAccessToken } from './authApi';
 import type { ErrorResponse } from '@/types/auth';
-import type { FeatureNotAvailableDetails } from '@/types/subscription';
 
-// Configure base URL from environment variable with fallback
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1';
 
-/**
- * Main Axios instance for API calls.
- * Configured with base URL, timeout, and default headers.
- */
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
   timeout: 10000,
@@ -29,16 +17,8 @@ export const apiClient = axios.create({
   },
 });
 
-/**
- * Flag to prevent infinite refresh loops.
- * When a refresh is in progress, subsequent requests wait for it to complete.
- */
 let isRefreshing = false;
 
-/**
- * Queue of pending requests waiting for token refresh to complete.
- * Each item is a promise resolver that will retry the original request.
- */
 type RefreshSubscriber = {
   resolve: (token: string) => void;
   reject: (error: unknown) => void;
@@ -46,60 +26,25 @@ type RefreshSubscriber = {
 
 let refreshSubscribers: RefreshSubscriber[] = [];
 
-/**
- * Callback for handling 403 FeatureNotAvailable errors.
- * This will be set by the UpgradeModalProvider.
- */
-let featureNotAvailableHandler: ((requiredTier: string, feature: string) => void) | null = null;
-
-/**
- * Register a handler for 403 FeatureNotAvailable errors.
- * Should be called once during app initialization.
- */
-export function registerFeatureNotAvailableHandler(
-  handler: (requiredTier: string, feature: string) => void
-): void {
-  featureNotAvailableHandler = handler;
-}
-
-/**
- * Subscribe a request to the refresh queue.
- * The callback will be invoked when the refresh completes with the new token.
- */
 function subscribeTokenRefresh(subscriber: RefreshSubscriber): void {
   refreshSubscribers.push(subscriber);
 }
 
-/**
- * Notify all queued requests that the refresh is complete.
- * Each queued request will be retried with the new token.
- */
 function onTokenRefreshed(token: string): void {
   refreshSubscribers.forEach(({ resolve }) => resolve(token));
   refreshSubscribers = [];
 }
 
-/**
- * Notify queued requests that the refresh failed.
- * Ensures pending promises reject and UI can surface the failure.
- */
 function onTokenRefreshFailed(error: unknown): void {
   refreshSubscribers.forEach(({ reject }) => reject(error));
   refreshSubscribers = [];
 }
 
-/**
- * Request interceptor: Attach Authorization header if user is authenticated.
- *
- * This interceptor runs before every request and adds the Bearer token
- * from the auth store if the user is authenticated.
- */
 apiClient.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
     const { accessToken } = useAuthStore.getState();
 
-    // Only add Authorization header if token exists and this isn't a refresh request
-    if (accessToken && !config.url?.includes('/auth/refresh')) {
+    if (accessToken) {
       config.headers.Authorization = `Bearer ${accessToken}`;
     }
 
@@ -110,54 +55,23 @@ apiClient.interceptors.request.use(
   }
 );
 
-/**
- * Response interceptor: Handle 401 errors and trigger token refresh.
- *
- * When a request fails with 401 Unauthorized:
- * 1. If this is a retry attempt, reject immediately (prevent infinite loop)
- * 2. If a refresh is already in progress, queue this request
- * 3. Otherwise, initiate token refresh and queue this request
- * 4. After refresh completes, retry all queued requests with new token
- * 5. If refresh fails, clear auth state and redirect to login
- */
 apiClient.interceptors.response.use(
   (response) => response,
   async (error: AxiosError<ErrorResponse>) => {
     const originalRequest = error.config as AxiosRequestConfig & { _retry?: boolean };
-
-    // Handle 403 FeatureNotAvailable errors
-    if (error.response?.status === 403) {
-      const errorData = error.response.data;
-
-      // Check if this is a feature gate error
-      if (errorData?.error === 'FEATURE_NOT_AVAILABLE' && errorData?.details) {
-        const details = errorData.details as unknown as FeatureNotAvailableDetails;
-
-        // Trigger the upgrade modal if handler is registered
-        if (featureNotAvailableHandler && details.requiredTier && details.feature) {
-          featureNotAvailableHandler(details.requiredTier, details.feature);
-        }
-      }
-
-      return Promise.reject(error);
-    }
 
     // Only handle 401 errors for token refresh
     if (error.response?.status !== 401) {
       return Promise.reject(error);
     }
 
-    // Prevent infinite retry loops - if this request already failed once, don't retry again
     if (originalRequest._retry) {
-      // Clear auth and reject - the refresh token is invalid
       useAuthStore.getState().clearAuth();
       return Promise.reject(error);
     }
 
-    // Mark this request as a retry to prevent loops
     originalRequest._retry = true;
 
-    // If a refresh is already in progress, queue this request
     if (isRefreshing) {
       return new Promise((resolve, reject) => {
         subscribeTokenRefresh({
@@ -174,39 +88,42 @@ apiClient.interceptors.response.use(
       });
     }
 
-    // Start the refresh process
     isRefreshing = true;
 
     try {
       const { refreshToken } = useAuthStore.getState();
 
       if (!refreshToken) {
-        // No refresh token available - clear auth and reject
         useAuthStore.getState().clearAuth();
         isRefreshing = false;
         onTokenRefreshFailed(new Error('Refresh token missing'));
         return Promise.reject(error);
       }
 
-      // Call refresh endpoint
       const tokenResponse = await refreshAccessToken(refreshToken);
+      const newAccessToken = tokenResponse.access_token;
 
-      // Update auth store with new tokens
-      useAuthStore.getState().setAuth(tokenResponse);
+      // Update auth store with refreshed tokens
+      const currentUser = useAuthStore.getState().user;
+      if (currentUser) {
+        useAuthStore.getState().setAuth({
+          accessToken: newAccessToken,
+          refreshToken: tokenResponse.refresh_token,
+          expiresIn: tokenResponse.expires_in,
+          user: currentUser,
+        });
+      }
 
-      // Notify all queued requests
-      onTokenRefreshed(tokenResponse.accessToken);
+      onTokenRefreshed(newAccessToken);
 
-      // Retry the original request with new token
       if (originalRequest.headers) {
-        originalRequest.headers.Authorization = `Bearer ${tokenResponse.accessToken}`;
+        originalRequest.headers.Authorization = `Bearer ${newAccessToken}`;
       }
 
       isRefreshing = false;
       return apiClient(originalRequest);
 
     } catch (refreshError) {
-      // Refresh failed - clear auth and reject all queued requests
       useAuthStore.getState().clearAuth();
       isRefreshing = false;
       onTokenRefreshFailed(refreshError);
@@ -216,10 +133,6 @@ apiClient.interceptors.response.use(
   }
 );
 
-/**
- * Parse API error response into a user-friendly message.
- * Extracts the message field from ErrorResponse or provides a fallback.
- */
 export function getErrorMessage(error: unknown): string {
   if (axios.isAxiosError(error)) {
     const errorResponse = error.response?.data as ErrorResponse | undefined;

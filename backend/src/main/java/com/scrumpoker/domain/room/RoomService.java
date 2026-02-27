@@ -5,7 +5,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.scrumpoker.domain.user.User;
 import com.scrumpoker.repository.RoomRepository;
 import io.quarkus.hibernate.reactive.panache.Panache;
-import com.scrumpoker.security.FeatureGate;
 import io.quarkus.hibernate.reactive.panache.common.WithSession;
 import io.quarkus.hibernate.reactive.panache.common.WithTransaction;
 import io.smallrye.mutiny.Multi;
@@ -36,9 +35,6 @@ public class RoomService {
     @Inject
     ObjectMapper objectMapper;
 
-    @Inject
-    FeatureGate featureGate;
-
     /**
      * Creates a new room with the given parameters.
      * Generates a unique 6-character nanoid, validates inputs,
@@ -53,8 +49,6 @@ public class RoomService {
      * @return Uni containing the created room
      * @throws IllegalArgumentException if title exceeds max length
      *                                  or privacy mode is null
-     * @throws com.scrumpoker.security.FeatureNotAvailableException
-     *         if user's tier is insufficient for privacy mode
      */
     @WithTransaction
     public Uni<Room> createRoomWithOwnerId(String title, PrivacyMode privacyMode, UUID ownerId, RoomConfig config) {
@@ -94,21 +88,6 @@ public class RoomService {
         }
         if (privacyMode == null) {
             return Uni.createFrom().failure(new IllegalArgumentException("Privacy mode cannot be null"));
-        }
-
-        // Enforce tier requirements for privacy modes
-        if (owner != null) {
-            if (privacyMode == PrivacyMode.INVITE_ONLY) {
-                // INVITE_ONLY requires PRO_PLUS or ENTERPRISE
-                // tier
-                featureGate.requireCanCreateInviteOnlyRoom(owner);
-            } else if (privacyMode == PrivacyMode.ORG_RESTRICTED) {
-                // ORG_RESTRICTED requires ENTERPRISE tier
-                // (organization management)
-                featureGate.requireCanManageOrganization(owner);
-            }
-            // PUBLIC rooms are available to all tiers (no check
-            // needed)
         }
 
         // Use default config if not provided
@@ -192,8 +171,6 @@ public class RoomService {
      * @return Uni containing the updated room
      * @throws IllegalArgumentException if privacyMode is null
      * @throws RoomNotFoundException if room doesn't exist
-     * @throws com.scrumpoker.security.FeatureNotAvailableException
-     *         if user's tier is insufficient for privacy mode
      */
     @WithTransaction
     public Uni<Room> updatePrivacyMode(String roomId, PrivacyMode privacyMode) {
@@ -202,29 +179,12 @@ public class RoomService {
         }
 
         return findById(roomId)
-            .flatMap(room -> {
-                Uni<Room> validationChain = Uni.createFrom().item(room);
-
-                if (room.owner != null) {
-                    validationChain = Panache.getSession()
-                        .chain(session -> session.fetch(room.owner))
-                        .invoke(owner -> {
-                            if (privacyMode == PrivacyMode.INVITE_ONLY) {
-                                featureGate.requireCanCreateInviteOnlyRoom(owner);
-                            } else if (privacyMode == PrivacyMode.ORG_RESTRICTED) {
-                                featureGate.requireCanManageOrganization(owner);
-                            }
-                        })
-                        .replaceWith(room);
-                }
-
-                return validationChain
-                    .invoke(r -> {
-                        r.privacyMode = privacyMode;
-                        r.lastActiveAt = Instant.now();
-                    })
-                    .flatMap(roomRepository::persist);
-            });
+            .onItem().transform(room -> {
+                room.privacyMode = privacyMode;
+                room.lastActiveAt = Instant.now();
+                return room;
+            })
+            .flatMap(roomRepository::persist);
     }
 
     /**

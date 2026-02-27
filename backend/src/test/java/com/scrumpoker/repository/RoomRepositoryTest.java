@@ -1,6 +1,5 @@
 package com.scrumpoker.repository;
 
-import com.scrumpoker.domain.organization.Organization;
 import com.scrumpoker.domain.room.PrivacyMode;
 import com.scrumpoker.domain.room.Room;
 import com.scrumpoker.domain.user.SubscriptionTier;
@@ -35,16 +34,12 @@ class RoomRepositoryTest {
     @Inject
     UserRepository userRepository;
 
-    @Inject
-    OrganizationRepository organizationRepository;
-
     @BeforeEach
     @RunOnVertxContext
     void setUp(UniAsserter asserter) {
         // Clean up any existing test data
         asserter.execute(() -> Panache.withTransaction(() -> roomRepository.deleteAll()));
         asserter.execute(() -> Panache.withTransaction(() -> userRepository.deleteAll()));
-        asserter.execute(() -> Panache.withTransaction(() -> organizationRepository.deleteAll()));
     }
 
     @Test
@@ -122,36 +117,6 @@ class RoomRepositoryTest {
 
     @Test
     @RunOnVertxContext
-    void testRelationshipNavigationToOrganization(UniAsserter asserter) {
-        // Given: a room with an organization
-        User testOwner = createTestUser("owner@example.com", "google", "google-owner");
-        Organization testOrg = createTestOrganization("Test Org", "test.com");
-        Room room = createTestRoom("room04", "Org Test Room", testOwner);
-        room.organization = testOrg;
-        asserter.execute(() -> Panache.withTransaction(() ->
-            userRepository.persist(testOwner).flatMap(user ->
-                organizationRepository.persist(testOrg).flatMap(org -> roomRepository.persist(room))
-            )
-        ));
-
-        // When: retrieving the room
-        // Then: the organization relationship can be navigated
-        asserter.assertThat(() -> Panache.withTransaction(() -> roomRepository.findById("room04").flatMap(found ->
-            // Fetch the organization separately to verify the relationship
-            organizationRepository.findById(testOrg.orgId).map(org -> {
-                assertThat(found).isNotNull();
-                assertThat(found.organization).isNotNull();
-                assertThat(found.organization.orgId).isEqualTo(org.orgId);
-                assertThat(org.name).isEqualTo("Test Org");
-                return true;
-            })
-        )), result -> {
-            assertThat(result).isTrue();
-        });
-    }
-
-    @Test
-    @RunOnVertxContext
     void testFindActiveByOwnerId(UniAsserter asserter) {
         // Given: multiple rooms with some soft-deleted
         User testOwner = createTestUser("owner@example.com", "google", "google-owner");
@@ -176,39 +141,6 @@ class RoomRepositoryTest {
             assertThat(activeRooms).hasSize(2);
             assertThat(activeRooms).extracting(r -> r.roomId)
                     .containsExactlyInAnyOrder("room05", "room06");
-        });
-    }
-
-    @Test
-    @RunOnVertxContext
-    void testFindByOrgId(UniAsserter asserter) {
-        // Given: rooms in an organization
-        User testOwner = createTestUser("owner@example.com", "google", "google-owner");
-        Organization testOrg = createTestOrganization("Test Org", "test.com");
-        Room orgRoom1 = createTestRoom("room08", "Org Room 1", testOwner);
-        orgRoom1.organization = testOrg;
-        Room orgRoom2 = createTestRoom("room09", "Org Room 2", testOwner);
-        orgRoom2.organization = testOrg;
-        Room nonOrgRoom = createTestRoom("room10", "Non-Org Room", testOwner);
-
-        asserter.execute(() -> Panache.withTransaction(() ->
-            userRepository.persist(testOwner).flatMap(user ->
-                organizationRepository.persist(testOrg).flatMap(org ->
-                    roomRepository.persist(orgRoom1).flatMap(r1 ->
-                        roomRepository.persist(orgRoom2).flatMap(r2 ->
-                            roomRepository.persist(nonOrgRoom)
-                        )
-                    )
-                )
-            )
-        ));
-
-        // When: finding rooms by organization ID
-        // Then: only organization rooms are returned
-        asserter.assertThat(() -> Panache.withTransaction(() -> roomRepository.findByOrgId(testOrg.orgId)), orgRooms -> {
-            assertThat(orgRooms).hasSize(2);
-            assertThat(orgRooms).extracting(r -> r.roomId)
-                    .containsExactlyInAnyOrder("room08", "room09");
         });
     }
 
@@ -339,34 +271,6 @@ class RoomRepositoryTest {
 
     @Test
     @RunOnVertxContext
-    void testCountByOrgId(UniAsserter asserter) {
-        // Given: organization rooms
-        User testOwner = createTestUser("owner@example.com", "google", "google-owner");
-        Organization testOrg = createTestOrganization("Test Org", "test.com");
-        Room orgRoom1 = createTestRoom("room21", "Org Count Room 1", testOwner);
-        orgRoom1.organization = testOrg;
-        Room orgRoom2 = createTestRoom("room22", "Org Count Room 2", testOwner);
-        orgRoom2.organization = testOrg;
-
-        asserter.execute(() -> Panache.withTransaction(() ->
-            userRepository.persist(testOwner).flatMap(user ->
-                organizationRepository.persist(testOrg).flatMap(org ->
-                    roomRepository.persist(orgRoom1).flatMap(r1 ->
-                        roomRepository.persist(orgRoom2)
-                    )
-                )
-            )
-        ));
-
-        // When: counting rooms by organization
-        // Then: all organization rooms are counted
-        asserter.assertThat(() -> Panache.withTransaction(() -> roomRepository.countByOrgId(testOrg.orgId)), count -> {
-            assertThat(count).isEqualTo(2);
-        });
-    }
-
-    @Test
-    @RunOnVertxContext
     void testSoftDelete(UniAsserter asserter) {
         // Given: a persisted room
         User testOwner = createTestUser("owner@example.com", "google", "google-owner");
@@ -437,23 +341,6 @@ class RoomRepositoryTest {
         user.displayName = "Test User";
         user.subscriptionTier = SubscriptionTier.FREE;
         return user;
-    }
-
-    /**
-     * Helper method to create test organizations.
-     * Note: orgId is NOT set here - it will be auto-generated by Hibernate on persist.
-     */
-    private Organization createTestOrganization(String name, String domain) {
-        Organization org = new Organization();
-        // DO NOT SET org.orgId - let Hibernate auto-generate it
-        org.name = name;
-        org.domain = domain;
-        org.ssoConfig = "{}";
-        org.branding = "{}";
-        // Set timestamps manually since @CreationTimestamp/@UpdateTimestamp run after validation
-        org.createdAt = Instant.now();
-        org.updatedAt = Instant.now();
-        return org;
     }
 
     /**

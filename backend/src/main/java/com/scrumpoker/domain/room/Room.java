@@ -1,14 +1,11 @@
 package com.scrumpoker.domain.room;
 
-import com.scrumpoker.domain.organization.Organization;
 import com.scrumpoker.domain.user.User;
-import com.vladmihalcea.hibernate.type.json.JsonBinaryType;
 import io.quarkus.hibernate.reactive.panache.PanacheEntityBase;
 import jakarta.persistence.*;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import org.hibernate.annotations.CreationTimestamp;
-import org.hibernate.annotations.Type;
 import org.hibernate.annotations.UpdateTimestamp;
 
 import java.time.Instant;
@@ -41,10 +38,6 @@ public class Room extends PanacheEntityBase {
     @JoinColumn(name = "owner_id", foreignKey = @ForeignKey(name = "fk_room_owner"))
     public User owner;
 
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "org_id", foreignKey = @ForeignKey(name = "fk_room_org"))
-    public Organization organization;
-
     @NotNull
     @Size(max = 255)
     @Column(name = "title", nullable = false, length = 255)
@@ -60,8 +53,7 @@ public class Room extends PanacheEntityBase {
      * Stored as JSON string, serialized/deserialized by application code.
      */
     @NotNull
-    @Type(JsonBinaryType.class)
-    @Column(name = "config", nullable = false, columnDefinition = "jsonb")
+    @Column(name = "config", nullable = false, columnDefinition = "text")
     public String config;
 
     @NotNull
@@ -86,7 +78,4 @@ public class Room extends PanacheEntityBase {
 
     @OneToMany(mappedBy = "room", fetch = FetchType.LAZY)
     public Set<Round> rounds = new HashSet<>();
-
-    @OneToMany(mappedBy = "room", fetch = FetchType.LAZY)
-    public Set<SessionHistory> sessionHistoryRecords = new HashSet<>();
 }

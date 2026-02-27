@@ -1,5 +1,4 @@
 package com.scrumpoker.api.rest;
-import com.scrumpoker.security.JwtClaims;
 import io.quarkus.security.identity.AuthenticationRequestContext;
 import io.quarkus.security.identity.SecurityIdentity;
 import io.quarkus.security.identity.SecurityIdentityAugmentor;
@@ -9,7 +8,6 @@ import jakarta.annotation.Priority;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.inject.Alternative;
 
-import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -45,18 +43,11 @@ public class TestSecurityIdentityAugmentor implements SecurityIdentityAugmentor 
         }
         final UUID principalId = principalIdValue;
 
-        JwtClaims claims = new JwtClaims(
-            principalId,
-            "test-user@example.com",
-            List.of("USER"),
-            "PRO"
-        );
-
         return Uni.createFrom().item(QuarkusSecurityIdentity.builder()
             .setAnonymous(false)
             .setPrincipal(() -> principalId.toString())
             .addRole("USER")
-            .addAttribute("jwt.claims", claims)
+            .addAttribute("email", "test-user@example.com")
             .build());
     }
 }

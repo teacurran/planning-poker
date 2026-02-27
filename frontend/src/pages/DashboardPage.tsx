@@ -6,21 +6,18 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useUser, useRooms, useUserPreferences } from '@/services/apiHooks';
-import { useSessions } from '@/services/reportingApi';
 import { useAuthStore } from '@/stores/authStore';
 import { UserProfileCard } from '@/components/dashboard/UserProfileCard';
 import { RoomListCard } from '@/components/dashboard/RoomListCard';
 import { CreateRoomButton } from '@/components/dashboard/CreateRoomButton';
 import { ViewPreferencesButton } from '@/components/dashboard/ViewPreferencesButton';
 import { UserPreferencesModal } from '@/components/dashboard/UserPreferencesModal';
-import { RecentSessionsCard } from '@/components/dashboard/RecentSessionsCard';
 
 const DashboardPage: React.FC = () => {
   const navigate = useNavigate();
   const { user: authUser } = useAuthStore();
   const [isPreferencesOpen, setIsPreferencesOpen] = React.useState(false);
 
-  // Fetch user profile and rooms data
   const {
     data: userData,
     isLoading: userLoading,
@@ -36,13 +33,6 @@ const DashboardPage: React.FC = () => {
   } = useRooms();
 
   const {
-    data: sessionsData,
-    isLoading: sessionsLoading,
-    error: sessionsError,
-    refetch: refetchSessions,
-  } = useSessions({ page: 0, size: 4 });
-
-  const {
     data: preferencesData,
     isLoading: preferencesLoading,
     error: preferencesError,
@@ -51,23 +41,11 @@ const DashboardPage: React.FC = () => {
     enabled: isPreferencesOpen && !!authUser?.userId,
   });
 
-  // Combined loading state
-  const isLoading = userLoading || roomsLoading || sessionsLoading;
+  const isLoading = userLoading || roomsLoading;
+  const error = userError || roomsError;
 
-  // Combined error state
-  const error = userError || roomsError || sessionsError;
-
-  // Handle room card click
   const handleRoomClick = (roomId: string) => {
     navigate(`/room/${roomId}`);
-  };
-
-  const handleSessionClick = (sessionId: string) => {
-    navigate(`/reports/sessions/${sessionId}`);
-  };
-
-  const handleViewAllSessions = () => {
-    navigate('/reports/sessions');
   };
 
   const handleViewPreferences = () => {
@@ -78,18 +56,15 @@ const DashboardPage: React.FC = () => {
     setIsPreferencesOpen(false);
   };
 
-  // Loading state with skeletons
   if (isLoading) {
     return (
       <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
         <div className="container mx-auto px-4 py-8">
-          {/* Header skeleton */}
           <div className="mb-8">
             <div className="animate-pulse bg-gray-300 dark:bg-gray-700 h-9 w-48 rounded mb-2"></div>
             <div className="animate-pulse bg-gray-300 dark:bg-gray-700 h-5 w-64 rounded"></div>
           </div>
 
-          {/* User profile skeleton */}
           <div className="mb-8">
             <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
               <div className="flex items-center space-x-4">
@@ -102,13 +77,11 @@ const DashboardPage: React.FC = () => {
             </div>
           </div>
 
-          {/* Quick actions skeleton */}
           <div className="mb-8 grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="animate-pulse bg-gray-300 dark:bg-gray-700 h-14 w-full rounded-lg"></div>
             <div className="animate-pulse bg-gray-300 dark:bg-gray-700 h-14 w-full rounded-lg"></div>
           </div>
 
-          {/* Rooms section skeleton */}
           <div>
             <div className="animate-pulse bg-gray-300 dark:bg-gray-700 h-8 w-32 rounded mb-4"></div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -121,35 +94,22 @@ const DashboardPage: React.FC = () => {
               ))}
             </div>
           </div>
-
-          {/* Recent sessions skeleton */}
-          <div className="mt-10">
-            <div className="animate-pulse bg-gray-300 dark:bg-gray-700 h-8 w-48 rounded mb-4"></div>
-            <div className="space-y-4">
-              {[1, 2, 3].map((i) => (
-                <div key={i} className="animate-pulse bg-white dark:bg-gray-800 rounded-lg h-16"></div>
-              ))}
-            </div>
-          </div>
         </div>
       </div>
     );
   }
 
-  // Error state
   if (error) {
     return (
       <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
         <div className="container mx-auto px-4 py-8">
           <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-6 max-w-2xl mx-auto">
             <div className="flex items-start">
-              {/* Error icon */}
               <svg
                 className="w-6 h-6 text-red-600 dark:text-red-400 mr-3 flex-shrink-0 mt-0.5"
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
-                xmlns="http://www.w3.org/2000/svg"
               >
                 <path
                   strokeLinecap="round"
@@ -169,7 +129,6 @@ const DashboardPage: React.FC = () => {
                   onClick={() => {
                     refetchUser();
                     refetchRooms();
-                    refetchSessions();
                   }}
                   className="bg-red-600 hover:bg-red-700 text-white font-medium py-2 px-4 rounded transition-colors duration-200"
                 >
@@ -183,16 +142,12 @@ const DashboardPage: React.FC = () => {
     );
   }
 
-  // Success state - display data
   const rooms = roomsData?.rooms || [];
   const hasRooms = rooms.length > 0;
-  const sessions = sessionsData?.sessions || [];
-  const recentSessions = sessions.slice(0, 4);
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
       <div className="container mx-auto px-4 py-8">
-        {/* Header */}
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">
             Dashboard
@@ -202,20 +157,17 @@ const DashboardPage: React.FC = () => {
           </p>
         </div>
 
-        {/* User profile section */}
         {userData && (
           <div className="mb-8">
             <UserProfileCard user={userData} />
           </div>
         )}
 
-        {/* Quick actions */}
         <div className="mb-8 grid grid-cols-1 md:grid-cols-2 gap-4">
           <CreateRoomButton />
           <ViewPreferencesButton onClick={handleViewPreferences} />
         </div>
 
-        {/* Rooms section */}
         <div>
           <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-4">
             Your Rooms
@@ -232,14 +184,12 @@ const DashboardPage: React.FC = () => {
               ))}
             </div>
           ) : (
-            // Empty state
             <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-12 text-center">
               <svg
                 className="w-16 h-16 text-gray-400 dark:text-gray-600 mx-auto mb-4"
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
-                xmlns="http://www.w3.org/2000/svg"
               >
                 <path
                   strokeLinecap="round"
@@ -254,31 +204,15 @@ const DashboardPage: React.FC = () => {
               <p className="text-gray-600 dark:text-gray-400 mb-6">
                 Create your first room to start planning poker sessions with your team
               </p>
-              <button
-                onClick={() => navigate('/rooms/new')}
-                className="bg-primary-600 hover:bg-primary-700 text-white font-medium py-2 px-6 rounded transition-colors duration-200"
-              >
-                Create Your First Room
-              </button>
             </div>
           )}
         </div>
 
-        {/* Pagination info (if needed in future) */}
         {roomsData && roomsData.totalPages > 1 && (
           <div className="mt-6 text-center text-sm text-gray-600 dark:text-gray-400">
             Showing page {roomsData.page + 1} of {roomsData.totalPages} ({roomsData.totalElements} total rooms)
           </div>
         )}
-
-        {/* Recent sessions */}
-        <div className="mt-10">
-          <RecentSessionsCard
-            sessions={recentSessions}
-            onSessionClick={handleSessionClick}
-            onViewAll={handleViewAllSessions}
-          />
-        </div>
       </div>
 
       <UserPreferencesModal

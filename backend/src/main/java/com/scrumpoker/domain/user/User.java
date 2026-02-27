@@ -1,7 +1,5 @@
 package com.scrumpoker.domain.user;
 
-import com.scrumpoker.domain.organization.AuditLog;
-import com.scrumpoker.domain.organization.OrgMember;
 import com.scrumpoker.domain.room.Room;
 import com.scrumpoker.domain.room.RoomParticipant;
 import io.quarkus.hibernate.reactive.panache.PanacheEntityBase;
@@ -86,11 +84,5 @@ public class User extends PanacheEntityBase {
     public Set<Room> ownedRooms = new HashSet<>();
 
     @OneToMany(mappedBy = "user", fetch = FetchType.LAZY)
-    public Set<OrgMember> memberships = new HashSet<>();
-
-    @OneToMany(mappedBy = "user", fetch = FetchType.LAZY)
     public Set<RoomParticipant> roomParticipants = new HashSet<>();
-
-    @OneToMany(mappedBy = "user", fetch = FetchType.LAZY)
-    public Set<AuditLog> auditLogs = new HashSet<>();
 }

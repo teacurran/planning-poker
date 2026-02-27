@@ -1,12 +1,10 @@
 package com.scrumpoker.domain.user;
 
-import com.vladmihalcea.hibernate.type.json.JsonBinaryType;
 import io.quarkus.hibernate.reactive.panache.PanacheEntityBase;
 import jakarta.persistence.*;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import org.hibernate.annotations.CreationTimestamp;
-import org.hibernate.annotations.Type;
 import org.hibernate.annotations.UpdateTimestamp;
 
 import java.time.Instant;
@@ -38,8 +36,7 @@ public class UserPreference extends PanacheEntityBase {
      * JSONB column: deck_type, timer_enabled, reveal_behavior.
      * Stored as JSON string, serialized/deserialized by application code.
      */
-    @Type(JsonBinaryType.class)
-    @Column(name = "default_room_config", columnDefinition = "jsonb")
+    @Column(name = "default_room_config", columnDefinition = "text")
     public String defaultRoomConfig;
 
     @Size(max = 20)
@@ -50,8 +47,7 @@ public class UserPreference extends PanacheEntityBase {
      * JSONB column: email_enabled, push_enabled, notification_types.
      * Stored as JSON string, serialized/deserialized by application code.
      */
-    @Type(JsonBinaryType.class)
-    @Column(name = "notification_settings", columnDefinition = "jsonb")
+    @Column(name = "notification_settings", columnDefinition = "text")
     public String notificationSettings;
 
     @NotNull

@@ -1,67 +1,42 @@
 /**
- * Authentication API service.
- *
- * This module provides functions for authentication-related API calls:
- * - Token refresh (exchange refresh token for new access token)
- * - Logout (revoke refresh token)
- *
- * NOTE: This file uses a separate Axios instance WITHOUT the response interceptor
- * to prevent infinite loops when the refresh endpoint itself returns 401.
+ * Authentication API service for Keycloak OIDC.
  */
 
-import axios from 'axios';
-import type { TokenResponse } from '@/types/auth';
-
-// Use the same base URL as the main API client
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1';
+const KEYCLOAK_TOKEN_URL = import.meta.env.VITE_KEYCLOAK_TOKEN_URL
+  || 'https://auth.villagecompute.com/realms/planning-poker/protocol/openid-connect/token';
+const KEYCLOAK_CLIENT_ID = import.meta.env.VITE_KEYCLOAK_CLIENT_ID || 'planning-poker';
+const KEYCLOAK_LOGOUT_URL = import.meta.env.VITE_KEYCLOAK_LOGOUT_URL
+  || 'https://auth.villagecompute.com/realms/planning-poker/protocol/openid-connect/logout';
 
 /**
- * Dedicated Axios instance for auth operations.
- * Does NOT use the response interceptor to avoid infinite refresh loops.
+ * Refresh the access token using the Keycloak token endpoint.
  */
-const authApiClient = axios.create({
-  baseURL: API_BASE_URL,
-  timeout: 10000,
-  headers: {
-    'Content-Type': 'application/json',
-  },
-});
-
-/**
- * Refresh the access token using a valid refresh token.
- *
- * Calls POST /api/v1/auth/refresh with the refresh token in the request body.
- * Returns a new TokenResponse with rotated tokens.
- *
- * @param refreshToken - The current valid refresh token
- * @returns Promise resolving to TokenResponse with new access and refresh tokens
- * @throws AxiosError if the refresh token is invalid or expired
- */
-export async function refreshAccessToken(refreshToken: string): Promise<TokenResponse> {
-  const response = await authApiClient.post<TokenResponse>('/auth/refresh', {
-    refreshToken,
+export async function refreshAccessToken(refreshToken: string): Promise<{
+  access_token: string;
+  refresh_token: string;
+  expires_in: number;
+}> {
+  const response = await fetch(KEYCLOAK_TOKEN_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'refresh_token',
+      client_id: KEYCLOAK_CLIENT_ID,
+      refresh_token: refreshToken,
+    }),
   });
 
-  return response.data;
+  if (!response.ok) {
+    throw new Error(`Token refresh failed: ${response.statusText}`);
+  }
+
+  return response.json();
 }
 
 /**
- * Logout the user by revoking the refresh token.
- *
- * Calls POST /api/v1/auth/logout with the Authorization header.
- * This invalidates the refresh token on the server side.
- *
- * @param accessToken - The current access token for authorization
- * @returns Promise resolving when logout is complete
+ * Logout by redirecting to Keycloak's end session endpoint.
  */
-export async function logout(accessToken: string): Promise<void> {
-  await authApiClient.post(
-    '/auth/logout',
-    {},
-    {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-      },
-    }
-  );
+export function logout(): void {
+  const redirectUri = `${window.location.origin}/login`;
+  window.location.href = `${KEYCLOAK_LOGOUT_URL}?post_logout_redirect_uri=${encodeURIComponent(redirectUri)}&client_id=${KEYCLOAK_CLIENT_ID}`;
 }

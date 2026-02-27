@@ -1,13 +1,17 @@
 /**
- * OAuth2 callback page that handles the redirect from OAuth providers.
- * Extracts authorization code, exchanges it for tokens, and redirects to dashboard.
+ * OIDC callback page that handles the redirect from Keycloak.
+ * Exchanges the authorization code for tokens directly with Keycloak's token endpoint.
  */
 
 import React, { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
-import { retrieveAndClearPKCESession } from '@/utils/pkce';
-import type { OAuthCallbackRequest, TokenResponse, ErrorResponse } from '@/types/auth';
+
+const KEYCLOAK_TOKEN_URL = import.meta.env.VITE_KEYCLOAK_TOKEN_URL
+  || 'https://auth.villagecompute.com/realms/planning-poker/protocol/openid-connect/token';
+const KEYCLOAK_USERINFO_URL = import.meta.env.VITE_KEYCLOAK_USERINFO_URL
+  || 'https://auth.villagecompute.com/realms/planning-poker/protocol/openid-connect/userinfo';
+const KEYCLOAK_CLIENT_ID = import.meta.env.VITE_KEYCLOAK_CLIENT_ID || 'planning-poker';
 
 const OAuthCallbackPage: React.FC = () => {
   const [searchParams] = useSearchParams();
@@ -16,19 +20,18 @@ const OAuthCallbackPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const handleOAuthCallback = async () => {
+    const handleCallback = async () => {
       try {
-        // Step 1: Check for OAuth error (user denied consent)
+        // Check for OAuth error
         const oauthError = searchParams.get('error');
         if (oauthError) {
           const errorDescription = searchParams.get('error_description') || 'Authentication failed';
-          console.error('OAuth error:', oauthError, errorDescription);
           setError(`Authentication failed: ${errorDescription}`);
           setTimeout(() => navigate('/login'), 3000);
           return;
         }
 
-        // Step 2: Extract authorization code from URL
+        // Extract authorization code
         const code = searchParams.get('code');
         if (!code) {
           setError('Authorization code not found in callback URL');
@@ -36,52 +39,65 @@ const OAuthCallbackPage: React.FC = () => {
           return;
         }
 
-        // Step 3: Retrieve PKCE session data from sessionStorage
-        const pkceSession = retrieveAndClearPKCESession();
-        if (!pkceSession) {
+        // Retrieve PKCE data from session storage
+        const codeVerifier = sessionStorage.getItem('pkce_code_verifier');
+        const redirectUri = sessionStorage.getItem('pkce_redirect_uri');
+        sessionStorage.removeItem('pkce_code_verifier');
+        sessionStorage.removeItem('pkce_redirect_uri');
+
+        if (!codeVerifier || !redirectUri) {
           setError('PKCE session data not found. Please try logging in again.');
           setTimeout(() => navigate('/login'), 3000);
           return;
         }
 
-        // Step 4: Build request payload for token exchange
-        const requestPayload: OAuthCallbackRequest = {
-          code,
-          provider: pkceSession.provider,
-          redirectUri: pkceSession.redirectUri,
-          codeVerifier: pkceSession.codeVerifier,
-        };
-
-        // Step 5: Call backend API to exchange code for tokens
-        console.log(`Exchanging authorization code for ${pkceSession.provider} tokens...`);
-        const response = await fetch('/api/v1/auth/oauth/callback', {
+        // Exchange code for tokens at Keycloak token endpoint
+        const tokenResponse = await fetch(KEYCLOAK_TOKEN_URL, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(requestPayload),
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            grant_type: 'authorization_code',
+            client_id: KEYCLOAK_CLIENT_ID,
+            code,
+            redirect_uri: redirectUri,
+            code_verifier: codeVerifier,
+          }),
         });
 
-        // Step 6: Handle response
-        if (!response.ok) {
-          const errorData: ErrorResponse = await response.json();
-          console.error('Token exchange failed:', errorData);
-          setError(`Authentication failed: ${errorData.message}`);
+        if (!tokenResponse.ok) {
+          const errorData = await tokenResponse.json().catch(() => ({}));
+          setError(`Token exchange failed: ${errorData.error_description || tokenResponse.statusText}`);
           setTimeout(() => navigate('/login'), 3000);
           return;
         }
 
-        // Step 7: Parse token response
-        const tokenResponse: TokenResponse = await response.json();
-        console.log('Authentication successful:', {
-          user: tokenResponse.user.email,
-          tier: tokenResponse.user.subscriptionTier,
+        const tokens = await tokenResponse.json();
+
+        // Fetch user info from Keycloak
+        const userinfoResponse = await fetch(KEYCLOAK_USERINFO_URL, {
+          headers: { Authorization: `Bearer ${tokens.access_token}` },
         });
 
-        // Step 8: Store tokens and user data in auth store
-        setAuth(tokenResponse);
+        if (!userinfoResponse.ok) {
+          setError('Failed to fetch user info');
+          setTimeout(() => navigate('/login'), 3000);
+          return;
+        }
 
-        // Step 9: Redirect to dashboard
+        const userinfo = await userinfoResponse.json();
+
+        // Store auth state
+        setAuth({
+          accessToken: tokens.access_token,
+          refreshToken: tokens.refresh_token,
+          expiresIn: tokens.expires_in,
+          user: {
+            userId: userinfo.sub,
+            email: userinfo.email || '',
+            displayName: userinfo.preferred_username || userinfo.name || 'User',
+          },
+        });
+
         navigate('/dashboard', { replace: true });
       } catch (err) {
         console.error('Unexpected error during OAuth callback:', err);
@@ -90,14 +106,13 @@ const OAuthCallbackPage: React.FC = () => {
       }
     };
 
-    handleOAuthCallback();
+    handleCallback();
   }, [searchParams, navigate, setAuth]);
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900">
       <div className="max-w-md w-full p-8 text-center">
         {error ? (
-          // Error state
           <div className="space-y-4">
             <div className="w-16 h-16 mx-auto text-red-500">
               <svg
@@ -123,10 +138,28 @@ const OAuthCallbackPage: React.FC = () => {
             </p>
           </div>
         ) : (
-          // Loading state
           <div className="space-y-4">
             <div className="w-16 h-16 mx-auto">
-              <LoadingSpinner />
+              <svg
+                className="animate-spin h-full w-full text-primary-600"
+                xmlns="http://www.w3.org/2000/svg"
+                fill="none"
+                viewBox="0 0 24 24"
+              >
+                <circle
+                  className="opacity-25"
+                  cx="12"
+                  cy="12"
+                  r="10"
+                  stroke="currentColor"
+                  strokeWidth="4"
+                />
+                <path
+                  className="opacity-75"
+                  fill="currentColor"
+                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                />
+              </svg>
             </div>
             <h2 className="text-2xl font-bold text-gray-900 dark:text-white">
               Completing Sign In
@@ -140,31 +173,5 @@ const OAuthCallbackPage: React.FC = () => {
     </div>
   );
 };
-
-/**
- * Loading spinner component.
- */
-const LoadingSpinner: React.FC = () => (
-  <svg
-    className="animate-spin h-full w-full text-primary-600"
-    xmlns="http://www.w3.org/2000/svg"
-    fill="none"
-    viewBox="0 0 24 24"
-  >
-    <circle
-      className="opacity-25"
-      cx="12"
-      cy="12"
-      r="10"
-      stroke="currentColor"
-      strokeWidth="4"
-    ></circle>
-    <path
-      className="opacity-75"
-      fill="currentColor"
-      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-    ></path>
-  </svg>
-);
 
 export default OAuthCallbackPage;

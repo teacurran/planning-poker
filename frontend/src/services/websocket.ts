@@ -6,10 +6,8 @@
  * - Exponential backoff reconnection strategy (1s, 2s, 4s, 8s, max 16s)
  * - Message serialization and deserialization
  * - Event handler registration and dispatching
- * - Heartbeat ping/pong mechanism
+ * - Application-level ping/pong heartbeat (ping.v1 / pong.v1)
  * - Connection status tracking
- *
- * @see api/websocket-protocol.md
  */
 
 import type {
@@ -23,36 +21,27 @@ import type {
 // Configuration
 // ========================================
 
-/**
- * WebSocket base URL based on environment.
- * In development: ws://localhost:8080
- * In production: wss://api.scrumpoker.com
- */
 const getWebSocketBaseUrl = (): string => {
-  // Check if we have an environment variable (Vite uses VITE_ prefix)
   const envUrl = import.meta.env.VITE_WS_BASE_URL;
   if (envUrl) {
     return envUrl;
   }
 
-  // Auto-detect based on current page protocol and hostname
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const hostname = window.location.hostname;
 
-  // In development, connect to backend on port 8080
   if (hostname === 'localhost' || hostname === '127.0.0.1') {
     return `${protocol}//${hostname}:8080`;
   }
 
-  // In production, use same hostname
   return `${protocol}//${hostname}`;
 };
 
 const WS_BASE_URL = getWebSocketBaseUrl();
-const HEARTBEAT_INTERVAL = 30000; // 30 seconds
-const JOIN_TIMEOUT = 10000; // 10 seconds - must send room.join.v1 within this time
-const MAX_RECONNECT_DELAY = 16000; // 16 seconds max delay
-const INITIAL_RECONNECT_DELAY = 1000; // 1 second initial delay
+const PING_INTERVAL = 25000; // 25 seconds - send ping.v1 every 25s
+const JOIN_TIMEOUT = 10000; // 10 seconds
+const MAX_RECONNECT_DELAY = 16000;
+const INITIAL_RECONNECT_DELAY = 1000;
 
 // ========================================
 // WebSocketManager Class
@@ -65,29 +54,18 @@ class WebSocketManager {
   private connectionStatus: ConnectionStatus = 'disconnected';
   private reconnectAttempts = 0;
   private reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
-  private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
+  private pingInterval: ReturnType<typeof setInterval> | null = null;
   private joinTimeout: ReturnType<typeof setTimeout> | null = null;
 
-  // Event handlers: Map<messageType, Set<handler>>
   private eventHandlers = new Map<string, Set<MessageHandler>>();
-
-  // Connection status listeners
   private statusListeners = new Set<(status: ConnectionStatus) => void>();
-
-  // Track last event ID for reconnection event replay
   private lastEventId: string | null = null;
 
-  // User information for room.join.v1
   private userDisplayName: string | null = null;
   private userRole: 'HOST' | 'VOTER' | 'OBSERVER' = 'VOTER';
 
   /**
    * Connect to a room's WebSocket endpoint.
-   *
-   * @param roomId - 6-character room identifier
-   * @param token - JWT access token
-   * @param displayName - User's display name
-   * @param role - User's role (HOST, VOTER, or OBSERVER)
    */
   connect(
     roomId: string,
@@ -95,7 +73,6 @@ class WebSocketManager {
     displayName: string,
     role: 'HOST' | 'VOTER' | 'OBSERVER' = 'VOTER'
   ): void {
-    // Clean up existing connection if any
     if (this.ws) {
       this.disconnect();
     }
@@ -121,22 +98,18 @@ class WebSocketManager {
 
   /**
    * Disconnect from the WebSocket.
-   * Sends room.leave.v1 message for graceful disconnection.
    */
   disconnect(): void {
-    // Clear all timers
     this.clearTimers();
 
-    // Send graceful leave message if connected
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       try {
         this.send('room.leave.v1', { reason: 'user_initiated' });
-      } catch (error) {
-        console.error('[WebSocketManager] Failed to send leave message:', error);
+      } catch {
+        // Ignore send errors during disconnect
       }
     }
 
-    // Close WebSocket connection
     if (this.ws) {
       this.ws.close(1000, 'Normal closure');
       this.ws = null;
@@ -151,10 +124,6 @@ class WebSocketManager {
 
   /**
    * Send a message to the server.
-   *
-   * @param type - Message type (e.g., 'vote.cast.v1')
-   * @param payload - Message payload
-   * @returns Request ID for correlation
    */
   send<T = unknown>(type: string, payload: T): string {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
@@ -168,21 +137,12 @@ class WebSocketManager {
       payload,
     };
 
-    try {
-      this.ws.send(JSON.stringify(message));
-      return requestId;
-    } catch (error) {
-      console.error('[WebSocketManager] Failed to send message:', error);
-      throw error;
-    }
+    this.ws.send(JSON.stringify(message));
+    return requestId;
   }
 
   /**
    * Register an event handler for a specific message type.
-   *
-   * @param messageType - Message type to listen for
-   * @param handler - Handler function
-   * @returns Unsubscribe function
    */
   on<T = unknown>(messageType: string, handler: MessageHandler<T>): () => void {
     if (!this.eventHandlers.has(messageType)) {
@@ -192,7 +152,6 @@ class WebSocketManager {
     const handlers = this.eventHandlers.get(messageType)!;
     handlers.add(handler as MessageHandler);
 
-    // Return unsubscribe function
     return () => {
       handlers.delete(handler as MessageHandler);
       if (handlers.size === 0) {
@@ -203,14 +162,9 @@ class WebSocketManager {
 
   /**
    * Register a connection status listener.
-   *
-   * @param listener - Status change listener
-   * @returns Unsubscribe function
    */
   onStatusChange(listener: (status: ConnectionStatus) => void): () => void {
     this.statusListeners.add(listener);
-
-    // Immediately invoke with current status
     listener(this.connectionStatus);
 
     return () => {
@@ -218,16 +172,10 @@ class WebSocketManager {
     };
   }
 
-  /**
-   * Get current connection status.
-   */
   getStatus(): ConnectionStatus {
     return this.connectionStatus;
   }
 
-  /**
-   * Check if currently connected.
-   */
   isConnected(): boolean {
     return this.connectionStatus === 'connected';
   }
@@ -249,10 +197,10 @@ class WebSocketManager {
     console.log('[WebSocketManager] WebSocket connection established');
 
     this.setConnectionStatus('connected');
-    this.reconnectAttempts = 0; // Reset reconnection counter
+    this.reconnectAttempts = 0;
 
-    // Start heartbeat
-    this.startHeartbeat();
+    // Start application-level ping
+    this.startPing();
 
     // Send room.join.v1 message immediately
     this.sendJoinMessage();
@@ -262,9 +210,14 @@ class WebSocketManager {
     try {
       const message = JSON.parse(event.data) as WebSocketMessage;
 
-      // Store lastEventId if present (for reconnection event replay)
+      // Track lastEventId for reconnection replay
       if (message.payload && typeof message.payload === 'object' && 'lastEventId' in message.payload) {
         this.lastEventId = (message.payload as { lastEventId: string }).lastEventId;
+      }
+
+      // Handle pong.v1 silently (just confirms connection is alive)
+      if (message.type === 'pong.v1') {
+        return;
       }
 
       // Dispatch to registered handlers
@@ -293,7 +246,7 @@ class WebSocketManager {
     this.clearTimers();
     this.setConnectionStatus('disconnected');
 
-    // Reconnect if closure was unexpected (not normal closure)
+    // Reconnect if closure was unexpected
     if (event.code !== 1000) {
       this.scheduleReconnect();
     }
@@ -308,31 +261,27 @@ class WebSocketManager {
     const payload: RoomJoinPayload = {
       displayName: this.userDisplayName,
       role: this.userRole,
-      lastEventId: this.lastEventId, // Include for event replay on reconnection
+      lastEventId: this.lastEventId,
     };
 
     try {
       this.send('room.join.v1', payload);
-      console.log('[WebSocketManager] Sent room.join.v1 message');
     } catch (error) {
       console.error('[WebSocketManager] Failed to send join message:', error);
     }
 
-    // Set timeout to ensure we don't violate the 10-second join requirement
     this.joinTimeout = setTimeout(() => {
       if (this.connectionStatus === 'connected') {
-        console.warn('[WebSocketManager] Join message timeout - connection may be closed by server');
+        console.warn('[WebSocketManager] Join message timeout');
       }
     }, JOIN_TIMEOUT);
   }
 
   private scheduleReconnect(): void {
-    // Clear any existing reconnect timeout
     if (this.reconnectTimeout) {
       clearTimeout(this.reconnectTimeout);
     }
 
-    // Calculate delay with exponential backoff: 1s, 2s, 4s, 8s, 16s (max)
     const delay = Math.min(
       INITIAL_RECONNECT_DELAY * Math.pow(2, this.reconnectAttempts),
       MAX_RECONNECT_DELAY
@@ -351,25 +300,24 @@ class WebSocketManager {
     }, delay);
   }
 
-  private startHeartbeat(): void {
-    // Clear existing interval if any
-    if (this.heartbeatInterval) {
-      clearInterval(this.heartbeatInterval);
+  /**
+   * Send application-level ping.v1 messages every 25 seconds.
+   * The backend responds with pong.v1 and tracks liveness.
+   */
+  private startPing(): void {
+    if (this.pingInterval) {
+      clearInterval(this.pingInterval);
     }
 
-    // Send ping every 30 seconds
-    this.heartbeatInterval = setInterval(() => {
+    this.pingInterval = setInterval(() => {
       if (this.ws && this.ws.readyState === WebSocket.OPEN) {
         try {
-          // Note: Browser WebSocket API doesn't expose ping() method directly
-          // The browser handles ping/pong frames automatically in most cases
-          // If needed, we can send a custom ping message or rely on the server's ping
-          console.log('[WebSocketManager] Heartbeat check - connection alive');
-        } catch (error) {
-          console.error('[WebSocketManager] Heartbeat error:', error);
+          this.send('ping.v1', { timestamp: Date.now() });
+        } catch {
+          // Connection may have dropped
         }
       }
-    }, HEARTBEAT_INTERVAL);
+    }, PING_INTERVAL);
   }
 
   private clearTimers(): void {
@@ -378,9 +326,9 @@ class WebSocketManager {
       this.reconnectTimeout = null;
     }
 
-    if (this.heartbeatInterval) {
-      clearInterval(this.heartbeatInterval);
-      this.heartbeatInterval = null;
+    if (this.pingInterval) {
+      clearInterval(this.pingInterval);
+      this.pingInterval = null;
     }
 
     if (this.joinTimeout) {
@@ -392,9 +340,7 @@ class WebSocketManager {
   private setConnectionStatus(status: ConnectionStatus): void {
     if (this.connectionStatus !== status) {
       this.connectionStatus = status;
-      console.log(`[WebSocketManager] Connection status changed: ${status}`);
 
-      // Notify all listeners
       this.statusListeners.forEach((listener) => {
         try {
           listener(status);
@@ -406,12 +352,10 @@ class WebSocketManager {
   }
 
   private generateRequestId(): string {
-    // Use crypto.randomUUID() if available (modern browsers)
     if (typeof crypto !== 'undefined' && crypto.randomUUID) {
       return crypto.randomUUID();
     }
 
-    // Fallback: simple UUID v4 implementation
     return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
       const r = (Math.random() * 16) | 0;
       const v = c === 'x' ? r : (r & 0x3) | 0x8;
@@ -424,8 +368,4 @@ class WebSocketManager {
 // Singleton Instance
 // ========================================
 
-/**
- * Singleton WebSocket manager instance.
- * Import and use this instance across the application.
- */
 export const wsManager = new WebSocketManager();
