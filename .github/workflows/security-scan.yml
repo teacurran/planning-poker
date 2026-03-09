@@ -27,7 +27,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Determine target URL
         id: target
@@ -62,7 +62,7 @@ jobs:
 
       - name: Run OWASP ZAP Baseline Scan
         id: zap-scan
-        uses: zaproxy/action-baseline@v0.13.0
+        uses: zaproxy/action-baseline@v0.15.0
         continue-on-error: true
         with:
           target: ${{ steps.target.outputs.url }}
@@ -73,14 +73,14 @@ jobs:
 
       - name: Upload ZAP results to GitHub Security
         if: always() && steps.zap-scan.outcome != 'skipped'
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: results.sarif
           category: zap-scan
 
       - name: Upload ZAP HTML report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: zap-scan-report
           path: |
@@ -90,7 +90,7 @@ jobs:
 
       - name: Create issue for HIGH/MEDIUM findings
         if: steps.zap-scan.outcome == 'failure'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const fs = require('fs');
@@ -165,10 +165,10 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Run OWASP ZAP Full Scan
-        uses: zaproxy/action-full-scan@v0.11.0
+        uses: zaproxy/action-full-scan@v0.13.0
         with:
           target: ${{ github.event.inputs.target_url || 'https://staging.scrumpoker.com' }}
           rules_file_name: '.zap/rules.tsv'
@@ -177,14 +177,14 @@ jobs:
 
       - name: Upload ZAP full scan results
         if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: results.sarif
           category: zap-full-scan
 
       - name: Upload full scan HTML report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: zap-full-scan-report
           path: |
